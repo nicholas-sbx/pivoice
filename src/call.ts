@@ -1,5 +1,7 @@
 import { reactive } from 'vue'
 import { AudioEngine, type MicProblem, type SpatialMode } from './audio/engine'
+import { lookaheadMs, sanitizeLL, type LLConfig } from './audio/ll/config'
+import { LowLatencyEngine } from './audio/ll/engine'
 import { copyText } from './lib/copyText'
 import { loadPrefs, savePrefs, type Prefs } from './lib/prefs'
 import { fetchIceServers, peerOptions, publicUrl } from './net/config'
@@ -47,6 +49,12 @@ export const call = reactive({
 })
 
 let engine: AudioEngine | null = null
+let ll: LowLatencyEngine | null = null
+/** Recent measured mouth-to-ear samples on the WebRTC path, per person. */
+const measured = new Map<string, number[]>()
+const NTP_EPOCH_OFFSET_MS = 2_208_988_800_000
+
+export const llSupported = LowLatencyEngine.supported()
 let session: Session | null = null
 let speakingTimer: ReturnType<typeof setInterval> | null = null
 let statsTimer: ReturnType<typeof setInterval> | null = null
@@ -90,6 +98,21 @@ function pushSelfState() {
   engine?.setMicEnabled(!effectiveMuted())
   engine?.setDeafened(call.deafened)
   session?.setSelf({ muted: effectiveMuted(), deafened: call.deafened })
+  updateLLActive()
+}
+
+function llOn(): boolean {
+  return llSupported && call.prefs.ll.enabled
+}
+
+/** The low-latency engine only encodes while someone's listening on it and you're not muted. */
+function updateLLActive() {
+  if (!ll) return
+  ll.setGate(
+    effectiveMuted(),
+    call.members.filter(m => m.deafened).map(m => m.id)
+  )
+  ll.setActive(!!session && !effectiveMuted() && session.llListeners() > 0)
 }
 
 /**
@@ -109,7 +132,7 @@ export async function startCall(kind: 'create' | 'join', name: string, code = ''
   call.links = {}
   snapshots.clear()
 
-  const eng = new AudioEngine()
+  const eng = new AudioEngine(call.prefs.outputBuffer)
   engine = eng
   const icePromise = fetchIceServers()
   await eng.openMic(micSettings())
@@ -121,6 +144,17 @@ export async function startCall(kind: 'create' | 'join', name: string, code = ''
   if (call.prefs.outputId) void eng.setOutputDevice(call.prefs.outputId)
   eng.setMicEnabled(!effectiveMuted())
   eng.setDeafened(call.deafened)
+  measured.clear()
+  if (llSupported && eng.ctx.sampleRate === 48_000) {
+    const engLL = new LowLatencyEngine(eng.ctx, call.prefs.ll, {
+      link: (id, up) => session?.llState(id, up),
+      relay: (to, buf) => session?.sendLL(to, buf)
+    })
+    engLL.inputLatencyMs = () => eng.captureLatencyMs() ?? 0
+    engLL.setMic(eng.micSource)
+    eng.onMic = src => engLL.setMic(src)
+    ll = engLL
+  }
 
   const iceServers = await icePromise
   if (engine !== eng) return
@@ -131,7 +165,8 @@ export async function startCall(kind: 'create' | 'join', name: string, code = ''
       deafened: call.deafened,
       stream: eng.sendStream,
       peerOptions: peerOptions(iceServers),
-      dtx: call.prefs.dtx
+      dtx: call.prefs.dtx,
+      ll: llOn() && !!ll
     },
     {
       status: (status, failure) => {
@@ -142,6 +177,7 @@ export async function startCall(kind: 'create' | 'join', name: string, code = ''
         if (session !== s) return
         call.members = members
         call.hostId = hostId
+        updateLLActive()
       },
       stream: (id, stream) => {
         if (session !== s) return
@@ -151,10 +187,33 @@ export async function startCall(kind: 'create' | 'join', name: string, code = ''
       },
       streamEnd: id => {
         if (session === s) eng.removeRemote(id)
+      },
+      llLink: (id, up) => {
+        if (session !== s || !ll) return
+        const engLL = ll
+        if (up) {
+          void engLL.addRemote(id).then(node => {
+            if (session !== s || !node || !s.isLL(id)) return
+            eng.attachLL(id, node)
+            if (call.volumes[id] !== undefined) eng.setVolume(id, call.volumes[id])
+            if (call.silenced[id]) eng.setSilenced(id, true)
+          })
+        } else {
+          eng.detachLL(id)
+          engLL.removeRemote(id)
+        }
+        updateLLActive()
+      },
+      llPacket: (id, data) => {
+        if (session === s) ll?.packet(id, data)
       }
     }
   )
   session = s
+  if (ll) {
+    const engLL = ll
+    s.adoptLL = (id, ch) => engLL.adoptChannel(id, ch)
+  }
   call.selfId = s.selfId
   if (kind === 'create') await s.create()
   else await s.join(code)
@@ -183,8 +242,11 @@ function onStatus(status: SessionStatus, failure?: SessionFailure) {
 
 function cleanup() {
   session = null
+  ll?.close()
+  ll = null
   engine?.close()
   engine = null
+  measured.clear()
   if (speakingTimer) clearInterval(speakingTimer)
   speakingTimer = null
   if (statsTimer) clearInterval(statsTimer)
@@ -226,15 +288,42 @@ function startStatsPoll() {
     if (!s || busy) return
     busy = true
     try {
-      const reports = await s.getStats()
+      ll?.refresh()
+      const [reports, llReports] = await Promise.all([s.getStats(), s.getLLStats()])
       if (session !== s) return
       const next: Record<string, LinkStats> = {}
+      const captureMs = engine?.captureLatencyMs() ?? null
       for (const [id, report] of reports) {
-        const { stats, snapshot } = summarise(report.values() as Iterable<Record<string, unknown>>, snapshots.get(id), {
-          captureMs: engine?.captureLatencyMs() ?? null
-        })
+        const { stats, snapshot } = summarise(report.values() as Iterable<Record<string, unknown>>, snapshots.get(id), { captureMs })
         if (snapshot) snapshots.set(id, snapshot)
+        stats.measuredMs = measureWebRTC(s, id, stats.playoutMs)
         next[id] = stats
+      }
+      for (const [id, report] of llReports) {
+        const llStats = ll?.stats(id)
+        if (!llStats) continue
+        // Route and ping from the low-latency connection; everything else from the engine.
+        const { stats } = summarise(report.values() as Iterable<Record<string, unknown>>, null, { captureMs })
+        const cfg = call.prefs.ll
+        const outMs = engine ? (engine.ctx.baseLatency + (engine.ctx.outputLatency || 0)) * 1000 : null
+        const codecMs = cfg.frameMs + lookaheadMs(cfg.application)
+        next[id] = {
+          ...stats,
+          engine: 'll',
+          bufferMs: llStats.bufferMs,
+          jitterMs: llStats.jitterMs,
+          lossPct: llStats.concealedPct,
+          kbps: llStats.kbps,
+          codec: 'opus',
+          playoutMs: outMs,
+          codecMs,
+          mouthToEarMs:
+            stats.rttMs !== null && llStats.bufferMs !== null
+              ? (captureMs ?? 0) + codecMs + stats.rttMs / 2 + llStats.bufferMs + (outMs ?? 0)
+              : null,
+          measuredMs: llStats.measuredMs,
+          ll: llStats
+        }
       }
       for (const id of [...snapshots.keys()]) if (!reports.has(id)) snapshots.delete(id)
       call.links = next
@@ -244,6 +333,43 @@ function startStatsPoll() {
   }
   void poll()
   statsTimer = setInterval(poll, 1000)
+}
+
+/**
+ * Mouth to ear on the WebRTC path, from the abs-capture-time header: when
+ * their newest played frame was captured, when it was handed to our audio
+ * output, plus Chrome's own figure for the output's delay.
+ */
+function measureWebRTC(s: Session, id: string, playoutMs: number | null): number | null {
+  const src = s.syncSource(id) as (RTCRtpSynchronizationSource & { captureTimestamp?: number }) | null
+  if (!src?.captureTimestamp) return median(measured.get(id))
+  // Chrome reports this on the wall clock; the spec says the performance timeline.
+  const delivered = src.timestamp > 1e12 ? src.timestamp : performance.timeOrigin + src.timestamp
+  const sample = delivered - (src.captureTimestamp - NTP_EPOCH_OFFSET_MS) + (playoutMs ?? 0)
+  const list = measured.get(id) ?? []
+  // A stale source (they went quiet) repeats the same frame; skip those.
+  if (sample > -1000 && sample < 5000) {
+    list.push(sample)
+    if (list.length > 5) list.shift()
+    measured.set(id, list)
+  }
+  return median(list)
+}
+
+function median(xs: number[] | undefined): number | null {
+  if (!xs?.length) return null
+  const s = [...xs].sort((a, b) => a - b)
+  return s[Math.floor(s.length / 2)]
+}
+
+/** Change low-latency engine settings; everything applies live. */
+export function updateLL(patch: Partial<LLConfig>) {
+  const next = sanitizeLL({ ...call.prefs.ll, ...patch })
+  const toggled = next.enabled !== call.prefs.ll.enabled
+  updatePrefs({ ll: next })
+  ll?.configure(next)
+  if (toggled) session?.setSelf({ ll: llOn() && !!ll })
+  updateLLActive()
 }
 
 export function toggleMute() {
@@ -324,3 +450,8 @@ export async function copyCode() {
 }
 
 window.addEventListener('pagehide', () => session?.leave())
+
+// Dev builds only: a handle for poking at a live call from the console or the e2e run.
+if (import.meta.env.DEV) {
+  ;(window as unknown as { __pv: unknown }).__pv = { call, session: () => session, ll: () => ll, engine: () => engine }
+}

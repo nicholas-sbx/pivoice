@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { AudioEngine, type SpatialMode } from '../audio/engine'
 import { applyMicPrefs, call, getEngine, setOutput, setSpatial, updatePrefs } from '../call'
 import Icon from './Icon.vue'
+import LLSettings from './LLSettings.vue'
 import Switch from './Switch.vue'
 
 /** Voice settings, popping up over the call controls. */
@@ -10,6 +11,7 @@ import Switch from './Switch.vue'
 const emit = defineEmits<{ close: [] }>()
 
 const el = ref<HTMLElement>()
+const tab = ref<'voice' | 'll'>('voice')
 const inputs = ref<MediaDeviceInfo[]>([])
 const outputs = ref<MediaDeviceInfo[]>([])
 const level = ref(0)
@@ -86,6 +88,14 @@ onBeforeUnmount(() => {
       <h2>Voice Settings</h2>
       <button type="button" class="x" aria-label="Close" @click="emit('close')"><Icon name="close" :size="20" /></button>
     </header>
+    <nav class="tabs" role="tablist">
+      <button type="button" role="tab" :aria-selected="tab === 'voice'" :class="{ active: tab === 'voice' }" @click="tab = 'voice'">Voice</button>
+      <button type="button" role="tab" :aria-selected="tab === 'll'" :class="{ active: tab === 'll' }" @click="tab = 'll'">
+        Low Latency <span class="badge">Beta</span>
+      </button>
+    </nav>
+    <LLSettings v-if="tab === 'll'" />
+    <template v-else>
 
     <div class="row two">
       <label class="field">
@@ -149,12 +159,15 @@ onBeforeUnmount(() => {
         @update:model-value="setDtx"
       />
     </div>
+    </template>
   </div>
 </template>
 
 <style scoped>
 .panel {
   position: absolute;
+  max-height: calc(100vh - 170px);
+  overflow-y: auto;
   bottom: calc(100% + 14px);
   left: 50%;
   transform: translateX(-50%);
@@ -165,6 +178,39 @@ onBeforeUnmount(() => {
   box-shadow: var(--elevation-high), var(--elevation-stroke);
   text-align: left;
   cursor: default;
+}
+.tabs {
+  display: flex;
+  gap: 16px;
+  margin: -4px 0 12px;
+  border-bottom: 1px solid var(--bg-modifier-hover);
+}
+.tabs button {
+  padding: 6px 0 10px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: var(--interactive-normal);
+  font-size: 15px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.tabs button:hover {
+  color: var(--interactive-hover);
+}
+.tabs button.active {
+  color: var(--header-primary);
+  border-bottom-color: var(--brand);
+}
+.badge {
+  margin-left: 4px;
+  padding: 1px 5px;
+  border-radius: 8px;
+  background: var(--brand);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  vertical-align: 2px;
 }
 header {
   display: flex;

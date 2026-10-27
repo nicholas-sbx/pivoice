@@ -8,6 +8,7 @@ const member = (n: number, extra: Partial<Member> = {}): Member => ({
   joinedAt: n * 10,
   muted: false,
   deafened: false,
+  ll: false,
   away: false,
   ...extra
 })
@@ -37,8 +38,15 @@ describe('messages', () => {
       v: 1,
       name: 'Ada Lovelace',
       muted: false,
-      deafened: true
+      deafened: true,
+      ll: false
     })
+  })
+
+  it('reads the low-latency flag, off when missing', () => {
+    expect(parseClientMsg({ t: 'state', muted: false, deafened: false, ll: true })).toEqual({ t: 'state', muted: false, deafened: false, ll: true })
+    const roster = parseHostMsg({ t: 'roster', hostId: member(1).id, members: [{ ...member(1), ll: undefined }] })
+    expect(roster?.t === 'roster' && roster.members[0].ll).toBe(false)
   })
   it('rejects junk', () => {
     expect(parseClientMsg({ t: 'hello', v: 1, name: '   ', muted: false, deafened: false })).toBeNull()

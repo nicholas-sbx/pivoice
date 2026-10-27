@@ -27,6 +27,9 @@ export interface SessionEvents {
   roster(members: Member[], hostId: string): void
   stream(memberId: string, stream: MediaStream): void
   streamEnd(memberId: string): void
+  /** A low-latency audio channel to them opened or closed. */
+  llLink(memberId: string, up: boolean): void
+  llPacket(memberId: string, data: ArrayBuffer): void
 }
 
 export interface SessionOptions {
@@ -38,7 +41,20 @@ export interface SessionOptions {
   peerOptions: PeerOptions
   /** Ask the people talking to us to pause while they're silent (see sdp.ts). */
   dtx: boolean
+  /** Experimental low-latency engine on (see audio/ll). */
+  ll: boolean
 }
+
+interface LLLink {
+  conn: DataConnection
+  /** Only when we kept the channel (relay mode); normally the engine's worker holds it. */
+  channel: RTCDataChannel | null
+  up: boolean
+}
+
+/** The SCTP stream our low-latency audio channel uses, agreed in advance by both ends. */
+const LL_CHANNEL_ID = 42
+const LL_LABEL = 'pv-ll'
 
 const PEER_OPEN_TIMEOUT_MS = 15_000
 const FIRST_DIAL_TIMEOUT_MS = 10_000
@@ -52,6 +68,8 @@ export const TAKEOVER_STAGGER_MS = 2_500
 const RECOVER_GIVE_UP_MS = 60_000
 const CALL_SETUP_TIMEOUT_MS = 20_000
 const CALL_RETRY_MS = 1_500
+/** Don't queue low-latency audio behind more than this: skip the packet instead. */
+const LL_MAX_BUFFERED = 16 * 1024
 
 export class Session {
   readonly selfId = newMemberPeerId()
@@ -64,7 +82,11 @@ export class Session {
   private retryTimers = new Map<string, ReturnType<typeof setTimeout>>()
   private members: Member[] = []
   private hostId = ''
-  private self: { name: string; muted: boolean; deafened: boolean }
+  private self: { name: string; muted: boolean; deafened: boolean; ll: boolean }
+  private llLinks = new Map<string, LLLink>()
+  private llRetry = new Map<string, ReturnType<typeof setTimeout>>()
+  /** Set by the app: takes a new low-latency channel (to its worker) and returns true, or leaves it with us. */
+  adoptLL: ((id: string, ch: RTCDataChannel) => boolean) | null = null
   private stream: MediaStream
   private options: PeerOptions
   private sdpTransform: (sdp: string) => string
@@ -84,7 +106,7 @@ export class Session {
     opts: SessionOptions,
     private events: SessionEvents
   ) {
-    this.self = { name: opts.name, muted: opts.muted, deafened: opts.deafened }
+    this.self = { name: opts.name, muted: opts.muted, deafened: opts.deafened, ll: opts.ll }
     this.stream = opts.stream
     this.options = opts.peerOptions
     const tuning = { dtx: opts.dtx }
@@ -132,6 +154,7 @@ export class Session {
         resolve(!this.ended)
       })
       peer.on('call', call => this.onIncomingCall(call))
+      peer.on('connection', conn => this.onIncomingLL(conn))
       peer.on('disconnected', () => {
         // Lost the broker. Calls and the data channel are peer to peer and
         // carry on; we only need the broker to set up new ones.
@@ -217,6 +240,7 @@ export class Session {
       joinedAt: known?.joinedAt ?? Date.now(),
       muted: this.self.muted,
       deafened: this.self.deafened,
+      ll: this.self.ll,
       away: false
     }
   }
@@ -389,6 +413,7 @@ export class Session {
     this.hostId = hostId
     this.events.roster(members, hostId)
     this.syncCalls()
+    this.syncLL()
     this.updateSenders()
   }
 
@@ -489,11 +514,14 @@ export class Session {
 
   // ---- what the UI calls -------------------------------------------------
 
-  setSelf(patch: { muted: boolean; deafened: boolean }) {
-    if (patch.muted === this.self.muted && patch.deafened === this.self.deafened) return
-    this.self = { ...this.self, ...patch }
-    if (this.host) this.host.updateSelf(patch)
-    else this.send({ t: 'state', ...patch })
+  setSelf(patch: Partial<{ muted: boolean; deafened: boolean; ll: boolean }>) {
+    const next = { ...this.self, ...patch }
+    if (next.muted === this.self.muted && next.deafened === this.self.deafened && next.ll === this.self.ll) return
+    this.self = next
+    const state = { muted: next.muted, deafened: next.deafened, ll: next.ll }
+    if (this.host) this.host.updateSelf(state)
+    else this.send({ t: 'state', ...state })
+    this.syncLL()
     this.updateSenders()
   }
 
@@ -517,9 +545,158 @@ export class Session {
       const sender = audioSender(call.peerConnection)
       if (!sender) continue
       const deafened = this.members.find(m => m.id === id)?.deafened ?? false
-      const want = this.self.muted || deafened ? null : track
+      // Someone we're reaching over the low-latency engine doesn't need it twice.
+      const viaLL = this.llLinks.get(id)?.up ?? false
+      const want = this.self.muted || deafened || viaLL ? null : track
       if (sender.track !== want) void sender.replaceTrack(want).catch(() => {})
     }
+  }
+
+  // ---- the low-latency engine's channels --------------------------------
+
+  /**
+   * Pairs who both have the engine on get a second connection: a PeerJS
+   * data connection, used only for its peer connection, on which both ends
+   * add a pre-agreed channel that's unordered and never retransmits (PeerJS's
+   * own "unreliable" still retransmits). As with calls, the smaller id dials.
+   */
+  private syncLL() {
+    const peer = this.peer
+    for (const m of this.members) {
+      if (m.id === this.selfId) continue
+      const want = this.self.ll && m.ll && !this.ended
+      const link = this.llLinks.get(m.id)
+      if (want && !link && this.selfId < m.id && peer && !peer.destroyed && !peer.disconnected && !this.llRetry.has(m.id)) {
+        const conn = peer.connect(m.id, { label: LL_LABEL, serialization: 'raw', reliable: false })
+        if (conn) this.wireLL(conn)
+      } else if (!want && link) this.closeLL(m.id)
+    }
+    for (const id of [...this.llLinks.keys()]) if (!this.members.some(m => m.id === id)) this.closeLL(id)
+  }
+
+  private onIncomingLL(conn: DataConnection) {
+    const m = this.members.find(x => x.id === conn.peer)
+    if (conn.label !== LL_LABEL || !this.self.ll || this.ended || (m && !m.ll)) {
+      conn.on('open', () => conn.close())
+      return
+    }
+    this.wireLL(conn)
+  }
+
+  private wireLL(conn: DataConnection) {
+    const id = conn.peer
+    const prev = this.llLinks.get(id)
+    if (prev && prev.conn !== conn) this.closeLL(id)
+    const link: LLLink = { conn, channel: null, up: false }
+    this.llLinks.set(id, link)
+    conn.on('open', () => {
+      if (this.llLinks.get(id) !== link) return
+      const pc = conn.peerConnection
+      if (!pc) return
+      const ch = pc.createDataChannel('pv-audio', { negotiated: true, id: LL_CHANNEL_ID, ordered: false, maxRetransmits: 0 })
+      // Straight to the engine's worker if it'll take it (it then tells us
+      // via llState when it opens and closes); otherwise we keep it and relay.
+      if (this.adoptLL?.(id, ch)) return
+      link.channel = ch
+      ch.binaryType = 'arraybuffer'
+      ch.onopen = () => this.llState(id, true)
+      ch.onmessage = e => {
+        if (e.data instanceof ArrayBuffer) this.events.llPacket(id, e.data)
+      }
+      ch.onclose = () => this.llState(id, false)
+    })
+    conn.on('close', () => this.onLLClosed(id, link))
+    conn.on('error', () => this.onLLClosed(id, link))
+  }
+
+  /** The low-latency channel to them opened or closed (whoever holds it). */
+  llState(id: string, up: boolean) {
+    const link = this.llLinks.get(id)
+    if (!link || link.up === up) return
+    link.up = up
+    this.events.llLink(id, up)
+    this.updateSenders()
+    if (!up) this.onLLClosed(id, link)
+  }
+
+  private onLLClosed(id: string, link: LLLink) {
+    if (this.llLinks.get(id) !== link) return
+    this.closeLL(id)
+    if (this.ended || !this.self.ll || this.selfId >= id) return
+    // Still wanted: try again in a bit.
+    this.llRetry.set(
+      id,
+      setTimeout(() => {
+        this.llRetry.delete(id)
+        this.syncLL()
+      }, CALL_RETRY_MS)
+    )
+  }
+
+  private closeLL(id: string) {
+    const link = this.llLinks.get(id)
+    if (!link) return
+    this.llLinks.delete(id)
+    try {
+      link.channel?.close()
+      link.conn.close()
+    } catch {
+      /* already gone */
+    }
+    if (link.up) this.events.llLink(id, false)
+    this.updateSenders()
+  }
+
+  /** Relay mode only: send low-latency packets on the channels we kept. Late is dropped, never queued. */
+  sendLL(to: string[], data: ArrayBuffer) {
+    for (const id of to) {
+      const ch = this.llLinks.get(id)?.channel
+      if (!ch || ch.readyState !== 'open' || ch.bufferedAmount > LL_MAX_BUFFERED) continue
+      try {
+        ch.send(data)
+      } catch {
+        /* closing */
+      }
+    }
+  }
+
+  /** How many people we're sending low-latency audio to right now. */
+  llListeners(): number {
+    let n = 0
+    for (const [id, link] of this.llLinks) if (link.up && !this.members.find(m => m.id === id)?.deafened) n++
+    return n
+  }
+
+  isLL(id: string): boolean {
+    return this.llLinks.get(id)?.up ?? false
+  }
+
+  /** Stats for the peer connections carrying low-latency audio (route and ping), keyed by who. */
+  async getLLStats(): Promise<Map<string, RTCStatsReport>> {
+    const out = new Map<string, RTCStatsReport>()
+    await Promise.all(
+      [...this.llLinks].map(async ([id, link]) => {
+        const pc = link.conn.peerConnection
+        if (!pc || !link.up) return
+        try {
+          out.set(id, await pc.getStats())
+        } catch {
+          /* closed under us */
+        }
+      })
+    )
+    return out
+  }
+
+  /**
+   * The newest audio frame of theirs played out, with the time it was
+   * captured at their end (the abs-capture-time header, see sdp.ts) and the
+   * time it was handed to our speakers.
+   */
+  syncSource(id: string): RTCRtpSynchronizationSource | null {
+    const pc = this.calls.get(id)?.peerConnection
+    const receiver = pc?.getReceivers().find(r => r.track?.kind === 'audio')
+    return receiver?.getSynchronizationSources()[0] ?? null
   }
 
   /** Each live call's WebRTC stats, keyed by who it's with. */
@@ -566,6 +743,9 @@ export class Session {
     this.callTimers.clear()
     this.retryTimers.clear()
     for (const call of this.calls.values()) call.close()
+    for (const id of [...this.llLinks.keys()]) this.closeLL(id)
+    for (const t of this.llRetry.values()) clearTimeout(t)
+    this.llRetry.clear()
     this.calls.clear()
     const conn = this.conn
     const peer = this.peer

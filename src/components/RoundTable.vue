@@ -47,7 +47,7 @@ const geometry = computed(() => {
   const { w, h } = size
   const avatar = Math.round(Math.max(56, Math.min(92, Math.min(w, h) * 0.1)))
   // Name tag, plus the route card under it when that's on.
-  const label = props.showRoute ? 124 : 34
+  const label = props.showRoute ? 160 : 34
   // Room for the floating call controls along the bottom.
   const bottom = 108
   const top = 20
@@ -76,8 +76,8 @@ function presentCount(): number {
 
 function retargetRadius(snap: boolean) {
   const g = geometry.value
-  // Route cards are wider than a name tag, so neighbours need more room.
-  radius.target = tableRadius(presentCount(), g.ring, g.avatar, props.showRoute ? 250 : undefined)
+  // Route cards are big: with them showing, the table stays full size so they have room.
+  radius.target = props.showRoute ? g.ring : tableRadius(presentCount(), g.ring, g.avatar)
   if (snap || radius.x === 0) settle(radius)
 }
 
@@ -326,6 +326,9 @@ const count = computed(() => props.members.filter(m => !m.away).length || 1)
       </div>
       <div v-if="showRoute && !isSelf(id)" class="route">
         <template v-if="links[id]">
+          <div class="engine" :class="links[id].engine">
+            {{ links[id].engine === 'll' ? 'Low-latency engine' : 'WebRTC audio' }}
+          </div>
           <div class="route-head" :class="links[id].route ?? ''">
             <span class="dot" />
             {{ routeLabel(links[id]) }}
@@ -335,15 +338,26 @@ const count = computed(() => props.members.filter(m => !m.away).length || 1)
               .filter(Boolean)
               .join(' · ') }}
           </div>
-          <div v-if="links[id].mouthToEarMs != null" class="route-line big" :title="breakdownTitle(links[id])">
+          <div
+            v-if="links[id].measuredMs != null"
+            class="route-line big"
+            title="Measured: their capture time (stamped on the audio) to when it reached your speakers. Exact on one machine; across machines it's as good as your two clocks."
+          >
+            {{ Math.round(links[id].measuredMs!) }} ms mouth to ear
+          </div>
+          <div v-else-if="links[id].mouthToEarMs != null" class="route-line big" :title="breakdownTitle(links[id])">
             ≈ {{ Math.round(links[id].mouthToEarMs!) }} ms mouth to ear
           </div>
           <div v-if="links[id].mouthToEarMs != null" class="route-line dim wrap">
             mic {{ n0(links[id].captureMs) }} · codec {{ n0(links[id].codecMs) }} · net {{ n0(links[id].rttMs! / 2) }} · buffer
             {{ n0(links[id].bufferMs) }} · out {{ n0(links[id].playoutMs) }}
           </div>
+          <div v-if="links[id].ll" class="route-line dim">
+            target {{ n0(links[id].ll!.targetMs) }} ms · late {{ links[id].ll!.late }} · concealed
+            {{ links[id].ll!.concealedPct.toFixed(1) }}%
+          </div>
           <div class="route-line dim">
-            jitter {{ fmt(links[id].jitterMs) }} · loss
+            jitter {{ fmt(links[id].jitterMs) }} · {{ links[id].ll ? 'gaps' : 'loss' }}
             {{ links[id].lossPct == null ? '–' : links[id].lossPct!.toFixed(links[id].lossPct! < 1 ? 1 : 0) + '%' }}
           </div>
         </template>
@@ -497,6 +511,16 @@ const count = computed(() => props.members.filter(m => !m.away).length || 1)
   text-align: center;
   white-space: nowrap;
   pointer-events: none;
+}
+.engine {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.engine.ll {
+  color: var(--brand-soft);
 }
 .route-head {
   display: flex;

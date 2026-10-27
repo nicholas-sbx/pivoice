@@ -220,6 +220,61 @@ try {
   await expectSeats(dan, 5, 'Dan after Finn left')
   ok('Finn left, five remain')
 
+  // The experimental low-latency engine, between the two people who turn it on.
+  const eve = extra[0]
+  const enableLL = async p => {
+    await p.click('button[aria-label="Voice Settings"]')
+    await p.click('button[role="tab"]:has-text("Low Latency")')
+    await p.click('text=Low-Latency Engine (Experimental)')
+    await p.click('button[aria-label="Voice Settings"]')
+  }
+  const cardFor = (page, name) =>
+    page.$$eval(
+      '.seat',
+      (els, name) => els.find(e => e.querySelector('.name')?.textContent.trim() === name)?.querySelector('.route')?.innerText ?? '',
+      name
+    )
+  const webrtcCard = await cardFor(dan, 'Eve')
+  await enableLL(dan)
+  await enableLL(eve)
+  await dan.waitForFunction(
+    () => {
+      const seat = [...document.querySelectorAll('.seat')].find(e => e.querySelector('.name')?.textContent.trim() === 'Eve')
+      return /low-latency engine/i.test(seat?.querySelector('.route')?.textContent ?? '')
+    },
+    null,
+    { timeout: 20_000 }
+  ).catch(() => {
+    throw new Error('Dan and Eve both turned on the low-latency engine but it never took over')
+  })
+  // Still hearing her, now over the new engine.
+  await extra[0].click('button[aria-label="Mute"]')
+  await extra[0].click('button[aria-label="Unmute"]')
+  await dan.waitForFunction(
+    () => [...document.querySelectorAll('.seat.speaking')].some(e => e.querySelector('.name')?.textContent.trim() === 'Eve'),
+    null,
+    { timeout: 15_000 }
+  ).catch(() => {
+    throw new Error('low-latency engine up, but Dan never heard Eve')
+  })
+  await dan.waitForTimeout(4000)
+  const one = s => s.replace(/\s*\n\s*/g, ' | ')
+  ok('Eve on WebRTC audio:     ' + one(webrtcCard))
+  ok('Eve on low-latency engine: ' + one(await cardFor(dan, 'Eve')))
+  // Everyone else stays on WebRTC audio, and still works.
+  if (!/webrtc audio/i.test(await cardFor(dan, 'Bob'))) throw new Error('Bob should still be on WebRTC audio')
+  ok('the others stay on WebRTC audio')
+  if (SHOTS) {
+    await dan.mouse.move(5, 300)
+    await dan.waitForTimeout(500)
+    await dan.screenshot({ path: `${SHOTS}/ll-route.png` })
+    await dan.click('button[aria-label="Voice Settings"]')
+    await dan.click('button[role="tab"]:has-text("Low Latency")')
+    await dan.waitForTimeout(300)
+    await dan.screenshot({ path: `${SHOTS}/ll-settings.png` })
+    await dan.click('button[aria-label="Voice Settings"]')
+  }
+
   if (SHOTS) {
     const home = await browser.newPage({ viewport: { width: 1440, height: 900 } })
     await home.goto(APP)

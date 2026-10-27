@@ -204,6 +204,7 @@ export class RoomHost {
           joinedAt: existing?.joinedAt ?? this.nextJoinedAt(),
           muted: msg.muted,
           deafened: msg.deafened,
+          ll: msg.ll,
           away: false
         })
         this.emitRoster()
@@ -212,8 +213,8 @@ export class RoomHost {
       case 'state': {
         const m = this.members.get(id)
         if (!m || this.links.get(id) !== link) return
-        if (m.muted === msg.muted && m.deafened === msg.deafened) return
-        this.members.set(id, { ...m, muted: msg.muted, deafened: msg.deafened })
+        if (m.muted === msg.muted && m.deafened === msg.deafened && m.ll === msg.ll) return
+        this.members.set(id, { ...m, muted: msg.muted, deafened: msg.deafened, ll: msg.ll })
         this.emitRoster()
         return
       }
@@ -274,7 +275,7 @@ export class RoomHost {
     }, 2_000)
   }
 
-  updateSelf(patch: Partial<Pick<Member, 'muted' | 'deafened'>>) {
+  updateSelf(patch: Partial<Pick<Member, 'muted' | 'deafened' | 'll'>>) {
     this.self = { ...this.self, ...patch }
     this.members.set(this.self.id, { ...this.self, away: false })
     this.emitRoster()

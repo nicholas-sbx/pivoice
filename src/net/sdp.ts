@@ -34,7 +34,42 @@ export interface OpusTuning {
   dtx: boolean
 }
 
+export const ABS_CAPTURE_TIME = 'http://www.webrtc.org/experiments/rtp-hdrext/abs-capture-time'
+
+/**
+ * Ask for the abs-capture-time RTP header extension on audio: each frame
+ * then carries the wall-clock time it was captured at, and the receiver's
+ * getSynchronizationSources() reports it next to when it was played out.
+ * That's a real mouth-to-ear measurement of the WebRTC path (exact on one
+ * machine). Chrome supports it but doesn't offer it, so we add it to our
+ * offers, under an id the section isn't using; answers echo what was
+ * offered, and we never add it to an answer ourselves.
+ */
+export function addAbsCaptureTime(sdp: string): string {
+  if (!sdp.includes('a=setup:actpass') || sdp.includes(ABS_CAPTURE_TIME)) return sdp
+  const eol = sdp.includes('\r\n') ? '\r\n' : '\n'
+  const lines = sdp.split(eol)
+  const start = lines.findIndex(l => l.startsWith('m=audio'))
+  if (start < 0) return sdp
+  let end = lines.findIndex((l, i) => i > start && l.startsWith('m='))
+  if (end < 0) end = lines.length
+  const used = new Set<number>()
+  for (let i = start; i < end; i++) {
+    const m = /^a=extmap:(\d+)/.exec(lines[i])
+    if (m) used.add(Number(m[1]))
+  }
+  let id = 1
+  while (used.has(id) && id <= 14) id++
+  if (id > 14) return sdp
+  // Next to the other extmaps, or straight after the m= line.
+  let at = start + 1
+  for (let i = start; i < end; i++) if (lines[i].startsWith('a=extmap:')) at = i + 1
+  lines.splice(at, 0, `a=extmap:${id} ${ABS_CAPTURE_TIME}`)
+  return lines.join(eol)
+}
+
 export function tuneOpusSdp(sdp: string, tuning: OpusTuning = { dtx: true }): string {
+  sdp = addAbsCaptureTime(sdp)
   const wanted = { ...OPUS_PARAMS, usedtx: tuning.dtx ? '1' : '0' }
   const eol = sdp.includes('\r\n') ? '\r\n' : '\n'
   const lines = sdp.split(eol)

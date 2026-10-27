@@ -9,7 +9,7 @@ spatial audio and each voice comes from where that person sits.
 
 <p>
   <img src="docs/screenshots/room-6.jpg" width="49%" alt="Six people at the table, with ping">
-  <img src="docs/screenshots/route.jpg" width="49%" alt="Audio route cards: path, latency breakdown, loss">
+  <img src="docs/screenshots/compare.jpg" width="49%" alt="Audio route cards: one person on WebRTC audio, one on the low-latency engine">
 </p>
 <p>
   <img src="docs/screenshots/room-3.jpg" width="49%" alt="Three people: the table at half size">
@@ -87,12 +87,15 @@ reaches you (same network, direct peer to peer, or relayed through a TURN
 server, and which one), the transport, codec and bitrate, a mouth-to-ear
 estimate with its breakdown (mic, codec, network, jitter buffer, playout),
 and jitter and packet loss. It's all read once a second from the calls'
-own WebRTC stats. Hover the estimate for what each part means.
+own WebRTC stats, and it also says which engine is carrying that person's
+voice. The mouth-to-ear figure is measured where it can be (see below), and
+an estimate (`≈`) where it can't. Hover the estimate for what each part means.
 
 **Voice settings.** Input and output device, an input level meter,
 spatial audio (**Off**, **Stereo**, **HRTF**), echo cancellation, noise
 suppression and automatic gain control (all **off** by default), and
-silence suppression (DTX, on).
+silence suppression (DTX, on). The **Low Latency** tab has the experimental
+engine and all its settings (below).
 
 ### Seating
 
@@ -161,11 +164,115 @@ to where they're going.
 | Playout to speakers | ~30 ms | Chrome and your audio server |
 
 That's ~85–95 ms mouth to ear even on one machine, against the ~10–20 ms of
-something like `pw-loopback`, and most of it is inside the browser, where a
-page can't reach. The route card shows these numbers live for each person.
-On Linux with PipeWire, starting Chrome with `PULSE_LATENCY_MSEC=10` (Chrome
-talks to PipeWire through its PulseAudio layer) may shrink the capture and
-playout buffers. It's worth trying, but it's outside the app.
+something like `pw-loopback`, and most of it is inside the browser's WebRTC
+audio, where a page can't reach. That's why there's a second engine (next
+section).
+
+Outside the app, on Linux with PipeWire, a large audio buffer size shows up
+three times: in mic, in out, and as jitter that grows the buffer. A mic
+reading of ~21 ms is a 1024-sample buffer. `pw-metadata -n settings 0
+clock.force-quantum 256` (0 puts it back), or starting Chrome with
+`PULSE_LATENCY_MSEC=5`, shrinks it.
+
+**Measured, not guessed.** The route card's mouth-to-ear figure is a real
+measurement whenever it can be (no `≈`):
+
+- WebRTC audio: our offers ask for the `abs-capture-time` RTP header
+  extension. Each frame then carries the wall-clock time it was captured at,
+  `getSynchronizationSources()` reports it next to when the frame was handed
+  to our audio output, and Chrome's playout delay is added on top.
+- Low-latency engine: one packet in 20 carries the wall-clock capture time of
+  its newest frame, and the playback worklet reports which frame it played
+  when.
+
+Both measure capture to speakers. That's exact on one machine; across machines
+it's as good as your two clocks (NTP usually keeps desktops within a few ms).
+
+### The low-latency engine (experimental)
+
+Off by default, in **Voice Settings → Low Latency**. Pairs of people who both
+turn it on stop using WebRTC's audio for each other and use this instead:
+
+```
+mic → pv-capture AudioWorklet: frames of 2.5–20 ms on the audio clock
+    → worker: our silence gate → WebCodecs AudioEncoder (the browser's libopus)
+    → packet: frame + the previous 0–2 frames again + now and then a capture stamp
+    → RTCDataChannel, unordered, maxRetransmits 0 (late is dropped, never queued)
+    → their worker: WebCodecs AudioDecoder
+    → pv-playback AudioWorklet: our jitter buffer → their channel strip (volume, spatial)
+```
+
+- **No main thread in the audio path.** The capture worklet talks straight to
+  a dedicated worker over a MessagePort, the data channels are transferred to
+  that worker the moment they're created (Chrome only allows it then), and
+  decoded audio goes straight from the worker to the playback worklet. Page
+  work can't delay a packet. Where a browser can't transfer a data channel,
+  the page relays instead.
+- **Opus at frame sizes WebRTC won't do.** WebCodecs' Opus takes
+  `frameDuration` down to 2.5 ms and `application: 'lowdelay'`, which means
+  CELT only and 2.5 ms of lookahead instead of 6.5. Encoding a frame takes
+  ~0.2 ms.
+- **Our own jitter buffer** ([`src/audio/ll/jitter.ts`](src/audio/ll/jitter.ts)):
+  - It tracks the best path delay (the minimum of arrival minus send time
+    over 2 s) and the 95th-percentile jitter above it, and aims for jitter ×
+    multiplier + margin, clamped to a minimum and maximum.
+  - It steers toward that target by changing playback speed by up to a few
+    %. Gaps are covered by fading out the last frame. After a silence it
+    starts the next sentence fresh at the target.
+  - Unit tests drive it with simulated streams: clean, jittery, lossy and
+    silent ones.
+- **Our own DTX.** Chrome's encoder drops frames for DTX and then numbers the
+  rest as if it hadn't (its decoder does the same with gaps), which scrambles
+  timing. So the engine keeps its own map from each frame to its capture time,
+  and gates silence itself. The gate decides per frame from that frame's own
+  level, with a 150 ms hangover, so the start of a word is never waited on.
+- **Redundancy instead of FEC.** WebCodecs' decoder can't use Opus's in-band
+  FEC, so each packet can repeat the previous one or two frames. One lost
+  packet then costs nothing, and there's no extra delay.
+- **Smallest output buffer** (applies to both engines): the AudioContext is
+  made with `latencyHint: 0`. In Chrome that's a 128-frame (2.7 ms) buffer
+  instead of ~10 ms. It also makes the audio thread run every 2.7 ms instead
+  of in ~10 ms bursts, which was most of the engine's capture jitter.
+
+What it did in headless Chromium on one 4-core machine, three people, read
+from one seat (fake audio devices, so the absolute numbers will differ on
+real hardware):
+
+| | Mouth to ear (measured) | Buffer | Out |
+| --- | --- | --- | --- |
+| WebRTC audio | 66–71 ms | ~30–39 ms | 30 ms |
+| Low-latency engine, 5 ms frames | 36–37 ms | ~10–15 ms | 11 ms |
+
+<p>
+  <img src="docs/screenshots/ll-settings.jpg" width="60%" alt="Low-latency engine settings">
+</p>
+
+Every knob applies live, except the output buffer, which takes effect when you
+next join:
+
+| Setting | Default | What it does |
+| --- | --- | --- |
+| Audio output buffer | Smallest (2.7 ms) | Web Audio's buffer to the speakers, for both engines. Browser default (~10 ms) if you hear crackling. |
+| Frame size | 5 ms | 2.5 / 5 / 10 / 20 ms. Each step down halves the frame delay and doubles the packets. |
+| Opus mode | Low delay | Low delay (CELT, 2.5 ms lookahead), VoIP or Audio (6.5 ms). |
+| Bitrate | 64 kbps | 12–256 kbps. |
+| Encoder complexity | 8 | CPU against quality. No effect on delay. |
+| Redundancy | +1 frame | Each packet repeats 0–2 previous frames. |
+| Silence suppression | On | Send nothing while you're quiet. |
+| Silence threshold | −55 dBFS | What counts as quiet. |
+| Jitter multiplier | 1.2× | Measured jitter is multiplied by this. |
+| Safety margin | 2 ms | Added on top. |
+| Minimum / maximum buffer | 0 / 80 ms | Limits on the target. |
+| Speed adjustment | ±2% | How hard playback may steer to the target. 0 only resyncs between sentences. |
+| Concealment | 12 ms | How long a gap is covered before it goes silent. |
+
+The tab also shows what the sending settings cost: the fixed delay (frame +
+lookahead), packets per second, and bandwidth per listener. At 2.5 ms frames
+the per-packet overhead of SCTP, DTLS, UDP and IP dominates, so expect a few
+hundred kbps per person you're talking to.
+
+Mixing engines in one room is fine: each pair decides for itself, and anyone
+without the engine on hears and is heard over WebRTC audio as before.
 
 ## Rooms: the PeerJS trick
 
@@ -290,7 +397,9 @@ src/
   lib/          seats (planning + the animated Table), spring, room codes, prefs
   net/          protocol (+ validation), roomHost (holding the room id),
                 session (joining, the call mesh, host hand-over), sdp, ICE config
-  audio/        engine: mic, playback, panning, speaking detection
+  audio/        engine: mic, per-person channel strips, panning, speaking detection
+  audio/ll/     the low-latency engine: worklets (capture, playback), worker
+                (encode, decode, network), jitter buffer, packet format, settings
   components/   round table, call control buttons, settings, user menu, icons
   screens/      Home (make or join) and Room
   call.ts       the call as reactive state, and everything the UI can do to it

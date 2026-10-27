@@ -54,6 +54,18 @@ describe('tuneOpusSdp', () => {
     expect(fmtp).toContain('minptime=10')
   })
 
+  it('asks for capture timestamps in offers, under a free id', () => {
+    const offer = sdp.replace('a=rtcp-fb', 'a=setup:actpass\r\na=extmap:1 urn:ietf:params:rtp-hdrext:ssrc-audio-level\r\na=rtcp-fb')
+    const out = tuneOpusSdp(offer)
+    expect(out).toContain('a=extmap:2 http://www.webrtc.org/experiments/rtp-hdrext/abs-capture-time')
+    expect(tuneOpusSdp(out)).toBe(out)
+  })
+
+  it('never adds it to an answer', () => {
+    const answer = sdp.replace('a=rtcp-fb', 'a=setup:active\r\na=rtcp-fb')
+    expect(tuneOpusSdp(answer)).not.toContain('abs-capture-time')
+  })
+
   it('ignores SDP without Opus', () => {
     const plain = 'v=0\r\nm=application 9 UDP/DTLS/SCTP webrtc-datachannel\r\n'
     expect(tuneOpusSdp(plain)).toBe(plain)

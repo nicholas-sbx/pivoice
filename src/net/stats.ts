@@ -1,3 +1,4 @@
+import type { LLRemoteStats } from '../audio/ll/engine'
 import { OPUS_LOOKAHEAD_MS, PTIME_MS } from './sdp'
 
 /**
@@ -46,6 +47,12 @@ export interface LinkStats {
    * so it's a floor rather than a measurement.
    */
   mouthToEarMs: number | null
+  /** Which engine is carrying their voice to you. */
+  engine: 'webrtc' | 'll'
+  /** Mouth to ear as actually measured from capture timestamps (exact on one machine), ms. */
+  measuredMs: number | null
+  /** The low-latency engine's own receive-side numbers, when it's the one in use. */
+  ll: LLRemoteStats | null
 }
 
 export interface Snapshot {
@@ -170,7 +177,10 @@ export function summarise(
       playoutMs,
       captureMs,
       codecMs,
-      mouthToEarMs
+      mouthToEarMs,
+      engine: 'webrtc',
+      measuredMs: null,
+      ll: null
     },
     snapshot
   }

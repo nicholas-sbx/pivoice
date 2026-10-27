@@ -19,13 +19,15 @@ export interface Member {
   joinedAt: number
   muted: boolean
   deafened: boolean
+  /** Has the experimental low-latency engine on (pairs who both do use it). */
+  ll: boolean
   /** Lost touch with the host and has a few seconds to come back before they're dropped. */
   away: boolean
 }
 
 export type ClientMsg =
-  | { t: 'hello'; v: number; name: string; muted: boolean; deafened: boolean }
-  | { t: 'state'; muted: boolean; deafened: boolean }
+  | { t: 'hello'; v: number; name: string; muted: boolean; deafened: boolean; ll: boolean }
+  | { t: 'state'; muted: boolean; deafened: boolean; ll: boolean }
   | { t: 'ping'; at: number }
   | { t: 'leave' }
 
@@ -62,11 +64,12 @@ export function parseClientMsg(raw: unknown): ClientMsg | null {
     case 'hello': {
       const name = cleanName(raw.name)
       if (!isNum(raw.v) || !name || !isBool(raw.muted) || !isBool(raw.deafened)) return null
-      return { t: 'hello', v: raw.v, name, muted: raw.muted, deafened: raw.deafened }
+      // ll came later; anyone who doesn't say has it off.
+      return { t: 'hello', v: raw.v, name, muted: raw.muted, deafened: raw.deafened, ll: raw.ll === true }
     }
     case 'state':
       if (!isBool(raw.muted) || !isBool(raw.deafened)) return null
-      return { t: 'state', muted: raw.muted, deafened: raw.deafened }
+      return { t: 'state', muted: raw.muted, deafened: raw.deafened, ll: raw.ll === true }
     case 'ping':
       return isNum(raw.at) ? { t: 'ping', at: raw.at } : null
     case 'leave':
@@ -81,7 +84,15 @@ function parseMember(raw: unknown): Member | null {
   const name = cleanName(raw.name)
   if (typeof raw.id !== 'string' || !isMemberPeerId(raw.id) || !name || !isNum(raw.joinedAt)) return null
   if (!isBool(raw.muted) || !isBool(raw.deafened) || !isBool(raw.away)) return null
-  return { id: raw.id, name, joinedAt: raw.joinedAt, muted: raw.muted, deafened: raw.deafened, away: raw.away }
+  return {
+    id: raw.id,
+    name,
+    joinedAt: raw.joinedAt,
+    muted: raw.muted,
+    deafened: raw.deafened,
+    ll: raw.ll === true,
+    away: raw.away
+  }
 }
 
 export function parseHostMsg(raw: unknown): HostMsg | null {

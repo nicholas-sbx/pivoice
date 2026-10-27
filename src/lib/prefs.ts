@@ -1,4 +1,5 @@
 import type { SpatialMode } from '../audio/engine'
+import { LL_DEFAULTS, sanitizeLL, type LLConfig } from '../audio/ll/config'
 
 export interface Prefs {
   name: string
@@ -19,6 +20,16 @@ export interface Prefs {
   showRoute: boolean
   /** Opus DTX for what people send you: less bandwidth in silence, ~9 ms more buffering. */
   dtx: boolean
+  /**
+   * Web Audio's output buffer. 'min' asks for the smallest the device will
+   * do (128 frames, 2.7 ms): far less output delay, and the audio thread
+   * runs every 2.7 ms instead of in ~10 ms bursts, which is also most of
+   * the low-latency engine's capture jitter. 'interactive' is the browser's
+   * default, for machines that crackle on 'min'.
+   */
+  outputBuffer: 'min' | 'interactive'
+  /** The experimental low-latency engine and all its knobs. */
+  ll: LLConfig
 }
 
 const KEY = 'pv.prefs'
@@ -35,24 +46,27 @@ export const DEFAULT_PREFS: Prefs = {
   showCode: false,
   showPing: true,
   showRoute: false,
-  dtx: true
+  dtx: true,
+  outputBuffer: 'min',
+  ll: LL_DEFAULTS
 }
 
 export function loadPrefs(): Prefs {
   try {
     const raw = JSON.parse(localStorage.getItem(KEY) ?? '{}') as Partial<Prefs>
-    const p = { ...DEFAULT_PREFS }
+    const p = { ...DEFAULT_PREFS, ll: sanitizeLL(raw.ll) }
     if (typeof raw.name === 'string') p.name = raw.name
     if (raw.spatial === 'off' || raw.spatial === 'stereo' || raw.spatial === 'hrtf') p.spatial = raw.spatial
     if (raw.lastSpatial === 'stereo' || raw.lastSpatial === 'hrtf') p.lastSpatial = raw.lastSpatial
     if (typeof raw.inputId === 'string') p.inputId = raw.inputId
+    if (raw.outputBuffer === 'min' || raw.outputBuffer === 'interactive') p.outputBuffer = raw.outputBuffer
     if (typeof raw.outputId === 'string') p.outputId = raw.outputId
     for (const k of ['echoCancellation', 'noiseSuppression', 'autoGainControl', 'showCode', 'showPing', 'showRoute', 'dtx'] as const) {
       if (typeof raw[k] === 'boolean') p[k] = raw[k]
     }
     return p
   } catch {
-    return { ...DEFAULT_PREFS }
+    return { ...DEFAULT_PREFS, ll: { ...LL_DEFAULTS } }
   }
 }
 
