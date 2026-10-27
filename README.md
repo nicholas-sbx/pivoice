@@ -76,6 +76,19 @@ under 160, red above). Right-click someone for **User Volume** and **Mute**
 deafen (`Ctrl+Shift+D`), spatial audio, voice settings, disconnect. Like
 Discord, deafening mutes you too and unmuting undeafens you.
 
+**Settings apply immediately.** The two settings that only a fresh
+connection can apply (the audio output buffer, and silence suppression on
+WebRTC audio) reconnect you on the spot. You drop and come straight back
+as the same member, without saying goodbye. The room keeps you as
+reconnecting for those few seconds, so you keep your seat, and the volumes
+everyone has set for you still apply. If you were alone, you take the room
+back with the same code.
+
+**Flat and sharp.** No gradients and no blurred shadows: flat colours,
+hard 1px edges. Seats at rest sit on whole pixels with no scaling, and
+nothing is centred with a −50% transform, so faces and text are never
+resampled.
+
 **Room code, hidden by default.** The header shows `••••••` with buttons
 to show it and to copy it, so you can screen share without giving the room
 away. **Copy Invite** copies the link without showing it. The code shows in
@@ -140,7 +153,8 @@ to where they're going.
   second, and resumes on the first frame of speech, so nothing is clipped.
   It costs about 9 ms: measured in Chrome, the jitter buffer sat at ~36 ms
   with it and ~27 ms without. Turn it off in Voice Settings to save those
-  9 ms. It applies to what people send *you*, from your next join.
+  9 ms. It applies to what people send *you*. Changing it reconnects you for
+  a moment, since it's part of how each call is set up.
 - **Spatial audio off by default.** With it off, each voice plays from a plain
   `<audio>` element, the shortest path the browser has from the network to your
   ears.
@@ -247,8 +261,8 @@ real hardware):
   <img src="docs/screenshots/ll-settings.jpg" width="60%" alt="Low-latency engine settings">
 </p>
 
-Every knob applies live, except the output buffer, which takes effect when you
-next join:
+Every knob applies live. The output buffer can only be set when the audio
+starts, so changing it reconnects you on the spot:
 
 | Setting | Default | What it does |
 | --- | --- | --- |

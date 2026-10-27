@@ -45,7 +45,8 @@ const reducedMotion = typeof matchMedia === 'function' && matchMedia('(prefers-r
 
 const geometry = computed(() => {
   const { w, h } = size
-  const avatar = Math.round(Math.max(56, Math.min(92, Math.min(w, h) * 0.1)))
+  // Even, so its centre lands on a whole pixel.
+  const avatar = 2 * Math.round(Math.max(56, Math.min(92, Math.min(w, h) * 0.1)) / 2)
   // Name tag, plus the route card under it when that's on.
   const label = props.showRoute ? 160 : 34
   // Room for the floating call controls along the bottom.
@@ -152,17 +153,28 @@ function paintSeat(id: string) {
   const g = geometry.value
   const { x, y } = seatOffset(seat.angle.x, radius.x)
   const p = Math.max(0, Math.min(1, seat.presence.x))
-  el.style.transform = `translate3d(${(g.cx + x).toFixed(2)}px, ${(g.cy + y).toFixed(2)}px, 0) translate(-50%, -50%) scale(${(0.55 + 0.45 * p).toFixed(4)})`
-  el.style.opacity = p.toFixed(3)
+  const left = g.cx + x - g.avatar / 2
+  const top = g.cy + y - g.avatar / 2
+  // At rest: whole pixels and no scale, so the face and name are drawn
+  // crisp rather than resampled. Only while moving is it fractional.
+  const still = seat.angle.v === 0 && seat.presence.v === 0 && p === 1 && radius.v === 0
+  el.style.transform = still
+    ? `translate(${Math.round(left)}px, ${Math.round(top)}px)`
+    : `translate(${left.toFixed(2)}px, ${top.toFixed(2)}px) scale(${(0.55 + 0.45 * p).toFixed(4)})`
+  el.style.opacity = p === 1 ? '' : p.toFixed(3)
 }
 
 function paintTable() {
   const el = tableEl.value
   if (!el) return
   const g = geometry.value
+  const still = radius.v === 0
   const r = Math.max(0, radius.x - g.avatar * 0.22)
-  el.style.width = el.style.height = (2 * r).toFixed(2) + 'px'
-  el.style.transform = `translate3d(${(g.cx - r).toFixed(2)}px, ${(g.cy - r).toFixed(2)}px, 0)`
+  const d = still ? 2 * Math.round(r) : 2 * r
+  const left = g.cx - d / 2
+  const top = g.cy - d / 2
+  el.style.width = el.style.height = d.toFixed(2) + 'px'
+  el.style.transform = still ? `translate(${Math.round(left)}px, ${Math.round(top)}px)` : `translate(${left.toFixed(2)}px, ${top.toFixed(2)}px)`
 }
 
 function paint() {
@@ -309,59 +321,61 @@ const count = computed(() => props.members.filter(m => !m.away).length || 1)
           :layout="settledTick"
         />
       </div>
-      <div class="tag">
-        <span class="name">{{ member(id)?.name }}</span>
-        <span v-if="member(id)?.away" class="sub">reconnecting…</span>
-        <Icon v-if="mutedOf(id)" name="mic" :size="16" slash class="state" />
-        <Icon v-if="deafenedOf(id)" name="headphones" :size="16" slash class="state" />
-        <Icon v-if="silenced[id]" name="speaker" :size="16" slash class="state" />
-        <span
-          v-if="showPing && !isSelf(id) && links[id]?.rttMs != null"
-          class="ping"
-          :class="pingLevel(links[id].rttMs!)"
-          :title="routeLabel(links[id])"
-        >
-          {{ Math.round(links[id].rttMs!) }} ms
-        </span>
-      </div>
-      <div v-if="showRoute && !isSelf(id)" class="route">
-        <template v-if="links[id]">
-          <div class="engine" :class="links[id].engine">
-            {{ links[id].engine === 'll' ? 'Low-latency engine' : 'WebRTC audio' }}
-          </div>
-          <div class="route-head" :class="links[id].route ?? ''">
-            <span class="dot" />
-            {{ routeLabel(links[id]) }}
-          </div>
-          <div class="route-line">
-            {{ [links[id].protocol?.toUpperCase(), links[id].relayProtocol ? `${links[id].relayProtocol!.toUpperCase()} to relay` : '', links[id].codec, links[id].kbps == null ? '' : `${Math.round(links[id].kbps!)} kbps`]
-              .filter(Boolean)
-              .join(' · ') }}
-          </div>
-          <div
-            v-if="links[id].measuredMs != null"
-            class="route-line big"
-            title="Measured: their capture time (stamped on the audio) to when it reached your speakers. Exact on one machine; across machines it's as good as your two clocks."
+      <div class="under">
+        <div class="tag">
+          <span class="name">{{ member(id)?.name }}</span>
+          <span v-if="member(id)?.away" class="sub">reconnecting…</span>
+          <Icon v-if="mutedOf(id)" name="mic" :size="16" slash class="state" />
+          <Icon v-if="deafenedOf(id)" name="headphones" :size="16" slash class="state" />
+          <Icon v-if="silenced[id]" name="speaker" :size="16" slash class="state" />
+          <span
+            v-if="showPing && !isSelf(id) && links[id]?.rttMs != null"
+            class="ping"
+            :class="pingLevel(links[id].rttMs!)"
+            :title="routeLabel(links[id])"
           >
-            {{ Math.round(links[id].measuredMs!) }} ms mouth to ear
-          </div>
-          <div v-else-if="links[id].mouthToEarMs != null" class="route-line big" :title="breakdownTitle(links[id])">
-            ≈ {{ Math.round(links[id].mouthToEarMs!) }} ms mouth to ear
-          </div>
-          <div v-if="links[id].mouthToEarMs != null" class="route-line dim wrap">
-            mic {{ n0(links[id].captureMs) }} · codec {{ n0(links[id].codecMs) }} · net {{ n0(links[id].rttMs! / 2) }} · buffer
-            {{ n0(links[id].bufferMs) }} · out {{ n0(links[id].playoutMs) }}
-          </div>
-          <div v-if="links[id].ll" class="route-line dim">
-            target {{ n0(links[id].ll!.targetMs) }} ms · late {{ links[id].ll!.late }} · concealed
-            {{ links[id].ll!.concealedPct.toFixed(1) }}%
-          </div>
-          <div class="route-line dim">
-            jitter {{ fmt(links[id].jitterMs) }} · {{ links[id].ll ? 'gaps' : 'loss' }}
-            {{ links[id].lossPct == null ? '–' : links[id].lossPct!.toFixed(links[id].lossPct! < 1 ? 1 : 0) + '%' }}
-          </div>
-        </template>
-        <div v-else class="route-head">Connecting…</div>
+            {{ Math.round(links[id].rttMs!) }} ms
+          </span>
+        </div>
+        <div v-if="showRoute && !isSelf(id)" class="route">
+          <template v-if="links[id]">
+            <div class="engine" :class="links[id].engine">
+              {{ links[id].engine === 'll' ? 'Low-latency engine' : 'WebRTC audio' }}
+            </div>
+            <div class="route-head" :class="links[id].route ?? ''">
+              <span class="dot" />
+              {{ routeLabel(links[id]) }}
+            </div>
+            <div class="route-line">
+              {{ [links[id].protocol?.toUpperCase(), links[id].relayProtocol ? `${links[id].relayProtocol!.toUpperCase()} to relay` : '', links[id].codec, links[id].kbps == null ? '' : `${Math.round(links[id].kbps!)} kbps`]
+                .filter(Boolean)
+                .join(' · ') }}
+            </div>
+            <div
+              v-if="links[id].measuredMs != null"
+              class="route-line big"
+              title="Measured: their capture time (stamped on the audio) to when it reached your speakers. Exact on one machine; across machines it's as good as your two clocks."
+            >
+              {{ Math.round(links[id].measuredMs!) }} ms mouth to ear
+            </div>
+            <div v-else-if="links[id].mouthToEarMs != null" class="route-line big" :title="breakdownTitle(links[id])">
+              ≈ {{ Math.round(links[id].mouthToEarMs!) }} ms mouth to ear
+            </div>
+            <div v-if="links[id].mouthToEarMs != null" class="route-line dim wrap">
+              mic {{ n0(links[id].captureMs) }} · codec {{ n0(links[id].codecMs) }} · net {{ n0(links[id].rttMs! / 2) }} · buffer
+              {{ n0(links[id].bufferMs) }} · out {{ n0(links[id].playoutMs) }}
+            </div>
+            <div v-if="links[id].ll" class="route-line dim">
+              target {{ n0(links[id].ll!.targetMs) }} ms · late {{ links[id].ll!.late }} · concealed
+              {{ links[id].ll!.concealedPct.toFixed(1) }}%
+            </div>
+            <div class="route-line dim">
+              jitter {{ fmt(links[id].jitterMs) }} · {{ links[id].ll ? 'gaps' : 'loss' }}
+              {{ links[id].lossPct == null ? '–' : links[id].lossPct!.toFixed(links[id].lossPct! < 1 ? 1 : 0) + '%' }}
+            </div>
+          </template>
+          <div v-else class="route-head">Connecting…</div>
+        </div>
       </div>
     </div>
   </div>
@@ -379,22 +393,16 @@ const count = computed(() => props.members.filter(m => !m.away).length || 1)
   position: absolute;
   left: 0;
   top: 0;
-  will-change: transform, width, height;
   border-radius: 50%;
-  /* Seen from straight above: a flat disc, lit from overhead, shadow all round. */
-  background: radial-gradient(circle at 50% 50%, #3a3c42 0%, #2f3136 60%, #26282c 100%);
-  box-shadow:
-    0 0 70px rgba(0, 0, 0, 0.6),
-    0 0 0 1px rgba(255, 255, 255, 0.05),
-    inset 0 0 0 6px rgba(0, 0, 0, 0.12),
-    inset 0 0 50px rgba(0, 0, 0, 0.25);
+  /* Seen from straight above: a flat disc with a hard edge. */
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-strong);
 }
 .felt {
   position: absolute;
   inset: 14%;
   border-radius: 50%;
-  border: 1px solid rgba(255, 255, 255, 0.04);
-  background: radial-gradient(circle at 50% 50%, rgba(88, 101, 242, 0.08), transparent 70%);
+  border: 1px solid #35373c;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -423,8 +431,6 @@ const count = computed(() => props.members.filter(m => !m.away).length || 1)
   top: 0;
   width: var(--avatar);
   height: var(--avatar);
-  opacity: 0;
-  will-change: transform, opacity;
   cursor: default;
 }
 .seat:not(.self) {
@@ -432,32 +438,38 @@ const count = computed(() => props.members.filter(m => !m.away).length || 1)
 }
 .ring {
   border-radius: 50%;
-  box-shadow:
-    0 0 0 3px var(--bg-stage),
-    0 0 16px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 0 0 3px var(--bg-stage);
   transition: box-shadow 0.08s ease;
 }
 .seat.speaking .ring {
   box-shadow:
     0 0 0 3px var(--bg-stage),
-    0 0 0 6px var(--green),
-    0 0 16px rgba(0, 0, 0, 0.5);
+    0 0 0 6px var(--green);
 }
 .seat.away .ring {
   opacity: 0.45;
 }
-.tag {
+.under {
+  /* Centred by layout, not by a -50% transform, so text sits on whole pixels. */
   position: absolute;
-  top: calc(100% + 8px);
-  left: 50%;
-  transform: translateX(-50%);
+  top: 100%;
+  left: -150px;
+  right: -150px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  pointer-events: none;
+}
+.tag {
+  margin-top: 8px;
+  pointer-events: auto;
   display: flex;
   align-items: center;
   gap: 4px;
   max-width: 200px;
   padding: 3px 8px;
   border-radius: 4px;
-  background: rgba(0, 0, 0, 0.6);
+  background: var(--bg-floating);
   color: #fff;
   font-size: 14px;
   font-weight: 500;
@@ -495,16 +507,13 @@ const count = computed(() => props.members.filter(m => !m.away).length || 1)
   color: var(--red);
 }
 .route {
-  position: absolute;
-  top: calc(100% + 36px);
+  margin-top: 6px;
   z-index: 1;
-  left: 50%;
-  transform: translateX(-50%);
   width: 236px;
   padding: 6px 8px;
   border-radius: 6px;
-  background: rgba(17, 18, 20, 0.88);
-  box-shadow: 0 0 0 1px var(--border-subtle);
+  background: var(--bg-floating);
+  border: 1px solid var(--border-strong);
   font-size: 12px;
   line-height: 16px;
   color: var(--text-normal);

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { LL_DEFAULTS, LL_RANGES, lookaheadMs, type FrameMs, type LLConfig, type OpusApplication } from '../audio/ll/config'
-import { call, llSupported, updateLL, updatePrefs } from '../call'
+import { call, llSupported, setOutputBuffer, updateLL } from '../call'
 import Segmented from './Segmented.vue'
 import Slider from './Slider.vue'
 import Switch from './Switch.vue'
@@ -52,7 +52,7 @@ const r = LL_RANGES
       label="Low-Latency Engine (Experimental)"
       :hint="
         llSupported
-          ? 'Replaces WebRTC’s audio with people who have it on too: the browser’s Opus at frame sizes WebRTC won’t do, our own jitter buffer, and packets that are never retransmitted. Changes apply live.'
+          ? 'Replaces WebRTC’s audio with people who have it on too: the browser’s Opus at frame sizes WebRTC won’t do, our own jitter buffer, and packets that are never retransmitted.'
           : 'This browser doesn’t have WebCodecs audio, which the engine needs.'
       "
       :model-value="c.enabled && llSupported"
@@ -72,11 +72,11 @@ const r = LL_RANGES
         { value: 'interactive', label: 'Browser default (~10 ms)' }
       ]"
       :model-value="call.prefs.outputBuffer"
-      @update:model-value="v => updatePrefs({ outputBuffer: v })"
+      @update:model-value="setOutputBuffer"
     />
     <p class="note">
       Web Audio’s buffer to your speakers. Smallest is far less delay and much steadier timing for this engine; pick the default
-      if you hear crackling. Takes effect when you next join.
+      if you hear crackling. Changing it reconnects you for a moment.
     </p>
 
     <span class="eyebrow">Sending</span>

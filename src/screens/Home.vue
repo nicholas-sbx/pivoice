@@ -72,11 +72,6 @@ onMounted(() => {
 
 <template>
   <main class="home">
-    <div class="backdrop" aria-hidden="true">
-      <div class="blob a" />
-      <div class="blob b" />
-      <div class="blob c" />
-    </div>
 
     <section class="card">
       <div class="brand">
@@ -171,42 +166,7 @@ onMounted(() => {
   display: grid;
   place-items: center;
   overflow: hidden;
-  background: #1a1b2e;
-}
-.backdrop {
-  position: absolute;
-  inset: 0;
-  background:
-    radial-gradient(ellipse at 20% 0%, rgba(88, 101, 242, 0.55), transparent 55%),
-    radial-gradient(ellipse at 100% 100%, rgba(235, 69, 158, 0.25), transparent 50%),
-    linear-gradient(160deg, #404eed 0%, #2b2f7a 45%, #16172b 100%);
-}
-.blob {
-  position: absolute;
-  border-radius: 50%;
-  filter: blur(2px);
-  opacity: 0.18;
-  background: radial-gradient(circle at 35% 35%, #fff, transparent 70%);
-}
-.blob.a {
-  width: 520px;
-  height: 520px;
-  left: -140px;
-  bottom: -180px;
-}
-.blob.b {
-  width: 260px;
-  height: 260px;
-  right: 8%;
-  top: 10%;
-  opacity: 0.12;
-}
-.blob.c {
-  width: 120px;
-  height: 120px;
-  right: 30%;
-  bottom: 12%;
-  opacity: 0.1;
+  background: var(--brand);
 }
 
 .card {
@@ -216,7 +176,6 @@ onMounted(() => {
   padding: 32px;
   border-radius: 8px;
   background: var(--bg-primary);
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
   text-align: center;
 }
 .brand {

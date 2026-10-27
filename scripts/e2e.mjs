@@ -39,7 +39,8 @@ async function open(name, code = '') {
   return page
 }
 
-const seats = page => page.$$eval('.seat', els => els.filter(e => Number(e.style.opacity) > 0.5).length)
+// Fully there means no inline opacity at all (seats at rest are left untouched so they stay crisp).
+const seats = page => page.$$eval('.seat', els => els.filter(e => (e.style.opacity === '' ? 1 : Number(e.style.opacity)) > 0.5).length)
 const status = page => page.textContent('.status')
 
 async function expectSeats(page, n, label) {
@@ -274,6 +275,18 @@ try {
     await dan.screenshot({ path: `${SHOTS}/ll-settings.png` })
     await dan.click('button[aria-label="Voice Settings"]')
   }
+
+  // A setting that needs a fresh connection reconnects on the spot: Dan stays in the room, as himself.
+  const before = await seats(dan)
+  await dan.click('button[aria-label="Voice Settings"]')
+  await dan.click('button[role="tab"]:has-text("Low Latency")')
+  await dan.click('button:has-text("Browser default")')
+  await dan.click('button[aria-label="Voice Settings"]')
+  await dan.waitForSelector('.status:has-text("Reconnecting")', { timeout: 5_000 }).catch(() => {})
+  await expectSeats(dan, before, 'Dan after reconnecting to apply a setting')
+  await expectHearsSomeone(dan, 'Dan after reconnecting')
+  await expectSeats(bob, before, 'Bob while Dan reconnected')
+  ok('changing the output buffer reconnected Dan on the spot; same seat, still hearing everyone')
 
   if (SHOTS) {
     const home = await browser.newPage({ viewport: { width: 1440, height: 900 } })

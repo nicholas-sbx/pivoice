@@ -306,25 +306,23 @@ h1 {
   position: relative;
   flex: 1;
   min-height: 0;
-  background:
-    radial-gradient(ellipse at 50% 45%, rgba(88, 101, 242, 0.06), transparent 60%),
-    var(--bg-stage);
+  background: var(--bg-stage);
 }
 
 .pill {
   position: absolute;
-  left: 50%;
+  left: 0;
+  right: 0;
+  margin: 0 auto;
+  width: max-content;
   bottom: 24px;
-  transform: translateX(-50%);
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 8px;
   border-radius: 40px;
   background: var(--bg-floating);
-  box-shadow:
-    0 12px 32px rgba(0, 0, 0, 0.5),
-    0 0 0 1px var(--border-subtle);
+  box-shadow: 0 0 0 1px var(--border-subtle);
   z-index: 5;
 }
 .settings-anchor {

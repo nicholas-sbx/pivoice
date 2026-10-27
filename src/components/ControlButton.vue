@@ -28,9 +28,11 @@ defineEmits<{ click: [MouseEvent] }>()
     @click="$emit('click', $event)"
   >
     <Icon :name="icon" :size="danger ? 26 : 22" :slash="off" />
-    <span class="tip" role="tooltip">
-      {{ label }}
-      <kbd v-if="shortcut">{{ shortcut }}</kbd>
+    <span class="tip-wrap">
+      <span class="tip" role="tooltip">
+        {{ label }}
+        <kbd v-if="shortcut">{{ shortcut }}</kbd>
+      </span>
     </span>
   </button>
 </template>
@@ -83,11 +85,19 @@ defineEmits<{ click: [MouseEvent] }>()
   background: var(--red-hover);
 }
 
-.tip {
+.tip-wrap {
+  /* Centred by layout, not a -50% transform, so the text is on whole pixels. */
   position: absolute;
   bottom: calc(100% + 12px);
-  left: 50%;
-  transform: translate(-50%, 4px);
+  left: -150px;
+  right: -150px;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+}
+.tip {
+  position: relative;
+  transform: translateY(4px);
   padding: 6px 10px;
   border-radius: 5px;
   background: var(--bg-floating);
@@ -118,7 +128,7 @@ defineEmits<{ click: [MouseEvent] }>()
 .ctl:hover .tip,
 .ctl:focus-visible .tip {
   opacity: 1;
-  transform: translate(-50%, 0);
+  transform: none;
 }
 kbd {
   font-family: var(--font);

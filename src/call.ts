@@ -131,6 +131,34 @@ export async function startCall(kind: 'create' | 'join', name: string, code = ''
   call.silenced = {}
   call.links = {}
   snapshots.clear()
+  await connect(kind, name, code)
+}
+
+/** Set while we drop and come straight back (rejoinCall): the room stays on screen. */
+let rejoining = false
+
+/**
+ * Drop the call and come straight back into the same room as the same
+ * person, for settings that can only apply to a fresh connection (the
+ * audio output buffer, what we ask senders for in SDP). Everyone else
+ * sees us reconnecting for a moment; our seat, mute state and the volumes
+ * we've set for people all carry over.
+ */
+export async function rejoinCall() {
+  const s = session
+  if (!s || call.phase !== 'room' || rejoining) return
+  const code = s.code
+  rejoining = true
+  call.status = 'reconnecting'
+  s.drop()
+  // Give the broker a moment to let go of our id.
+  await new Promise(r => setTimeout(r, 250))
+  await connect('join', call.prefs.name, code, s.selfId)
+}
+
+async function connect(kind: 'create' | 'join', name: string, code: string, selfId?: string) {
+  snapshots.clear()
+  call.links = {}
 
   const eng = new AudioEngine(call.prefs.outputBuffer)
   engine = eng
@@ -138,7 +166,9 @@ export async function startCall(kind: 'create' | 'join', name: string, code = ''
   await eng.openMic(micSettings())
   if (engine !== eng) return
   call.micProblem = eng.micProblem
-  if (eng.micProblem === 'denied') toast("Microphone blocked. You can listen, but nobody can hear you.", 'error', 7000)
+  if (selfId) {
+    // Coming back: already told them.
+  } else if (eng.micProblem === 'denied') toast("Microphone blocked. You can listen, but nobody can hear you.", 'error', 7000)
   else if (eng.micProblem) toast("Couldn't open a microphone. You can listen, but nobody can hear you.", 'error', 7000)
   eng.setSpatial(call.prefs.spatial)
   if (call.prefs.outputId) void eng.setOutputDevice(call.prefs.outputId)
@@ -166,7 +196,8 @@ export async function startCall(kind: 'create' | 'join', name: string, code = ''
       stream: eng.sendStream,
       peerOptions: peerOptions(iceServers),
       dtx: call.prefs.dtx,
-      ll: llOn() && !!ll
+      ll: llOn() && !!ll,
+      selfId
     },
     {
       status: (status, failure) => {
@@ -216,7 +247,8 @@ export async function startCall(kind: 'create' | 'join', name: string, code = ''
   }
   call.selfId = s.selfId
   if (kind === 'create') await s.create()
-  else await s.join(code)
+  // Coming back: if the room went when we left (we were alone), it's ours again.
+  else await s.join(code, !!selfId)
 }
 
 function onStatus(status: SessionStatus, failure?: SessionFailure) {
@@ -224,19 +256,24 @@ function onStatus(status: SessionStatus, failure?: SessionFailure) {
   call.status = status
   if (status === 'connected') {
     if (session) call.code = session.code
+    rejoining = false
+    if (!speakingTimer) startSpeakingPoll()
+    if (!statsTimer) startStatsPoll()
     if (call.phase !== 'room') {
       call.phase = 'room'
       call.joining = null
       // The code stays out of the address bar, like everywhere else it's hidden by default.
       if (location.hash) history.replaceState(null, '', location.pathname + location.search)
-      startSpeakingPoll()
-      startStatsPoll()
     }
   } else if (status === 'failed') {
+    rejoining = false
     cleanup()
     call.error = wasInRoom ? 'Lost the connection to the room.' : FAILURES[failure ?? 'unreachable']
   } else if (status === 'ended') {
     cleanup()
+  } else if (rejoining) {
+    // Still putting ourselves back together: say so in the header.
+    call.status = 'reconnecting'
   }
 }
 
@@ -253,6 +290,8 @@ function cleanup() {
   statsTimer = null
   call.links = {}
   snapshots.clear()
+  // Coming straight back: keep the room on screen, everyone at the table.
+  if (rejoining) return
   call.phase = 'home'
   call.joining = null
   call.members = []
@@ -360,6 +399,20 @@ function median(xs: number[] | undefined): number | null {
   if (!xs?.length) return null
   const s = [...xs].sort((a, b) => a - b)
   return s[Math.floor(s.length / 2)]
+}
+
+/** Web Audio's output buffer is fixed when the audio context is made, so changing it reconnects you. */
+export function setOutputBuffer(v: Prefs['outputBuffer']) {
+  if (v === call.prefs.outputBuffer) return
+  updatePrefs({ outputBuffer: v })
+  void rejoinCall()
+}
+
+/** What we ask senders for (DTX) is in the SDP of each call, so changing it reconnects you. */
+export function setDtx(on: boolean) {
+  if (on === call.prefs.dtx) return
+  updatePrefs({ dtx: on })
+  void rejoinCall()
 }
 
 /** Change low-latency engine settings; everything applies live. */

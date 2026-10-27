@@ -43,6 +43,11 @@ export interface SessionOptions {
   dtx: boolean
   /** Experimental low-latency engine on (see audio/ll). */
   ll: boolean
+  /**
+   * Come back as someone we already were (see Session.drop): the host
+   * still has us, marked reconnecting, so we keep our seat and place.
+   */
+  selfId?: string
 }
 
 interface LLLink {
@@ -72,7 +77,7 @@ const CALL_RETRY_MS = 1_500
 const LL_MAX_BUFFERED = 16 * 1024
 
 export class Session {
-  readonly selfId = newMemberPeerId()
+  readonly selfId: string
   code = ''
   private peer: Peer | null = null
   private host: RoomHost | null = null
@@ -106,6 +111,7 @@ export class Session {
     opts: SessionOptions,
     private events: SessionEvents
   ) {
+    this.selfId = opts.selfId ?? newMemberPeerId()
     this.self = { name: opts.name, muted: opts.muted, deafened: opts.deafened, ll: opts.ll }
     this.stream = opts.stream
     this.options = opts.peerOptions
@@ -131,27 +137,48 @@ export class Session {
   }
 
   /** Join the room with this code. */
-  async join(code: string): Promise<void> {
+  /**
+   * Join the room with this code. `orCreate`: if nobody has it (we were
+   * the only one there, say), take it ourselves rather than failing.
+   */
+  async join(code: string, orCreate = false): Promise<void> {
     this.code = code
+    this.orCreate = orCreate
     this.events.status('connecting')
     if (!(await this.openPeer())) return
     this.dial()
   }
+  private orCreate = false
 
   // ---- our own peer ------------------------------------------------------
 
-  private openPeer(): Promise<boolean> {
+  /** Our own peer, retrying for a few seconds if the broker still holds our id (coming back as ourselves). */
+  private async openPeer(): Promise<boolean> {
+    for (let attempt = 0; ; attempt++) {
+      const r = await this.tryOpenPeer()
+      if (r !== 'taken') return r === 'ok'
+      if (attempt >= 12 || this.ended) {
+        this.fail('unreachable')
+        return false
+      }
+      await new Promise(res => setTimeout(res, 400))
+    }
+  }
+
+  private tryOpenPeer(): Promise<'ok' | 'taken' | 'fail'> {
     return new Promise(resolve => {
       const peer = new Peer(this.selfId, this.options)
       this.peer = peer
+      let opened = false
       const timer = setTimeout(() => {
         this.fail('unreachable')
-        resolve(false)
+        resolve('fail')
       }, PEER_OPEN_TIMEOUT_MS)
       peer.on('open', () => {
         clearTimeout(timer)
+        opened = true
         this.peerRetries = 0
-        resolve(!this.ended)
+        resolve(this.ended ? 'fail' : 'ok')
       })
       peer.on('call', call => this.onIncomingCall(call))
       peer.on('connection', conn => this.onIncomingLL(conn))
@@ -165,7 +192,11 @@ export class Session {
         if (type === 'browser-incompatible') {
           clearTimeout(timer)
           this.fail('unsupported')
-          resolve(false)
+          resolve('fail')
+        } else if (type === 'unavailable-id' && !opened) {
+          clearTimeout(timer)
+          peer.destroy()
+          resolve('taken')
         } else if (type === 'peer-unavailable') {
           this.onPeerUnavailable(err.message)
         }
@@ -266,7 +297,8 @@ export class Session {
         this.conn = null
         this.onDialFailed('timeout')
       },
-      this.connected ? RECOVER_DIAL_TIMEOUT_MS : FIRST_DIAL_TIMEOUT_MS
+      // Coming back (orCreate) we may be dialling our own old room on its way out: don't wait long.
+      this.connected || this.orCreate ? RECOVER_DIAL_TIMEOUT_MS : FIRST_DIAL_TIMEOUT_MS
     )
     this.lastHeard = 0
 
@@ -321,6 +353,15 @@ export class Session {
     this.clearOpenTimer()
     if (this.ended) return
     if (!this.connected) {
+      if (this.attempts >= 2 && this.orCreate) {
+        // Nobody has the room: it's ours. If someone beats us to it, dial them.
+        void this.becomeHost(this.code, []).then(r => {
+          if (r === 'ok' || this.ended) return
+          this.attempts = 0
+          this.dial()
+        })
+        return
+      }
       if (this.attempts >= FIRST_DIAL_ATTEMPTS) return this.fail(kind === 'missing' ? 'not-found' : 'unreachable')
       this.recoverTimer = setTimeout(() => this.dial(), 700)
       return
@@ -719,6 +760,18 @@ export class Session {
   leave() {
     if (this.ended) return
     this.send({ t: 'leave' })
+    this.host?.stop(true)
+    this.teardown()
+    this.setStatus('ended')
+  }
+
+  /**
+   * Go without saying goodbye, to come straight back as the same member
+   * (see SessionOptions.selfId): the host keeps us as reconnecting for a
+   * few seconds, so we keep our seat. If we're the host, hand the room on.
+   */
+  drop() {
+    if (this.ended) return
     this.host?.stop(true)
     this.teardown()
     this.setStatus('ended')

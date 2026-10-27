@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { AudioEngine, type SpatialMode } from '../audio/engine'
-import { applyMicPrefs, call, getEngine, setOutput, setSpatial, updatePrefs } from '../call'
+import { applyMicPrefs, call, getEngine, setDtx, setOutput, setSpatial } from '../call'
 import Icon from './Icon.vue'
 import LLSettings from './LLSettings.vue'
 import Switch from './Switch.vue'
@@ -41,12 +41,6 @@ const modes: { value: SpatialMode; label: string; hint: string }[] = [
   { value: 'hrtf', label: 'HRTF', hint: 'Full 3D around your head, on headphones.' }
 ]
 const modeHint = computed(() => modes.find(m => m.value === call.prefs.spatial)?.hint)
-
-const dtxChanged = ref(false)
-function setDtx(on: boolean) {
-  updatePrefs({ dtx: on })
-  dtxChanged.value = true
-}
 
 const processing = [
   { key: 'echoCancellation', label: 'Echo Cancellation' },
@@ -154,7 +148,7 @@ onBeforeUnmount(() => {
       <p class="note">Off for the lowest latency. Turn them on if you're not on headphones.</p>
       <Switch
         label="Silence Suppression (DTX)"
-        :hint="`People stop sending you audio while they're quiet. Saves bandwidth, adds ~9 ms of buffering.${dtxChanged ? ' Takes effect when you rejoin.' : ''}`"
+        hint="People stop sending you audio while they're quiet. Saves bandwidth, adds ~9 ms of buffering. Changing it reconnects you for a moment."
         :model-value="call.prefs.dtx"
         @update:model-value="setDtx"
       />
@@ -170,7 +164,7 @@ onBeforeUnmount(() => {
   overflow-y: auto;
   bottom: calc(100% + 14px);
   left: 50%;
-  transform: translateX(-50%);
+  margin-left: -220px;
   width: 440px;
   padding: 16px;
   border-radius: 8px;
