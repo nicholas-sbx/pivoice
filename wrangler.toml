@@ -1,6 +1,6 @@
 # The app: a Worker that serves the static build in dist/ and mints TURN
 # credentials at /api/ice. Deployed by .github/workflows/release.yml.
-name = "pivoice"
+name = "voice"
 main = "worker/index.ts"
 compatibility_date = "2026-09-01"
 

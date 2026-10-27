@@ -164,7 +164,7 @@ Both can be on at once. The Worker's servers come first.
 
 ## Deploying
 
-The app is one Cloudflare Worker (`pivoice`, from `wrangler.toml`). It serves
+The app is one Cloudflare Worker named `voice` (from `wrangler.toml`), so it lives at `voice.<your-subdomain>.workers.dev`. It serves
 the static build in `dist/`, and `/api/ice` is the only thing that runs code.
 CI normally deploys it (next section). By hand:
 
