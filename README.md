@@ -232,6 +232,12 @@ checks for them and has no environment:
 | `VITE_PEER_HOST`, `VITE_PEER_PORT`, `VITE_PEER_PATH`, `VITE_PEER_SECURE`, `VITE_PEER_KEY` | variables | no | A self-hosted PeerJS broker. |
 | `TURN_KEY_ID`, `TURN_KEY_API_TOKEN` | secrets | no | Cloudflare Realtime TURN key, copied to the Worker's secrets on each release so `/api/ice` can mint credentials. |
 
+## Later
+
+- **Log in with Discord.** Eventually you'll sign in with Discord and the app
+  will take your username and avatar from there, instead of typing a name and
+  getting a blobatar. Not started: for now it's a typed name and a blobatar.
+
 ## Project map
 
 ```
