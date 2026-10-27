@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { AudioEngine, type SpatialMode } from '../audio/engine'
-import { applyMicPrefs, call, getEngine, setDtx, setOutput, setSpatial } from '../call'
+import { applyMicPrefs, call, getEngine, llSupported, setDtx, setOutput, setSpatial, startMicTest, stopMicTest, type TestPath } from '../call'
+import Segmented from './Segmented.vue'
 import Icon from './Icon.vue'
 import LLSettings from './LLSettings.vue'
 import Switch from './Switch.vue'
@@ -42,6 +43,21 @@ const modes: { value: SpatialMode; label: string; hint: string }[] = [
 ]
 const modeHint = computed(() => modes.find(m => m.value === call.prefs.spatial)?.hint)
 
+const testPaths = computed<{ value: TestPath; label: string }[]>(() => [
+  { value: 'raw', label: 'Raw' },
+  { value: 'webrtc', label: 'WebRTC audio' },
+  ...(llSupported ? [{ value: 'll' as const, label: 'Low latency' }] : [])
+])
+function pickPath(v: TestPath) {
+  if (call.test.on) void startMicTest(v)
+  else call.test.path = v
+}
+const testHints: Record<TestPath, string> = {
+  raw: 'Mic straight to your ears: your devices and the browser’s buffers. The floor every path sits on.',
+  webrtc: 'Through WebRTC’s encoder, jitter buffer and playout, exactly as a call, minus the network.',
+  ll: 'Through the low-latency engine: its silence gate, encoder, packets, decoder and jitter buffer, minus the network.'
+}
+
 const processing = [
   { key: 'echoCancellation', label: 'Echo Cancellation' },
   { key: 'noiseSuppression', label: 'Noise Suppression' },
@@ -73,6 +89,7 @@ onBeforeUnmount(() => {
   removeEventListener('pointerdown', onDown, true)
   removeEventListener('keydown', onKey)
   cancelAnimationFrame(raf)
+  stopMicTest()
 })
 </script>
 
@@ -113,6 +130,29 @@ onBeforeUnmount(() => {
       <div class="meter" :class="{ dead: !!call.micProblem }">
         <div class="fill" :style="{ transform: `scaleX(${level})` }" />
       </div>
+
+    <div class="row">
+      <span class="eyebrow">Mic Test</span>
+      <p class="note first">
+        Hear yourself through one path, with no network in the way, and see how long it takes. You're deafened while it runs.
+      </p>
+      <Segmented
+        :options="testPaths"
+        :model-value="call.test.path"
+        @update:model-value="pickPath"
+      />
+      <div class="test-row">
+        <button type="button" class="test-btn" :class="{ stop: call.test.on }" @click="call.test.on ? stopMicTest() : startMicTest(call.test.path)">
+          {{ call.test.on ? 'Stop Testing' : "Let's Check" }}
+        </button>
+        <div v-if="call.test.on" class="test-out" aria-live="polite">
+          <strong>{{ call.test.ms === null ? '…' : `${call.test.measured ? '' : '≈ '}${Math.round(call.test.ms)} ms` }}</strong>
+          <span>{{ call.test.measured ? 'mic to ears, measured' : 'mic to ears' }}</span>
+          <small v-if="call.test.detail">{{ call.test.detail }}</small>
+        </div>
+      </div>
+      <p class="note">{{ testHints[call.test.path] }}</p>
+    </div>
       <p v-if="call.micProblem" class="note bad">
         {{ call.micProblem === 'denied' ? 'Microphone access is blocked for this site.' : 'No microphone found.' }}
       </p>
@@ -306,6 +346,54 @@ select {
 .seg button.active {
   background: var(--brand);
   color: #fff;
+}
+.note.first {
+  margin: 0 0 8px;
+}
+.test-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 10px;
+}
+.test-btn {
+  flex: none;
+  min-width: 112px;
+  height: 32px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 3px;
+  background: var(--brand);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.test-btn:hover {
+  background: var(--brand-hover);
+}
+.test-btn.stop {
+  background: var(--red-strong);
+}
+.test-btn.stop:hover {
+  background: var(--red-hover);
+}
+.test-out {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 8px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+.test-out strong {
+  font-size: 18px;
+  color: var(--header-primary);
+  font-variant-numeric: tabular-nums;
+}
+.test-out small {
+  flex-basis: 100%;
+  font-size: 12px;
 }
 .note {
   margin: 8px 0 0;

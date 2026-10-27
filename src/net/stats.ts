@@ -210,3 +210,21 @@ export function routeLabel(s: LinkStats): string {
 export function pingLevel(ms: number): 'good' | 'ok' | 'bad' {
   return ms < 80 ? 'good' : ms < 160 ? 'ok' : 'bad'
 }
+
+const NTP_EPOCH_OFFSET_MS = 2_208_988_800_000
+
+/**
+ * Mouth to ear on the WebRTC path, from the abs-capture-time header (see
+ * sdp.ts): when the newest played frame was captured at the sender, when it
+ * was handed to our audio output, plus Chrome's figure for the output's own
+ * delay. Null when there's no stamp, or the numbers are nonsense (a source
+ * that's gone quiet repeats its last frame).
+ */
+export function captureToSpeakerMs(src: RTCRtpSynchronizationSource | null | undefined, playoutMs: number | null): number | null {
+  const s = src as (RTCRtpSynchronizationSource & { captureTimestamp?: number }) | null | undefined
+  if (!s?.captureTimestamp) return null
+  // Chrome reports this on the wall clock; the spec says the performance timeline.
+  const delivered = s.timestamp > 1e12 ? s.timestamp : performance.timeOrigin + s.timestamp
+  const ms = delivered - (s.captureTimestamp - NTP_EPOCH_OFFSET_MS) + (playoutMs ?? 0)
+  return ms > -1000 && ms < 5000 ? ms : null
+}

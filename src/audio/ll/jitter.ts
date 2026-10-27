@@ -4,10 +4,10 @@
  *
  * Everything is in samples. The sender stamps each frame with its own
  * sample clock (`ts`); we note when each frame arrives on ours. Over the
- * last two seconds:
+ * last few seconds:
  *
  *   base   = the smallest (arrival − ts): the best this path ever does
- *   jitter = the 95th percentile of how much later than that frames arrive
+ *   jitter = a high percentile (99th by default) of how much later than that frames arrive
  *   target = jitter × multiplier + margin, clamped to [min, max]
  *
  * and the sample that should be playing at the start of a block is
@@ -36,6 +36,9 @@ export interface JitterConfig {
   /** Fraction, e.g. 0.02 for ±2%. */
   stretch: number
   concealMs: number
+  /** Which percentile of lateness is "the jitter" (100 = the worst in the window). */
+  percentile: number
+  windowSec: number
 }
 
 export interface JitterStats {
@@ -60,7 +63,6 @@ interface Stored {
   arrival: number
 }
 
-const WINDOW_SECONDS = 2
 const IDLE_AFTER_MS = 80
 
 export class JitterBuffer {
@@ -116,7 +118,7 @@ export class JitterBuffer {
   private estimate(now: number) {
     if (now - this.estimatedAt < this.samples(50)) return
     this.estimatedAt = now
-    const cutoff = now - WINDOW_SECONDS * this.cfg.sampleRate
+    const cutoff = now - this.cfg.windowSec * this.cfg.sampleRate
     let drop = 0
     while (drop < this.arrivals.length - 1 && this.arrivals[drop].at < cutoff) drop++
     if (drop) this.arrivals.splice(0, drop)
@@ -125,7 +127,7 @@ export class JitterBuffer {
     for (const a of this.arrivals) base = Math.min(base, a.off)
     const late = this.arrivals.map(a => a.off - base).sort((x, y) => x - y)
     this.base = base
-    this.jitter = late[Math.min(late.length - 1, Math.floor(late.length * 0.95))]
+    this.jitter = late[Math.min(late.length - 1, Math.floor((late.length * this.cfg.percentile) / 100))]
   }
 
   targetSamples(): number {

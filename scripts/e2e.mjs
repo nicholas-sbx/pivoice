@@ -76,6 +76,22 @@ try {
   ok(`Alice made room ${code}`)
   await expectSeats(alice, 1, 'Alice alone')
 
+  // Mic test, each path, while alone: it deafens her, plays her back, says how long it took.
+  await alice.click('button[aria-label="Voice Settings"]')
+  for (const label of ['Raw', 'WebRTC audio', 'Low latency']) {
+    await alice.click(`.seg button:has-text("${label}")`)
+    if (!(await alice.$('.test-btn.stop'))) await alice.click('.test-btn')
+    await alice.waitForFunction(() => /\d+ ms/.test(document.querySelector('.test-out strong')?.textContent ?? ''), null, { timeout: 15_000 }).catch(() => {
+      throw new Error(`mic test (${label}) never reported a latency`)
+    })
+    if (!(await alice.$('button[aria-label="Undeafen"]'))) throw new Error('mic test should deafen you while it runs')
+    ok(`mic test, ${label}: ` + (await alice.$eval('.test-out', e => e.innerText.replace(/\s*\n\s*/g, ' | '))))
+  }
+  await alice.click('.test-btn')
+  await alice.click('button[aria-label="Voice Settings"]')
+  if (!(await alice.$('button[aria-label="Deafen"]'))) throw new Error('stopping the mic test should undeafen you')
+  ok('mic test stopped, undeafened again')
+
   const bob = await open('Bob', code)
   const cara = await open('Cara', code)
   for (const [p, n] of [

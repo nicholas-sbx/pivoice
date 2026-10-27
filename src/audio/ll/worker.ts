@@ -12,7 +12,7 @@
  * instead, through the same messages.
  */
 /// <reference lib="webworker" />
-import type { LLConfig } from './config'
+import { LOOP_ID, type LLConfig } from './config'
 import { Unwrapper, decodePacket, encodePacket, type Frame } from './packet'
 import type { CaptureFrame, PlaybackMessage } from './worklet'
 
@@ -30,6 +30,9 @@ export type ToWorker =
   | { type: 'remote'; id: string; port: MessagePort }
   | { type: 'drop'; id: string }
   | { type: 'stats' }
+  /** Mic test: also feed what we send straight back into our own receive side, as LOOP_ID. */
+  | { type: 'loop'; on: boolean }
+
 
 export interface WorkerRemoteStats {
   kbps: number | null
@@ -44,7 +47,6 @@ export type FromWorker =
 
 const SR = 48_000
 const STAMP_EVERY = 20
-const DTX_HANGOVER_MS = 150
 /** Skip a packet rather than queue it behind this much unsent data: queued audio is late audio. */
 const MAX_BUFFERED_BYTES = 16 * 1024
 
@@ -62,6 +64,7 @@ interface Remote {
 let cfg: LLConfig
 let active = false
 let muted = false
+let loop = false
 let deafened = new Set<string>()
 let clock: { frame: number; epochMs: number; outMs: number; inMs: number } | null = null
 const channels = new Map<string, RTCDataChannel | 'relayed'>()
@@ -139,11 +142,11 @@ function isSilence(pcm: Float32Array): boolean {
     return false
   }
   quietFor += pcm.length
-  return quietFor > DTX_HANGOVER_MS * 48
+  return quietFor > cfg.dtxHangoverMs * 48
 }
 
 function encode(f: CaptureFrame) {
-  if (!active || muted || !cfg) return
+  if (!active || !cfg || (muted && !loop)) return
   if (cfg.dtx && isSilence(f.pcm)) return
   encoder ??= makeEncoder()
   const us = Math.round((f.ts * 1e6) / SR)
@@ -186,6 +189,9 @@ function captureEpoch(frame: number): number | null {
 }
 
 function send(buf: ArrayBuffer) {
+  // The mic test hears exactly what would have gone out, through the same decode and jitter buffer.
+  if (loop) receive(LOOP_ID, buf.slice(0))
+  if (muted) return
   const relay: string[] = []
   for (const [id, ch] of channels) {
     if (deafened.has(id)) continue
@@ -307,8 +313,11 @@ self.onmessage = (e: MessageEvent<ToWorker>) => {
       // A fresh encoder each time we start, so its numbering starts with us.
       if (!active) closeEncoder()
       return
+    case 'loop':
+      loop = m.on
+      return
     case 'gate':
-      if (m.muted && !muted) closeEncoder()
+      if (m.muted && !muted && !loop) closeEncoder()
       muted = m.muted
       deafened = new Set(m.deafened)
       return

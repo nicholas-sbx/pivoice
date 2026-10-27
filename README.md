@@ -76,6 +76,24 @@ under 160, red above). Right-click someone for **User Volume** and **Mute**
 deafen (`Ctrl+Shift+D`), spatial audio, voice settings, disconnect. Like
 Discord, deafening mutes you too and unmuting undeafens you.
 
+**Mic test.** In Voice Settings, like Discord's **Let's Check**: you hear
+yourself, deafened while it runs (and undeafened after, if you weren't
+before), through one of three paths, none of them touching the network:
+
+- **Raw**: the mic straight to your ears through Web Audio. This is your
+  devices plus the browser's buffers, the floor every other path sits on.
+  Shown as what the browser reports for its buffers (it can't be measured
+  without a microphone hearing your speakers).
+- **WebRTC audio**: two peer connections in the tab, with the same SDP tuning
+  as a call, played out the way calls play. Measured from capture stamps.
+- **Low latency**: the low-latency engine's whole path, looped back inside
+  its worker: silence gate, encoder, packets, decoder, jitter buffer. Measured
+  from capture stamps, with the buffer, concealment and late counts alongside.
+
+In headless Chromium (fake devices): raw ≈ 11 ms, WebRTC audio 45 ms, the
+low-latency engine 24 ms. If the engine sounds choppy in its loopback, the
+cause is on your machine (output buffer, silence gate), not the network.
+
 **Settings apply immediately.** The two settings that only a fresh
 connection can apply (the audio output buffer, and silence suppression on
 WebRTC audio) reconnect you on the spot. You drop and come straight back
@@ -228,8 +246,9 @@ mic → pv-capture AudioWorklet: frames of 2.5–20 ms on the audio clock
   ~0.2 ms.
 - **Our own jitter buffer** ([`src/audio/ll/jitter.ts`](src/audio/ll/jitter.ts)):
   - It tracks the best path delay (the minimum of arrival minus send time
-    over 2 s) and the 95th-percentile jitter above it, and aims for jitter ×
-    multiplier + margin, clamped to a minimum and maximum.
+    over a few seconds) and a high percentile (99th) of the jitter above it,
+    and aims for jitter × multiplier + margin, clamped to a minimum and
+    maximum.
   - It steers toward that target by changing playback speed by up to a few
     %. Gaps are covered by fading out the last frame. After a silence it
     starts the next sentence fresh at the target.
@@ -239,7 +258,9 @@ mic → pv-capture AudioWorklet: frames of 2.5–20 ms on the audio clock
   rest as if it hadn't (its decoder does the same with gaps), which scrambles
   timing. So the engine keeps its own map from each frame to its capture time,
   and gates silence itself. The gate decides per frame from that frame's own
-  level, with a 150 ms hangover, so the start of a word is never waited on.
+  level, with a hangover (400 ms), so the start of a word is never waited
+  on. The threshold is low (−70 dBFS) because the mic comes in raw with no
+  auto gain: in 0.2.0 it was −55, which could chop quiet speech.
 - **Redundancy instead of FEC.** WebCodecs' decoder can't use Opus's in-band
   FEC, so each packet can repeat the previous one or two frames. One lost
   packet then costs nothing, and there's no extra delay.
@@ -266,16 +287,19 @@ starts, so changing it reconnects you on the spot:
 
 | Setting | Default | What it does |
 | --- | --- | --- |
-| Audio output buffer | Smallest (2.7 ms) | Web Audio's buffer to the speakers, for both engines. Browser default (~10 ms) if you hear crackling. |
+| Audio output buffer | Smallest | Web Audio's buffer to the speakers, for both engines: Smallest (Chrome: 128 frames, 2.7 ms), Small (~5 ms where the device offers it), or Browser default (~10 ms). The tab shows what you actually got. Bigger if it crackles. |
 | Frame size | 5 ms | 2.5 / 5 / 10 / 20 ms. Each step down halves the frame delay and doubles the packets. |
 | Opus mode | Low delay | Low delay (CELT, 2.5 ms lookahead), VoIP or Audio (6.5 ms). |
 | Bitrate | 64 kbps | 12–256 kbps. |
 | Encoder complexity | 8 | CPU against quality. No effect on delay. |
 | Redundancy | +1 frame | Each packet repeats 0–2 previous frames. |
 | Silence suppression | On | Send nothing while you're quiet. |
-| Silence threshold | −55 dBFS | What counts as quiet. |
-| Jitter multiplier | 1.2× | Measured jitter is multiplied by this. |
-| Safety margin | 2 ms | Added on top. |
+| Silence threshold | −70 dBFS | What counts as quiet. The tab shows your mic's level live. |
+| Silence hangover | 400 ms | How long it keeps sending after you go quiet. |
+| Jitter percentile | 99 | How much of the measured lateness to cover. 100 covers the worst packet seen. |
+| Jitter window | 3 s | How far back lateness is remembered. |
+| Jitter multiplier | 1× | Measured jitter is multiplied by this. |
+| Safety margin | 3 ms | Added on top. |
 | Minimum / maximum buffer | 0 / 80 ms | Limits on the target. |
 | Speed adjustment | ±2% | How hard playback may steer to the target. 0 only resyncs between sentences. |
 | Concealment | 12 ms | How long a gap is covered before it goes silent. |

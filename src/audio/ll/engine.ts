@@ -1,6 +1,6 @@
 import workletUrl from './worklet.ts?worker&url'
 import LLWorker from './worker.ts?worker'
-import { frameSamples, type LLConfig } from './config'
+import { LOOP_ID, frameSamples, type LLConfig } from './config'
 import type { JitterConfig, JitterStats } from './jitter'
 import type { FromWorker, ToWorker, WorkerRemoteStats } from './worker'
 import type { CaptureMessage, PlaybackMessage } from './worklet'
@@ -65,6 +65,9 @@ export class LowLatencyEngine {
   private capture: AudioWorkletNode | null = null
   private sink: GainNode
   private mic: AudioNode | null = null
+  /** What the call wants (someone listening), and whether the mic test is running: either keeps capture on. */
+  private wanted = false
+  private looping = false
   private active = false
   private remotes = new Map<string, Remote>()
   private clockTimer: ReturnType<typeof setInterval>
@@ -152,8 +155,10 @@ export class LowLatencyEngine {
     if (mic && this.capture) mic.connect(this.capture)
   }
 
-  /** Only capture and encode while someone's listening on this engine. */
-  setActive(on: boolean) {
+  /** Only capture and encode while someone's listening on this engine (or the mic test is). */
+  setActive(want: boolean) {
+    this.wanted = want
+    const on = want || this.looping
     if (on === this.active) return
     this.active = on
     void this.ready.then(() => this.capture?.port.postMessage({ active: this.active } satisfies CaptureMessage))
@@ -235,6 +240,28 @@ export class LowLatencyEngine {
     r.node.disconnect()
   }
 
+  /**
+   * Mic test: our own audio through the whole engine (gate, encode,
+   * packet, decode, jitter buffer) and out to `out`, no network. Its stats
+   * come back under LOOP_ID.
+   */
+  async startLoop(out: AudioNode) {
+    this.looping = true
+    this.setActive(this.wanted)
+    const node = await this.addRemote(LOOP_ID)
+    if (!this.looping || !node) return
+    node.connect(out)
+    this.toWorker({ type: 'loop', on: true })
+  }
+
+  stopLoop() {
+    if (!this.looping) return
+    this.looping = false
+    this.toWorker({ type: 'loop', on: false })
+    this.removeRemote(LOOP_ID)
+    this.setActive(this.wanted)
+  }
+
   /** Ask the worker for fresh numbers; stats() returns the last ones it sent. */
   refresh() {
     this.toWorker({ type: 'stats' })
@@ -265,6 +292,8 @@ export function jitterConfig(cfg: LLConfig): Omit<JitterConfig, 'sampleRate'> {
     marginMs: cfg.marginMs,
     multiplier: cfg.jitterMultiplier,
     stretch: cfg.stretchPct / 100,
-    concealMs: cfg.concealMs
+    concealMs: cfg.concealMs,
+    percentile: cfg.jitterPercentile,
+    windowSec: cfg.jitterWindowSec
   }
 }

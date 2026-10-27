@@ -1,4 +1,4 @@
-import type { SpatialMode } from '../audio/engine'
+import type { OutputBuffer, SpatialMode } from '../audio/engine'
 import { LL_DEFAULTS, sanitizeLL, type LLConfig } from '../audio/ll/config'
 
 export interface Prefs {
@@ -27,7 +27,7 @@ export interface Prefs {
    * the low-latency engine's capture jitter. 'interactive' is the browser's
    * default, for machines that crackle on 'min'.
    */
-  outputBuffer: 'min' | 'interactive'
+  outputBuffer: OutputBuffer
   /** The experimental low-latency engine and all its knobs. */
   ll: LLConfig
 }
@@ -59,7 +59,7 @@ export function loadPrefs(): Prefs {
     if (raw.spatial === 'off' || raw.spatial === 'stereo' || raw.spatial === 'hrtf') p.spatial = raw.spatial
     if (raw.lastSpatial === 'stereo' || raw.lastSpatial === 'hrtf') p.lastSpatial = raw.lastSpatial
     if (typeof raw.inputId === 'string') p.inputId = raw.inputId
-    if (raw.outputBuffer === 'min' || raw.outputBuffer === 'interactive') p.outputBuffer = raw.outputBuffer
+    if (raw.outputBuffer === 'min' || raw.outputBuffer === 'small' || raw.outputBuffer === 'interactive') p.outputBuffer = raw.outputBuffer
     if (typeof raw.outputId === 'string') p.outputId = raw.outputId
     for (const k of ['echoCancellation', 'noiseSuppression', 'autoGainControl', 'showCode', 'showPing', 'showRoute', 'dtx'] as const) {
       if (typeof raw[k] === 'boolean') p[k] = raw[k]

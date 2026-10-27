@@ -1,13 +1,14 @@
 import { reactive } from 'vue'
 import { AudioEngine, type MicProblem, type SpatialMode } from './audio/engine'
-import { lookaheadMs, sanitizeLL, type LLConfig } from './audio/ll/config'
+import { LOOP_ID, lookaheadMs, sanitizeLL, type LLConfig } from './audio/ll/config'
+import { WebRTCLoopback } from './audio/loopback'
 import { LowLatencyEngine } from './audio/ll/engine'
 import { copyText } from './lib/copyText'
 import { loadPrefs, savePrefs, type Prefs } from './lib/prefs'
 import { fetchIceServers, peerOptions, publicUrl } from './net/config'
 import type { Member } from './net/protocol'
 import { Session, type SessionFailure, type SessionStatus } from './net/session'
-import { summarise, type LinkStats, type Snapshot } from './net/stats'
+import { captureToSpeakerMs, summarise, type LinkStats, type Snapshot } from './net/stats'
 
 /**
  * The one call this tab can be in, as reactive state for the UI, plus
@@ -45,14 +46,25 @@ export const call = reactive({
   silenced: {} as Record<string, boolean>,
   /** Ping and route to each person, refreshed every second. */
   links: {} as Record<string, LinkStats>,
-  toasts: [] as Toast[]
+  toasts: [] as Toast[],
+  /** The mic test: your own voice played back to you through one of the paths, with its latency. */
+  test: {
+    on: false,
+    path: 'raw' as TestPath,
+    /** Mic to speakers, ms. */
+    ms: null as number | null,
+    /** Measured from capture stamps, or only what the browser reports for its buffers. */
+    measured: false,
+    detail: ''
+  }
 })
+
+export type TestPath = 'raw' | 'webrtc' | 'll'
 
 let engine: AudioEngine | null = null
 let ll: LowLatencyEngine | null = null
 /** Recent measured mouth-to-ear samples on the WebRTC path, per person. */
 const measured = new Map<string, number[]>()
-const NTP_EPOCH_OFFSET_MS = 2_208_988_800_000
 
 export const llSupported = LowLatencyEngine.supported()
 let session: Session | null = null
@@ -278,6 +290,7 @@ function onStatus(status: SessionStatus, failure?: SessionFailure) {
 }
 
 function cleanup() {
+  stopMicTest()
   session = null
   ll?.close()
   ll = null
@@ -380,14 +393,9 @@ function startStatsPoll() {
  * output, plus Chrome's own figure for the output's delay.
  */
 function measureWebRTC(s: Session, id: string, playoutMs: number | null): number | null {
-  const src = s.syncSource(id) as (RTCRtpSynchronizationSource & { captureTimestamp?: number }) | null
-  if (!src?.captureTimestamp) return median(measured.get(id))
-  // Chrome reports this on the wall clock; the spec says the performance timeline.
-  const delivered = src.timestamp > 1e12 ? src.timestamp : performance.timeOrigin + src.timestamp
-  const sample = delivered - (src.captureTimestamp - NTP_EPOCH_OFFSET_MS) + (playoutMs ?? 0)
+  const sample = captureToSpeakerMs(s.syncSource(id), playoutMs)
   const list = measured.get(id) ?? []
-  // A stale source (they went quiet) repeats the same frame; skip those.
-  if (sample > -1000 && sample < 5000) {
+  if (sample !== null) {
     list.push(sample)
     if (list.length > 5) list.shift()
     measured.set(id, list)
@@ -405,7 +413,89 @@ function median(xs: number[] | undefined): number | null {
 export function setOutputBuffer(v: Prefs['outputBuffer']) {
   if (v === call.prefs.outputBuffer) return
   updatePrefs({ outputBuffer: v })
-  void rejoinCall()
+  const path = call.test.on ? call.test.path : null
+  stopMicTest()
+  void rejoinCall().then(() => {
+    // Carry on testing with the new buffer, so the difference is easy to hear.
+    if (path) void startMicTest(path)
+  })
+}
+
+// ---- mic test ----------------------------------------------------------------
+
+let testTimer: ReturnType<typeof setInterval> | null = null
+let testLoop: WebRTCLoopback | null = null
+/** Whether we deafened you for the test (and so undeafen you after). */
+let testDeafened = false
+
+/**
+ * Hear yourself, like Discord's mic test, through one path with no
+ * network: raw (mic straight to the speakers: your device and the
+ * browser's buffers, the floor everything else sits on), WebRTC audio (its
+ * encoder, jitter buffer and playout, between two connections in this
+ * tab), or the low-latency engine (its gate, encoder, packets, decoder and
+ * jitter buffer). You're deafened while it runs, so you only hear yourself.
+ */
+export async function startMicTest(path: TestPath) {
+  const eng = engine
+  if (!eng || call.phase !== 'room') return
+  stopMicTest()
+  Object.assign(call.test, { on: true, path, ms: null, measured: false, detail: '' })
+  if (!call.deafened) {
+    testDeafened = true
+    call.deafened = true
+    pushSelfState()
+  }
+  if (path === 'raw') {
+    eng.setRawLoopback(true)
+  } else if (path === 'webrtc') {
+    const track = eng.micClone()
+    if (!track) return
+    testLoop = new WebRTCLoopback(track, call.prefs.dtx, call.prefs.outputId)
+    await testLoop.start()
+  } else if (ll) {
+    await ll.startLoop(eng.testOut)
+  }
+  if (!call.test.on || engine !== eng) return
+  const tick = async () => {
+    const t = call.test
+    const out = (eng.ctx.baseLatency + (eng.ctx.outputLatency || 0)) * 1000
+    if (t.path === 'raw') {
+      t.ms = eng.rawLoopbackMs()
+      t.measured = false
+      t.detail = `mic ${Math.round(eng.captureLatencyMs() ?? 0)} + output ${Math.round(out)} ms, as the browser reports them`
+    } else if (t.path === 'webrtc' && testLoop) {
+      const m = await testLoop.measure()
+      t.ms = m.ms
+      t.measured = m.ms !== null
+      t.detail = m.bufferMs === null ? '' : `jitter buffer ${Math.round(m.bufferMs)} ms`
+    } else if (t.path === 'll' && ll) {
+      ll.refresh()
+      const s = ll.stats(LOOP_ID)
+      t.ms = s?.measuredMs ?? null
+      t.measured = t.ms !== null
+      t.detail = s
+        ? `buffer ${Math.round(s.bufferMs ?? 0)} ms (target ${Math.round(s.targetMs)}) · concealed ${s.concealedPct.toFixed(1)}% · late ${s.late}`
+        : ''
+    }
+  }
+  void tick()
+  testTimer = setInterval(() => void tick(), 1000)
+}
+
+export function stopMicTest() {
+  if (testTimer) clearInterval(testTimer)
+  testTimer = null
+  testLoop?.stop()
+  testLoop = null
+  engine?.setRawLoopback(false)
+  ll?.stopLoop()
+  if (call.test.on && testDeafened) {
+    call.deafened = false
+    pushSelfState()
+  }
+  testDeafened = false
+  call.test.on = false
 }
 
 /** What we ask senders for (DTX) is in the SDP of each call, so changing it reconnects you. */
@@ -439,6 +529,8 @@ export function toggleMute() {
 }
 
 export function toggleDeafen() {
+  // Your call now: the mic test won't undeafen you when it stops.
+  testDeafened = false
   call.deafened = !call.deafened
   pushSelfState()
 }

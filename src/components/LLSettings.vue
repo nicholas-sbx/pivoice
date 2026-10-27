@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { LL_DEFAULTS, LL_RANGES, lookaheadMs, type FrameMs, type LLConfig, type OpusApplication } from '../audio/ll/config'
-import { call, llSupported, setOutputBuffer, updateLL } from '../call'
+import { call, getEngine, llSupported, setOutputBuffer, updateLL } from '../call'
 import Segmented from './Segmented.vue'
 import Slider from './Slider.vue'
 import Switch from './Switch.vue'
@@ -33,6 +33,20 @@ const redundancy: { value: 0 | 1 | 2; label: string }[] = [
   { value: 2, label: '+2 frames' }
 ]
 
+// Your mic's level now, to set the silence threshold against.
+const micDb = ref('…')
+let micTimer: ReturnType<typeof setInterval> | null = null
+onMounted(() => {
+  micTimer = setInterval(() => {
+    const level = getEngine()?.micLevel() ?? 0
+    // micLevel() is RMS × 4, clamped; back to dBFS.
+    micDb.value = level > 0 ? `${Math.round(20 * Math.log10(level / 4))} dBFS` : 'silent'
+  }, 250)
+})
+onBeforeUnmount(() => {
+  if (micTimer) clearInterval(micTimer)
+})
+
 // What these choices cost: fixed delay, and bandwidth per listener.
 const fixedMs = computed(() => c.value.frameMs + lookaheadMs(c.value.application))
 const packetsPerSecond = computed(() => 1000 / c.value.frameMs)
@@ -44,6 +58,14 @@ const wireKbps = computed(() => {
 })
 
 const r = LL_RANGES
+
+// What the device actually gave us (it rounds the request to what it supports).
+const buffer = computed(() => {
+  void call.status
+  const ctx = getEngine()?.ctx
+  if (!ctx) return ''
+  return `${(ctx.baseLatency * 1000).toFixed(1)} ms Web Audio + ${((ctx.outputLatency || 0) * 1000).toFixed(1)} ms device`
+})
 </script>
 
 <template>
@@ -68,15 +90,18 @@ const r = LL_RANGES
     <Segmented
       label="Audio output buffer"
       :options="[
-        { value: 'min', label: 'Smallest (2.7 ms)' },
-        { value: 'interactive', label: 'Browser default (~10 ms)' }
+        { value: 'min', label: 'Smallest' },
+        { value: 'small', label: 'Small (~5 ms)' },
+        { value: 'interactive', label: 'Browser default' }
       ]"
       :model-value="call.prefs.outputBuffer"
       @update:model-value="setOutputBuffer"
     />
     <p class="note">
-      Web Audio’s buffer to your speakers. Smallest is far less delay and much steadier timing for this engine; pick the default
-      if you hear crackling. Changing it reconnects you for a moment.
+      Web Audio’s buffer to your speakers (this engine always plays through it). Smaller is less delay and steadier timing,
+      but crackles sooner on a busy machine: if this engine sounds choppy, try a bigger one with the Raw mic test. Changing it
+      reconnects you for a moment.
+      <template v-if="buffer"><br />Now: {{ buffer }}</template>
     </p>
 
     <span class="eyebrow">Sending</span>
@@ -103,16 +128,46 @@ const r = LL_RANGES
       :min="r.dtxThresholdDb[0]"
       :max="r.dtxThresholdDb[1]"
       :step="r.dtxThresholdDb[2]"
-      hint="Quieter than this counts as silence. Raise it if your room noise keeps it sending; lower it if quiet words get cut."
+      :hint="`Quieter than this counts as silence. Your mic right now: ${micDb}. Lower it if quiet words get cut; raise it if room noise keeps it sending.`"
       :model-value="c.dtxThresholdDb"
       @update:model-value="v => set('dtxThresholdDb', v)"
+    />
+    <Slider
+      v-if="c.dtx"
+      label="Silence hangover"
+      unit=" ms"
+      :min="r.dtxHangoverMs[0]"
+      :max="r.dtxHangoverMs[1]"
+      :step="r.dtxHangoverMs[2]"
+      hint="Keep sending this long after you go quiet, so word endings and pauses mid-sentence aren’t cut."
+      :model-value="c.dtxHangoverMs"
+      @update:model-value="v => set('dtxHangoverMs', v)"
     />
 
     <span class="eyebrow">Receiving (jitter buffer)</span>
     <p class="note">
-      It aims for the network’s jitter (95th percentile over 2 s) × multiplier + margin, kept between the minimum and the
-      maximum.
+      It aims for the network’s jitter (the chosen percentile of how late packets have been, over the window) × multiplier +
+      margin, kept between the minimum and the maximum. Choppy? Raise the percentile or the margin. Laggy? Lower them.
     </p>
+    <Slider
+      label="Jitter percentile"
+      :min="r.jitterPercentile[0]"
+      :max="r.jitterPercentile[1]"
+      :step="r.jitterPercentile[2]"
+      hint="How much of the lateness to cover: 99 drops about 1 packet in 100 as late; 100 covers the worst one seen."
+      :model-value="c.jitterPercentile"
+      @update:model-value="v => set('jitterPercentile', v)"
+    />
+    <Slider
+      label="Jitter window"
+      unit=" s"
+      :min="r.jitterWindowSec[0]"
+      :max="r.jitterWindowSec[1]"
+      :step="r.jitterWindowSec[2]"
+      hint="How far back it remembers lateness. Longer is steadier; shorter recovers faster after a bad patch."
+      :model-value="c.jitterWindowSec"
+      @update:model-value="v => set('jitterWindowSec', v)"
+    />
     <Slider label="Jitter multiplier" unit="×" :digits="1" :min="r.jitterMultiplier[0]" :max="r.jitterMultiplier[1]" :step="r.jitterMultiplier[2]" :model-value="c.jitterMultiplier" @update:model-value="v => set('jitterMultiplier', v)" />
     <Slider label="Safety margin" unit=" ms" :min="r.marginMs[0]" :max="r.marginMs[1]" :step="r.marginMs[2]" :model-value="c.marginMs" @update:model-value="v => set('marginMs', v)" />
     <Slider label="Minimum buffer" unit=" ms" :min="r.minBufferMs[0]" :max="r.minBufferMs[1]" :step="r.minBufferMs[2]" :model-value="c.minBufferMs" @update:model-value="v => set('minBufferMs', v)" />

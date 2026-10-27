@@ -38,7 +38,9 @@ describe('packets', () => {
 describe('config', () => {
   it('fills in defaults and clamps', () => {
     expect(sanitizeLL(null)).toEqual(LL_DEFAULTS)
-    const c = sanitizeLL({ frameMs: 2.5, bitrateKbps: 9999, minBufferMs: 50, maxBufferMs: 20, redundancy: 7, application: 'nope' })
+    // Settings saved before the current defaults reset to them, keeping only whether it's on.
+    expect(sanitizeLL({ enabled: true, frameMs: 2.5, dtxThresholdDb: -55 })).toEqual({ ...LL_DEFAULTS, enabled: true })
+    const c = sanitizeLL({ rev: LL_DEFAULTS.rev, frameMs: 2.5, bitrateKbps: 9999, minBufferMs: 50, maxBufferMs: 20, redundancy: 7, application: 'nope' })
     expect(c.frameMs).toBe(2.5)
     expect(c.bitrateKbps).toBe(256)
     expect(c.maxBufferMs).toBe(50)
@@ -71,6 +73,8 @@ function simulate(opts: {
     multiplier: 1.2,
     stretch: 0.02,
     concealMs: 12,
+    percentile: 99,
+    windowSec: 2,
     ...opts.cfg
   }
   const jb = new JitterBuffer(cfg)

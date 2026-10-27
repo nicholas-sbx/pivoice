@@ -27,6 +27,14 @@ import { seatDirection } from '../lib/seats'
 
 export type SpatialMode = 'off' | 'stereo' | 'hrtf'
 
+/**
+ * Web Audio's output buffer: the smallest the device will do (Chrome: 128
+ * frames), about 5 ms where the device offers it, or the browser's default
+ * (~10 ms). Smaller is less delay but crackles sooner on a busy machine.
+ */
+export type OutputBuffer = 'min' | 'small' | 'interactive'
+const LATENCY_HINT: Record<OutputBuffer, AudioContextLatencyCategory | number> = { min: 0, small: 0.005, interactive: 'interactive' }
+
 export interface MicSettings {
   deviceId: string
   echoCancellation: boolean
@@ -57,7 +65,15 @@ export class AudioEngine {
   readonly sendStream = new MediaStream()
   micProblem: MicProblem = null
   private master: GainNode
-  private mic: { stream: MediaStream; source: MediaStreamAudioSourceNode; analyser: AnalyserNode } | null = null
+  /**
+   * The mic as heard locally: a clone of the track we send, so muting what
+   * we send (track.enabled) doesn't silence the meter, the low-latency
+   * engine's own gate, or the mic test.
+   */
+  private mic: { stream: MediaStream; local: MediaStreamTrack; source: MediaStreamAudioSourceNode; analyser: AnalyserNode } | null = null
+  /** Straight to the speakers, past deafen: what the mic test plays through. */
+  readonly testOut: GainNode
+  private rawLoop = false
   private remotes = new Map<string, Remote>()
   private mode: SpatialMode = 'off'
   private deafened = false
@@ -68,16 +84,18 @@ export class AudioEngine {
   private buf = new Float32Array(1024)
   private loudAt = new Map<string, number>()
 
-  constructor(buffer: 'min' | 'interactive' = 'min') {
+  constructor(buffer: OutputBuffer = 'min') {
     // Created from a click, so it starts running. A latency hint of 0 asks
     // for the smallest output buffer the device supports (Chrome: 128
     // frames), well under what 'interactive' gets (~10 ms + device).
     // 48 kHz is what Opus and the low-latency engine run at, so nothing has
     // to be resampled on the way in or out (the browser resamples to the
     // hardware if it has to).
-    this.ctx = new AudioContext({ latencyHint: buffer === 'min' ? 0 : 'interactive', sampleRate: 48_000 })
+    this.ctx = new AudioContext({ latencyHint: LATENCY_HINT[buffer], sampleRate: 48_000 })
     this.master = this.ctx.createGain()
     this.master.connect(this.ctx.destination)
+    this.testOut = this.ctx.createGain()
+    this.testOut.connect(this.ctx.destination)
   }
 
   /** Opens the microphone (or a silent stand-in if we can't have it) and returns the track to send. */
@@ -113,18 +131,21 @@ export class AudioEngine {
     }
 
     this.mic?.source.disconnect()
+    this.mic?.local.stop()
     for (const t of this.mic?.stream.getTracks() ?? []) t.stop()
     this.mic = null
 
     let track: MediaStreamTrack
     let source: MediaStreamAudioSourceNode | null = null
     if (stream) {
-      source = this.ctx.createMediaStreamSource(stream)
+      track = stream.getAudioTracks()[0]
+      const local = track.clone()
+      source = this.ctx.createMediaStreamSource(new MediaStream([local]))
       const analyser = this.ctx.createAnalyser()
       analyser.fftSize = 1024
       source.connect(analyser)
-      this.mic = { stream, source, analyser }
-      track = stream.getAudioTracks()[0]
+      this.mic = { stream, local, source, analyser }
+      if (this.rawLoop) source.connect(this.testOut)
     } else {
       // Listen-only: calls still need something to send.
       track = this.ctx.createMediaStreamDestination().stream.getAudioTracks()[0]
@@ -155,6 +176,25 @@ export class AudioEngine {
     if (stats?.averageLatency) return stats.averageLatency
     const latency = (track?.getSettings() as (MediaTrackSettings & { latency?: number }) | undefined)?.latency
     return typeof latency === 'number' && latency > 0 ? latency * 1000 : null
+  }
+
+  /** Mic test, raw: the mic straight to your speakers, nothing in between but the browser's own buffers. */
+  setRawLoopback(on: boolean) {
+    if (on === this.rawLoop) return
+    this.rawLoop = on
+    if (!this.mic) return
+    if (on) this.mic.source.connect(this.testOut)
+    else this.mic.source.disconnect(this.testOut)
+  }
+
+  /** A fresh copy of the mic, for the WebRTC mic test (stop it when done). */
+  micClone(): MediaStreamTrack | null {
+    return this.mic?.local.clone() ?? null
+  }
+
+  /** The browser's own idea of the raw loop: mic latency + Web Audio's output buffer + the device's. */
+  rawLoopbackMs(): number {
+    return (this.captureLatencyMs() ?? 0) + (this.ctx.baseLatency + (this.ctx.outputLatency || 0)) * 1000
   }
 
   get micDeviceId(): string {
@@ -361,6 +401,7 @@ export class AudioEngine {
       r.ll?.disconnect()
       this.forget(id, r)
     }
+    this.mic?.local.stop()
     for (const t of this.mic?.stream.getTracks() ?? []) t.stop()
     for (const t of this.sendStream.getTracks()) t.stop()
     this.mic = null
