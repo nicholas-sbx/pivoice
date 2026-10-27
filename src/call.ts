@@ -5,7 +5,7 @@ import { WebRTCLoopback } from './audio/loopback'
 import { LowLatencyEngine } from './audio/ll/engine'
 import { copyText } from './lib/copyText'
 import { loadPrefs, savePrefs, type Prefs } from './lib/prefs'
-import { fetchIceServers, peerOptions, publicUrl } from './net/config'
+import { fetchIceServers, publicUrl } from './net/config'
 import type { Member } from './net/protocol'
 import { Session, type SessionFailure, type SessionStatus } from './net/session'
 import { captureToSpeakerMs, summarise, type LinkStats, type Snapshot } from './net/stats'
@@ -32,7 +32,6 @@ export const call = reactive({
   error: '',
   code: '',
   selfId: '',
-  hostId: '',
   members: [] as Member[],
   speaking: new Set<string>(),
   /** Your choice. What you send is muted if this, deafened, or there's no mic. */
@@ -160,15 +159,14 @@ export async function rejoinCall() {
   const s = session
   if (!s || call.phase !== 'room' || rejoining) return
   const code = s.code
+  const joinedAt = s.joinedAt
   rejoining = true
   call.status = 'reconnecting'
   s.drop()
-  // Give the broker a moment to let go of our id.
-  await new Promise(r => setTimeout(r, 250))
-  await connect('join', call.prefs.name, code, s.selfId)
+  await connect('join', call.prefs.name, code, joinedAt === null ? undefined : { key: s.key, joinedAt })
 }
 
-async function connect(kind: 'create' | 'join', name: string, code: string, selfId?: string) {
+async function connect(kind: 'create' | 'join', name: string, code: string, rejoin?: { key: string; joinedAt: number }) {
   snapshots.clear()
   call.links = {}
 
@@ -178,7 +176,7 @@ async function connect(kind: 'create' | 'join', name: string, code: string, self
   await eng.openMic(micSettings())
   if (engine !== eng) return
   call.micProblem = eng.micProblem
-  if (selfId) {
+  if (rejoin) {
     // Coming back: already told them.
   } else if (eng.micProblem === 'denied') toast("Microphone blocked. You can listen, but nobody can hear you.", 'error', 7000)
   else if (eng.micProblem) toast("Couldn't open a microphone. You can listen, but nobody can hear you.", 'error', 7000)
@@ -206,20 +204,20 @@ async function connect(kind: 'create' | 'join', name: string, code: string, self
       muted: effectiveMuted(),
       deafened: call.deafened,
       stream: eng.sendStream,
-      peerOptions: peerOptions(iceServers),
+      iceServers,
       dtx: call.prefs.dtx,
       ll: llOn() && !!ll,
-      selfId
+      rejoin
     },
     {
       status: (status, failure) => {
         if (session !== s) return
         onStatus(status, failure)
       },
-      roster: (members, hostId) => {
+      roster: members => {
         if (session !== s) return
+        call.selfId = s.selfId
         call.members = members
-        call.hostId = hostId
         updateLLActive()
       },
       stream: (id, stream) => {
@@ -257,17 +255,18 @@ async function connect(kind: 'create' | 'join', name: string, code: string, self
     const engLL = ll
     s.adoptLL = (id, ch) => engLL.adoptChannel(id, ch)
   }
-  call.selfId = s.selfId
   if (kind === 'create') await s.create()
-  // Coming back: if the room went when we left (we were alone), it's ours again.
-  else await s.join(code, !!selfId)
+  else await s.join(code)
 }
 
 function onStatus(status: SessionStatus, failure?: SessionFailure) {
   const wasInRoom = call.phase === 'room'
   call.status = status
   if (status === 'connected') {
-    if (session) call.code = session.code
+    if (session) {
+      call.code = session.code
+      call.selfId = session.selfId
+    }
     rejoining = false
     if (!speakingTimer) startSpeakingPoll()
     if (!statsTimer) startStatsPoll()

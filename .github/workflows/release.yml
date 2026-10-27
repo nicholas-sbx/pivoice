@@ -112,12 +112,8 @@ jobs:
           VITE_TURN_URLS: ${{ vars.VITE_TURN_URLS }}
           VITE_TURN_USERNAME: ${{ vars.VITE_TURN_USERNAME || secrets.VITE_TURN_USERNAME }}
           VITE_TURN_CREDENTIAL: ${{ secrets.VITE_TURN_CREDENTIAL }}
-          VITE_PEER_HOST: ${{ vars.VITE_PEER_HOST }}
-          VITE_PEER_PORT: ${{ vars.VITE_PEER_PORT }}
-          VITE_PEER_PATH: ${{ vars.VITE_PEER_PATH }}
-          VITE_PEER_SECURE: ${{ vars.VITE_PEER_SECURE }}
-          VITE_PEER_KEY: ${{ vars.VITE_PEER_KEY }}
 
+      # Also creates or migrates the rooms' Durable Object class ([[migrations]] in wrangler.toml).
       - name: Deploy app
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}

@@ -1,13 +1,13 @@
-// End-to-end: real Chromium tabs with fake microphones, talking through a
-// local PeerJS broker.
+// End-to-end: real Chromium tabs with fake microphones, in rooms on the
+// Worker's Durable Objects running locally.
 //
-//   npm run peer:local    # terminal 1
-//   npm run dev:local     # terminal 2
-//   npm run e2e           # terminal 3
+//   npm run dev           # terminal 1: the app and the Worker
+//   npm run e2e           # terminal 2
 //
 // Checks that people can make and join a room, see each other at the table,
 // hear each other (the fake mic beeps, which lights up the speaking ring on
-// everyone else's screen), and that the call survives the host leaving.
+// everyone else's screen), and that the call survives whoever made the room
+// leaving.
 import { mkdirSync } from 'node:fs'
 import { createRequire } from 'node:module'
 
@@ -123,12 +123,12 @@ try {
   ok('Bob muting shows on Alice’s screen')
   await bob.click('button[aria-label="Unmute"]')
 
-  // The host leaves: the call carries on and someone else takes the room.
+  // The person who made the room leaves: it's nobody's in particular, so the call carries on.
   await alice.click('button[aria-label="Disconnect"]')
   await alice.waitForSelector('button:has-text("Create a Room")')
   await expectSeats(bob, 2, 'Bob after Alice left')
   await expectSeats(cara, 2, 'Cara after Alice left')
-  ok('Alice (the host) left; Bob and Cara still connected')
+  ok('Alice (who made the room) left; Bob and Cara still connected')
 
   const dan = await open('Dan', code)
   for (const [p, n] of [
@@ -139,7 +139,7 @@ try {
     await expectSeats(p, 3, n + ' after Dan joined')
   }
   await expectHearsSomeone(dan, 'Dan')
-  ok('Dan joined the room after the hand-over and hears people')
+  ok('Dan joined the room after Alice left and hears people')
 
   // More people, for the screenshot and to exercise the layout.
   const extra = []

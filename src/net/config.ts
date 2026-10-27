@@ -1,32 +1,9 @@
-import type { PeerOptions } from 'peerjs'
-
 const env = import.meta.env
 
-export interface PeerServerConfig {
-  host: string
-  port: number
-  path: string
-  secure: boolean
-  key: string
-}
-
-/** Build-time broker override from .env; the PeerJS cloud broker otherwise. */
-export function envPeerServer(): PeerServerConfig | null {
-  const host = env.VITE_PEER_HOST?.trim()
-  if (!host) return null
-  return {
-    host,
-    port: Number(env.VITE_PEER_PORT) || 443,
-    path: env.VITE_PEER_PATH || '/',
-    secure: env.VITE_PEER_SECURE ? env.VITE_PEER_SECURE !== 'false' : true,
-    key: env.VITE_PEER_KEY || 'peerjs'
-  }
-}
-
 /**
- * STUN first and pray: Google's and Cloudflare's public STUN, plus PeerJS's
- * free best-effort relay as the last resort. A TURN server from the build
- * goes first when configured.
+ * STUN first and pray: Google's and Cloudflare's public STUN. A TURN server
+ * from the build goes first when configured, and the Worker's Cloudflare
+ * TURN ahead of that (fetchIceServers).
  */
 export function defaultIceServers(): RTCIceServer[] {
   const servers: RTCIceServer[] = []
@@ -41,14 +18,7 @@ export function defaultIceServers(): RTCIceServer[] {
       credential: env.VITE_TURN_CREDENTIAL || undefined
     })
   }
-  servers.push(
-    { urls: ['stun:stun.l.google.com:19302', 'stun:stun.cloudflare.com:3478'] },
-    {
-      urls: ['turn:eu-0.turn.peerjs.com:3478', 'turn:us-0.turn.peerjs.com:3478'],
-      username: 'peerjs',
-      credential: 'peerjsp'
-    }
-  )
+  servers.push({ urls: ['stun:stun.l.google.com:19302', 'stun:stun.cloudflare.com:3478'] })
   return servers
 }
 
@@ -66,7 +36,7 @@ function isIceServer(x: unknown): x is RTCIceServer {
 export async function fetchIceServers(timeoutMs = 2500): Promise<RTCIceServer[]> {
   const fallback = defaultIceServers()
   try {
-    const res = await fetch(new URL('./api/ice', location.href), { signal: AbortSignal.timeout(timeoutMs) })
+    const res = await fetch(apiUrl('ice'), { signal: AbortSignal.timeout(timeoutMs) })
     if (!res.ok || !res.headers.get('content-type')?.includes('json')) return fallback
     const body = (await res.json()) as { iceServers?: unknown }
     const servers = Array.isArray(body.iceServers) ? body.iceServers.filter(isIceServer) : []
@@ -78,17 +48,16 @@ export async function fetchIceServers(timeoutMs = 2500): Promise<RTCIceServer[]>
   }
 }
 
-export function peerOptions(iceServers: RTCIceServer[]): PeerOptions {
-  const opts: PeerOptions = { debug: 1, config: { iceServers } }
-  const s = envPeerServer()
-  if (s) {
-    opts.host = s.host
-    opts.port = s.port
-    opts.path = s.path
-    opts.secure = s.secure
-    opts.key = s.key
-  }
-  return opts
+/** The Worker's API, next to the page. */
+export function apiUrl(path: string): URL {
+  return new URL('./api/' + path, location.href)
+}
+
+/** The WebSocket into a room (see worker/room.ts). */
+export function roomSocketUrl(code: string): string {
+  const url = apiUrl(`rooms/${code}/ws`)
+  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
+  return url.href
 }
 
 /** Base for invite links. */

@@ -1,5 +1,6 @@
-# The app: a Worker that serves the static build in dist/ and mints TURN
-# credentials at /api/ice. Deployed by .github/workflows/release.yml.
+# The app: a Worker that serves the static build in dist/, runs the rooms
+# (one Durable Object each) and mints TURN credentials at /api/ice.
+# Deployed by .github/workflows/release.yml.
 name = "voice"
 main = "worker/index.ts"
 compatibility_date = "2026-09-01"
@@ -11,13 +12,29 @@ binding = "ASSETS"
 # isolation headers (see worker/index.ts); it hands static files straight on.
 run_worker_first = true
 
+# The rooms. SQLite-backed, which is what the Workers Free plan allows.
+[[durable_objects.bindings]]
+name = "ROOMS"
+class_name = "Room"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Room"]
+
 # Optional TURN relay (Cloudflare Realtime → TURN). Set both as secrets, never here:
 #   npx wrangler secret put TURN_KEY_ID
 #   npx wrangler secret put TURN_KEY_API_TOKEN
-# Without them /api/ice answers 404 and the app falls back to public STUN.
+# Without them /api/ice answers 404 and the app uses public STUN only.
 
-# Optional: cap how often one IP can ask for credentials.
+# Optional: cap how often one IP can ask for TURN credentials.
 # [[ratelimits]]
 # name = "RATE_LIMITER"
 # namespace_id = "1001"
 # simple = { limit = 20, period = 60 }
+
+# Optional: cap how often one IP can make or connect to rooms, which makes
+# guessing room codes slow. Generous, since a whole LAN party shares an IP.
+# [[ratelimits]]
+# name = "ROOM_LIMITER"
+# namespace_id = "1002"
+# simple = { limit = 60, period = 60 }

@@ -1,9 +1,20 @@
 import { describe, expect, it } from 'vitest'
-import { MAX_MEMBERS, cleanName, parseClientMsg, parseHostMsg, successorRank, type Member } from '../src/net/protocol'
-import { codeFromHash, generateRoomCode, isMemberPeerId, isRoomCode, newMemberPeerId, normalizeRoomCode } from '../src/lib/roomCode'
+import {
+  MAX_MEMBERS,
+  cleanName,
+  isMemberId,
+  isMemberKey,
+  memberIdFromKey,
+  newMemberKey,
+  parseClientMsg,
+  parseServerMsg,
+  parseSignal,
+  type Member
+} from '../src/net/protocol'
+import { codeFromHash, generateRoomCode, isRoomCode, normalizeRoomCode } from '../src/lib/roomCode'
 
 const member = (n: number, extra: Partial<Member> = {}): Member => ({
-  id: 'pivoice-v1-m-' + n.toString(16).padStart(16, '0'),
+  id: n.toString(16).padStart(32, '0'),
   name: 'P' + n,
   joinedAt: n * 10,
   muted: false,
@@ -12,6 +23,9 @@ const member = (n: number, extra: Partial<Member> = {}): Member => ({
   away: false,
   ...extra
 })
+
+const KEY = 'A'.repeat(43)
+const hello = (extra: Record<string, unknown> = {}) => ({ t: 'hello', v: 2, key: KEY, name: 'Ada', muted: false, deafened: false, ll: false, resume: null, ...extra })
 
 describe('room codes', () => {
   it('generates valid codes', () => {
@@ -25,32 +39,34 @@ describe('room codes', () => {
     expect(codeFromHash('#abc234')).toBe('ABC234')
     expect(codeFromHash('#nope')).toBe('')
   })
-  it('makes member ids that check out', () => {
-    expect(isMemberPeerId(newMemberPeerId())).toBe(true)
-    expect(isMemberPeerId('pivoice-v1-room-ABC234')).toBe(false)
+})
+
+describe('identity', () => {
+  it('makes keys that check out, and different every time', () => {
+    const a = newMemberKey()
+    expect(isMemberKey(a)).toBe(true)
+    expect(a).not.toBe(newMemberKey())
+    expect(isMemberKey('short')).toBe(false)
+  })
+  it('derives the same public id from the same key, and nothing else', async () => {
+    const key = newMemberKey()
+    const id = await memberIdFromKey(key)
+    expect(isMemberId(id)).toBe(true)
+    expect(await memberIdFromKey(key)).toBe(id)
+    expect(await memberIdFromKey(newMemberKey())).not.toBe(id)
   })
 })
 
 describe('messages', () => {
   it('accepts a good hello and cleans the name', () => {
-    expect(parseClientMsg({ t: 'hello', v: 1, name: '  Ada \u0007  Lovelace ', muted: false, deafened: true })).toEqual({
-      t: 'hello',
-      v: 1,
-      name: 'Ada Lovelace',
-      muted: false,
-      deafened: true,
-      ll: false
-    })
-  })
-
-  it('reads the low-latency flag, off when missing', () => {
-    expect(parseClientMsg({ t: 'state', muted: false, deafened: false, ll: true })).toEqual({ t: 'state', muted: false, deafened: false, ll: true })
-    const roster = parseHostMsg({ t: 'roster', hostId: member(1).id, members: [{ ...member(1), ll: undefined }] })
-    expect(roster?.t === 'roster' && roster.members[0].ll).toBe(false)
+    expect(parseClientMsg(hello({ name: '  Ada \u0007  Lovelace ', deafened: true }))).toEqual(hello({ name: 'Ada Lovelace', deafened: true }))
+    expect(parseClientMsg(hello({ resume: 1234 }))).toMatchObject({ resume: 1234 })
   })
   it('rejects junk', () => {
-    expect(parseClientMsg({ t: 'hello', v: 1, name: '   ', muted: false, deafened: false })).toBeNull()
-    expect(parseClientMsg({ t: 'state', muted: 'yes', deafened: false })).toBeNull()
+    expect(parseClientMsg(hello({ name: '   ' }))).toBeNull()
+    expect(parseClientMsg(hello({ key: 'not-a-key' }))).toBeNull()
+    expect(parseClientMsg(hello({ resume: 'yesterday' }))).toBeNull()
+    expect(parseClientMsg({ t: 'state', muted: 'yes', deafened: false, ll: false })).toBeNull()
     expect(parseClientMsg('hello')).toBeNull()
     expect(parseClientMsg({ t: 'nope' })).toBeNull()
   })
@@ -58,25 +74,42 @@ describe('messages', () => {
     expect(cleanName('x'.repeat(100)).length).toBe(32)
   })
   it('sorts the roster by join order', () => {
-    const msg = parseHostMsg({ t: 'roster', hostId: member(1).id, members: [member(3), member(1), member(2)] })
+    const msg = parseServerMsg({ t: 'roster', members: [member(3), member(1), member(2)] })
     expect(msg?.t === 'roster' && msg.members.map(m => m.name)).toEqual(['P1', 'P2', 'P3'])
   })
   it('rejects rosters with bad or duplicate members', () => {
-    expect(parseHostMsg({ t: 'roster', hostId: 'x', members: [member(1), member(1)] })).toBeNull()
-    expect(parseHostMsg({ t: 'roster', hostId: 'x', members: [{ ...member(1), id: 'evil' }] })).toBeNull()
+    expect(parseServerMsg({ t: 'roster', members: [member(1), member(1)] })).toBeNull()
+    expect(parseServerMsg({ t: 'roster', members: [{ ...member(1), id: 'evil' }] })).toBeNull()
     const many = Array.from({ length: MAX_MEMBERS + 1 }, (_, i) => member(i))
-    expect(parseHostMsg({ t: 'roster', hostId: 'x', members: many })).toBeNull()
+    expect(parseServerMsg({ t: 'roster', members: many })).toBeNull()
   })
 })
 
-describe('successorRank', () => {
-  const ms = [member(1), member(2), member(3), member(4)]
-  it('queues everyone but the old host in join order', () => {
-    expect(successorRank(ms, ms[0].id, ms[1].id)).toBe(0)
-    expect(successorRank(ms, ms[0].id, ms[3].id)).toBe(2)
-    expect(successorRank(ms, ms[2].id, ms[3].id)).toBe(2)
+describe('signals', () => {
+  const link = '0123456789abcdef'
+  it('passes descriptions, candidates and goodbyes', () => {
+    expect(parseSignal({ kind: 'voice', link, sdp: { type: 'offer', sdp: 'v=0' } })).toEqual({ kind: 'voice', link, sdp: { type: 'offer', sdp: 'v=0' } })
+    expect(parseSignal({ kind: 'll', link, ice: { candidate: 'candidate:1', sdpMid: '0', sdpMLineIndex: 0 } })).toEqual({
+      kind: 'll',
+      link,
+      ice: { candidate: 'candidate:1', sdpMid: '0', sdpMLineIndex: 0, usernameFragment: null }
+    })
+    expect(parseSignal({ kind: 'voice', link, bye: true })).toEqual({ kind: 'voice', link, bye: true })
   })
-  it('puts someone the roster never saw at the back', () => {
-    expect(successorRank(ms, ms[0].id, 'stranger')).toBe(3)
+  it('keeps only the fields it knows', () => {
+    const s = parseSignal({ kind: 'voice', link, sdp: { type: 'answer', sdp: 'v=0', extra: 1 }, from: 'someone else' })
+    expect(s).toEqual({ kind: 'voice', link, sdp: { type: 'answer', sdp: 'v=0' } })
+  })
+  it('rejects anything off', () => {
+    expect(parseSignal({ kind: 'video', link, bye: true })).toBeNull()
+    expect(parseSignal({ kind: 'voice', link: 'x', bye: true })).toBeNull()
+    expect(parseSignal({ kind: 'voice', link, sdp: { type: 'pranswer', sdp: 'v=0' } })).toBeNull()
+    expect(parseSignal({ kind: 'voice', link, sdp: { type: 'offer', sdp: 'x'.repeat(20_000) } })).toBeNull()
+    expect(parseSignal({ kind: 'voice', link, ice: { candidate: 'c', sdpMLineIndex: -1 } })).toBeNull()
+    expect(parseSignal({ kind: 'voice', link })).toBeNull()
+  })
+  it('only lets a member signal another member', () => {
+    expect(parseClientMsg({ t: 'signal', to: member(1).id, signal: { kind: 'voice', link, bye: true } })).not.toBeNull()
+    expect(parseClientMsg({ t: 'signal', to: 'everyone', signal: { kind: 'voice', link, bye: true } })).toBeNull()
   })
 })

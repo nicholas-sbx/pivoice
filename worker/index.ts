@@ -1,39 +1,38 @@
+import { generateRoomCode, isRoomCode } from '../src/lib/roomCode'
+import type { Env } from './env'
+
 /**
  * pivoice: the app's Worker.
  *
  * It serves the static build in dist/, adding the two headers that make the
  * page cross-origin isolated (which the low-latency engine needs for its
- * shared memory between audio thread and worker), and one endpoint of its
- * own:
+ * shared memory between audio thread and worker), and a small API:
  *
- *   GET /api/ice  →  { iceServers: RTCIceServer[] }
+ *   POST /api/rooms           →  { code }   a new room, its code held for a minute
+ *   GET  /api/rooms/CODE/ws   →  WebSocket  into that room (a Durable Object, see room.ts)
+ *   GET  /api/ice             →  { iceServers: RTCIceServer[] }
  *
- * which mints short-lived Cloudflare TURN credentials, so calls still connect
- * when STUN can't get through a NAT. It's optional: without TURN_KEY_ID and
+ * The rooms keep the roster and pass WebRTC signalling between members; the
+ * audio itself is peer to peer and never comes through here. /api/ice mints
+ * short-lived Cloudflare TURN credentials, so calls still connect when STUN
+ * can't get through a NAT. It's optional: without TURN_KEY_ID and
  * TURN_KEY_API_TOKEN set (as secrets) it answers 404 and the app uses public
- * STUN and PeerJS's best-effort relay instead. Nothing else here talks to
- * the network; the calls themselves are peer to peer.
+ * STUN only.
  */
 
-export interface Env {
-  ASSETS: { fetch(request: Request): Promise<Response> }
-  /** Cloudflare Realtime TURN key id (dashboard → Realtime → TURN). */
-  TURN_KEY_ID?: string
-  /** That key's API token. */
-  TURN_KEY_API_TOKEN?: string
-  /** Credential lifetime in seconds (default 4 h; a call longer than that keeps its relay). */
-  TURN_TTL_S?: string
-  /** Comma-separated extra origins allowed to ask for credentials (the app's own origin always is). */
-  ALLOWED_ORIGINS?: string
-  RATE_LIMITER?: { limit(opts: { key: string }): Promise<{ success: boolean }> }
-}
+export { Room } from './room'
+export type { Env } from './env'
 
 const TURN_API = 'https://rtc.live.cloudflare.com/v1/turn/keys'
+const ROOM_WS = /^\/api\/rooms\/([A-Z0-9]+)\/ws$/
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url)
     if (url.pathname === '/api/ice') return ice(request, env, url)
+    if (url.pathname === '/api/rooms') return createRoom(request, env, url)
+    const ws = ROOM_WS.exec(url.pathname)
+    if (ws) return joinRoom(request, env, url, ws[1])
     if (url.pathname.startsWith('/api/')) return json({ error: 'Not found' }, 404)
     return isolate(await env.ASSETS.fetch(request))
   }
@@ -41,7 +40,7 @@ export default {
 
 /**
  * Cross-origin isolation: SharedArrayBuffer only exists in pages served
- * with these. Everything the app loads is its own origin; the broker and
+ * with these. Everything the app loads is its own origin; the rooms and
  * the calls are WebSocket and WebRTC, which these don't affect.
  */
 export const ISOLATION_HEADERS = {
@@ -59,21 +58,9 @@ async function ice(request: Request, env: Env, url: URL): Promise<Response> {
   if (request.method !== 'GET') return json({ error: 'Method not allowed' }, 405)
   if (!env.TURN_KEY_ID || !env.TURN_KEY_API_TOKEN) return json({ error: 'TURN is not configured' }, 404)
 
-  // Only our own pages (and any listed origins) get relay credentials: they
-  // cost money per GB, so they're not for anyone who finds the URL. Browsers
-  // send Origin on fetch() from another origin and Sec-Fetch-Site always.
-  const origin = request.headers.get('Origin')
-  const site = request.headers.get('Sec-Fetch-Site')
-  const allowed = new Set([url.origin, ...(env.ALLOWED_ORIGINS ?? '').split(',').map(s => s.trim()).filter(Boolean)])
-  if (origin ? !allowed.has(origin) : site !== null && site !== 'same-origin') {
-    return json({ error: 'Origin not allowed' }, 403)
-  }
-
-  if (env.RATE_LIMITER) {
-    const ip = request.headers.get('CF-Connecting-IP') ?? 'unknown'
-    const { success } = await env.RATE_LIMITER.limit({ key: ip })
-    if (!success) return json({ error: 'Slow down' }, 429, { 'Retry-After': '60' })
-  }
+  // Relay credentials cost money per GB, so they're not for anyone who finds the URL.
+  const refused = refuseOthers(request, env, url) ?? (await limit(env.RATE_LIMITER, request, 'ice'))
+  if (refused) return refused
 
   const ttl = clampInt(env.TURN_TTL_S, 300, 48 * 3600, 4 * 3600)
   let upstream: Response
@@ -91,6 +78,51 @@ async function ice(request: Request, env: Env, url: URL): Promise<Response> {
   const iceServers = normaliseIceServers(body.iceServers)
   if (!iceServers.length) return json({ error: 'TURN service returned nothing usable' }, 502)
   return json({ iceServers }, 200, { 'Cache-Control': 'no-store' })
+}
+
+/** Makes a room: picks an unused code and holds it for whoever asked. */
+async function createRoom(request: Request, env: Env, url: URL): Promise<Response> {
+  if (request.method !== 'POST') return json({ error: 'Method not allowed' }, 405)
+  const refused = refuseOthers(request, env, url) ?? (await limit(env.ROOM_LIMITER, request, 'room'))
+  if (refused) return refused
+  // Codes are random over ~594 million, so a clash is rare; a few tries is plenty.
+  for (let i = 0; i < 5; i++) {
+    const code = generateRoomCode()
+    if (await env.ROOMS.getByName(code).reserve()) return json({ code }, 201, { 'Cache-Control': 'no-store' })
+  }
+  return json({ error: 'No free room code' }, 503)
+}
+
+async function joinRoom(request: Request, env: Env, url: URL, code: string): Promise<Response> {
+  if (request.method !== 'GET') return json({ error: 'Method not allowed' }, 405)
+  if (!isRoomCode(code)) return json({ error: 'Not found' }, 404)
+  if (request.headers.get('Upgrade')?.toLowerCase() !== 'websocket') return json({ error: 'Expected a WebSocket' }, 426)
+  // Browsers always send Origin on a WebSocket, and a page elsewhere must not get to drive one of ours.
+  const refused = refuseOthers(request, env, url, true) ?? (await limit(env.ROOM_LIMITER, request, 'room'))
+  if (refused) return refused
+  return env.ROOMS.getByName(code).fetch(request)
+}
+
+/**
+ * Only our own pages (and any listed origins) may use the API. Browsers send
+ * Origin on fetch() from another origin, on every POST and on every
+ * WebSocket, and Sec-Fetch-Site always. That stops other sites using a
+ * visitor's browser, not a determined script, which is what the rate
+ * limiters and the rooms' own limits are for.
+ */
+function refuseOthers(request: Request, env: Env, url: URL, needOrigin = false): Response | null {
+  const origin = request.headers.get('Origin')
+  const site = request.headers.get('Sec-Fetch-Site')
+  const allowed = new Set([url.origin, ...(env.ALLOWED_ORIGINS ?? '').split(',').map(s => s.trim()).filter(Boolean)])
+  const ok = origin ? allowed.has(origin) : !needOrigin && (site === null || site === 'same-origin')
+  return ok ? null : json({ error: 'Origin not allowed' }, 403)
+}
+
+async function limit(limiter: Env['RATE_LIMITER'], request: Request, what: string): Promise<Response | null> {
+  if (!limiter) return null
+  const ip = request.headers.get('CF-Connecting-IP') ?? 'unknown'
+  const { success } = await limiter.limit({ key: `${what}:${ip}` })
+  return success ? null : json({ error: 'Slow down' }, 429, { 'Retry-After': '60' })
 }
 
 interface IceServer {
