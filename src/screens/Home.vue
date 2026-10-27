@@ -1,0 +1,449 @@
+<script setup lang="ts">
+import { computed, onMounted, ref } from 'vue'
+import { call, startCall } from '../call'
+import Icon from '../components/Icon.vue'
+import { codeFromHash, CODE_LENGTH, isRoomCode, normalizeRoomCode } from '../lib/roomCode'
+import { cleanName } from '../net/protocol'
+
+/** No landing page: make a room or join one by code, that's it. */
+
+const name = ref(call.prefs.name)
+const code = ref(codeFromHash(location.hash))
+/** An invited code stays dotted out unless you start editing it. */
+const revealCode = ref(false)
+const nameError = ref('')
+const codeError = ref('')
+const nameInput = ref<HTMLInputElement>()
+const codeInput = ref<HTMLInputElement>()
+const fromInvite = !!code.value
+// Read the invite, then take the code out of the address bar.
+if (fromInvite) history.replaceState(null, '', location.pathname + location.search)
+const busy = computed(() => call.phase === 'joining')
+const version = __APP_VERSION__
+
+function checkName(): string | null {
+  const n = cleanName(name.value)
+  if (!n) {
+    nameError.value = 'This field is required'
+    nameInput.value?.focus()
+    return null
+  }
+  nameError.value = ''
+  return n
+}
+
+function create() {
+  if (busy.value) return
+  codeError.value = ''
+  const n = checkName()
+  if (n) void startCall('create', n)
+}
+
+function join() {
+  if (busy.value) return
+  const c = normalizeRoomCode(code.value)
+  if (!isRoomCode(c)) {
+    codeError.value = c ? `Codes are ${CODE_LENGTH} characters` : 'Enter a room code'
+    codeInput.value?.focus()
+    return
+  }
+  codeError.value = ''
+  const n = checkName()
+  if (n) void startCall('join', n, c)
+}
+
+function onCode(e: Event) {
+  revealCode.value = true
+  code.value = normalizeRoomCode((e.target as HTMLInputElement).value)
+  ;(e.target as HTMLInputElement).value = code.value
+  codeError.value = ''
+}
+
+function onNameEnter() {
+  if (code.value) join()
+  else create()
+}
+
+onMounted(() => {
+  if (!name.value) nameInput.value?.focus()
+  else if (!fromInvite) codeInput.value?.focus()
+})
+</script>
+
+<template>
+  <main class="home">
+    <div class="backdrop" aria-hidden="true">
+      <div class="blob a" />
+      <div class="blob b" />
+      <div class="blob c" />
+    </div>
+
+    <section class="card">
+      <div class="brand">
+        <svg viewBox="0 0 64 64" width="40" height="40" aria-hidden="true">
+          <rect width="64" height="64" rx="16" fill="#5865f2" />
+          <circle cx="32" cy="32" r="12" fill="#fff" opacity=".9" />
+          <g fill="#fff"><circle cx="32" cy="11" r="5" /><circle cx="50.2" cy="42.5" r="5" /><circle cx="13.8" cy="42.5" r="5" /></g>
+        </svg>
+      </div>
+      <h1>{{ fromInvite ? "You've been invited to a call" : 'Pull up a chair' }}</h1>
+      <p class="sub">
+        {{ fromInvite ? 'Your friends are waiting for you.' : 'Make a room and share the code, or join one you were given.' }}
+      </p>
+
+      <div v-if="call.error" class="banner" role="alert">{{ call.error }}</div>
+
+      <label class="field">
+        <span class="eyebrow" :class="{ bad: nameError }">
+          Display Name
+          <span v-if="nameError" class="err">- {{ nameError }}</span>
+          <span v-else class="req">*</span>
+        </span>
+        <input
+          ref="nameInput"
+          v-model="name"
+          type="text"
+          maxlength="32"
+          autocomplete="nickname"
+          spellcheck="false"
+          :disabled="busy"
+          @input="nameError = ''"
+          @keydown.enter="onNameEnter"
+        />
+      </label>
+
+      <button v-if="!fromInvite" type="button" class="option" :disabled="busy" @click="create">
+        <span class="option-icon"><Icon name="plus" :size="24" /></span>
+        <span class="option-text">
+          <strong>Create a Room</strong>
+          <small>Get a code to share with your friends</small>
+        </span>
+        <span v-if="call.joining === 'create'" class="spinner" aria-label="Creating" />
+        <Icon v-else name="chevron" :size="24" class="chev" />
+      </button>
+
+      <div class="join" :class="{ invite: fromInvite }">
+        <h3 v-if="!fromInvite">Have a code already?</h3>
+        <label class="field">
+          <span class="eyebrow" :class="{ bad: codeError }">
+            Room Code
+            <span v-if="fromInvite && !codeError" class="hint">· from your invite</span>
+            <span v-if="codeError" class="err">- {{ codeError }}</span>
+          </span>
+          <div class="join-row">
+            <input
+              ref="codeInput"
+              class="code"
+              :type="fromInvite && !revealCode ? 'password' : 'text'"
+              :value="code"
+              placeholder="ABC234"
+              :maxlength="CODE_LENGTH"
+              autocomplete="off"
+              autocapitalize="characters"
+              spellcheck="false"
+              :disabled="busy"
+              @input="onCode"
+              @keydown.enter="join"
+            />
+            <button type="button" class="btn" :class="fromInvite ? 'primary' : 'secondary'" :disabled="busy" @click="join">
+              <span v-if="call.joining === 'join'" class="spinner" aria-label="Joining" />
+              <span v-else>Join Room</span>
+            </button>
+          </div>
+        </label>
+        <button v-if="fromInvite" type="button" class="link" :disabled="busy" @click="create">
+          Or make a new room instead
+        </button>
+      </div>
+
+      <footer>
+        <span><Icon name="headphones" :size="16" /> Best with headphones</span>
+        <span>v{{ version }}</span>
+      </footer>
+    </section>
+  </main>
+</template>
+
+<style scoped>
+.home {
+  position: relative;
+  height: 100%;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  background: #1a1b2e;
+}
+.backdrop {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(ellipse at 20% 0%, rgba(88, 101, 242, 0.55), transparent 55%),
+    radial-gradient(ellipse at 100% 100%, rgba(235, 69, 158, 0.25), transparent 50%),
+    linear-gradient(160deg, #404eed 0%, #2b2f7a 45%, #16172b 100%);
+}
+.blob {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(2px);
+  opacity: 0.18;
+  background: radial-gradient(circle at 35% 35%, #fff, transparent 70%);
+}
+.blob.a {
+  width: 520px;
+  height: 520px;
+  left: -140px;
+  bottom: -180px;
+}
+.blob.b {
+  width: 260px;
+  height: 260px;
+  right: 8%;
+  top: 10%;
+  opacity: 0.12;
+}
+.blob.c {
+  width: 120px;
+  height: 120px;
+  right: 30%;
+  bottom: 12%;
+  opacity: 0.1;
+}
+
+.card {
+  position: relative;
+  width: 480px;
+  max-width: calc(100vw - 32px);
+  padding: 32px;
+  border-radius: 8px;
+  background: var(--bg-primary);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+  text-align: center;
+}
+.brand {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 16px;
+}
+h1 {
+  margin: 0 0 8px;
+  font-size: 24px;
+  line-height: 30px;
+  font-weight: 600;
+  color: var(--header-primary);
+}
+.sub {
+  margin: 0 0 20px;
+  font-size: 16px;
+  color: var(--header-secondary);
+}
+.banner {
+  margin: 0 0 16px;
+  padding: 10px 12px;
+  border-radius: 4px;
+  border: 1px solid var(--red);
+  background: rgba(242, 63, 67, 0.1);
+  color: var(--text-normal);
+  font-size: 14px;
+  text-align: left;
+}
+.field {
+  display: block;
+  text-align: left;
+  margin-bottom: 20px;
+}
+.eyebrow {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--header-secondary);
+}
+.eyebrow.bad {
+  color: #fa777c;
+}
+.err {
+  font-style: italic;
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: 0;
+}
+.hint {
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text-muted);
+}
+.req {
+  color: var(--red);
+  padding-left: 2px;
+}
+input {
+  width: 100%;
+  height: 40px;
+  padding: 10px;
+  border: 0;
+  border-radius: 3px;
+  background: var(--input-bg);
+  color: var(--text-normal);
+  font: inherit;
+  font-size: 16px;
+  outline: none;
+}
+input:focus-visible {
+  outline: none;
+}
+input:disabled {
+  opacity: 0.6;
+}
+input.code {
+  font-family: var(--font-code);
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+}
+input.code::placeholder {
+  color: #4e5058;
+}
+
+.option {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px 12px 12px;
+  border: 1px solid var(--bg-accent);
+  border-radius: 8px;
+  background: var(--bg-primary);
+  color: var(--header-primary);
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 0.12s ease;
+}
+.option:hover:not(:disabled) {
+  background: var(--bg-modifier-hover);
+}
+.option:disabled {
+  cursor: progress;
+}
+.option-icon {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--green);
+  color: #fff;
+  flex: none;
+}
+.option-text {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+.option-text strong {
+  font-size: 16px;
+  font-weight: 600;
+}
+.option-text small {
+  font-size: 14px;
+  color: var(--header-secondary);
+}
+.chev {
+  color: var(--interactive-normal);
+}
+
+.join {
+  margin-top: 24px;
+  padding-top: 20px;
+  border-top: 1px solid var(--bg-modifier-hover);
+}
+.join.invite {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+h3 {
+  margin: 0 0 12px;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--header-primary);
+}
+.join .field {
+  margin-bottom: 0;
+}
+.join-row {
+  display: flex;
+  gap: 8px;
+}
+.btn {
+  flex: none;
+  min-width: 120px;
+  height: 40px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 3px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  transition: background-color 0.17s ease;
+}
+.btn.primary {
+  background: var(--brand);
+}
+.btn.primary:hover:not(:disabled) {
+  background: var(--brand-hover);
+}
+.btn.secondary {
+  background: var(--bg-accent);
+}
+.btn.secondary:hover:not(:disabled) {
+  background: var(--bg-accent-hover);
+}
+.btn:disabled {
+  cursor: progress;
+  opacity: 0.8;
+}
+.link {
+  margin-top: 16px;
+  border: 0;
+  background: none;
+  color: var(--text-link);
+  font-size: 14px;
+  cursor: pointer;
+}
+.link:hover {
+  text-decoration: underline;
+}
+
+footer {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 28px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+footer span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.spinner {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 3px solid rgba(255, 255, 255, 0.25);
+  border-top-color: #fff;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+</style>

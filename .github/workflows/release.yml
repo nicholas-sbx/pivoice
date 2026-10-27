@@ -1,0 +1,141 @@
+# Runs only when you release:
+# - bump the version on main (`npm version patch --no-git-tag-version`, then
+#   commit and push): if there's no vX.Y.Z tag for it yet, the tag job adds
+#   one and the release runs;
+# - or push a tag like v0.2.0 yourself (`npm version minor && git push --follow-tags`);
+# - or press "Run workflow" on the Actions tab (on main it also adds a missing tag).
+# Other pushes and PRs don't trigger anything; a main push that changes
+# package.json without a new version stops at the tag job. So does any run
+# before the Cloudflare secrets are set, without tagging, so adding them and
+# pressing "Run workflow" (or the next push) releases that version.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+    branches: [main]
+    # This file too, so a change here picks up a version still waiting for its tag.
+    paths: [package.json, .github/workflows/release.yml]
+  workflow_dispatch:
+
+# Never run two releases at once; a second one waits for the first.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+# Only the tag job writes to the repo, and only to add the version tag.
+permissions:
+  contents: read
+
+jobs:
+  # Decides whether this run releases, tagging the version on main if it isn't yet.
+  # A tag pushed with GITHUB_TOKEN doesn't start another run, so this one carries on.
+  tag:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      release: ${{ steps.tag.outputs.release }}
+    steps:
+      - uses: actions/checkout@v5
+      - id: tag
+        env:
+          # Repository secrets (not environment ones): this job has no environment.
+          HAS_CLOUDFLARE: ${{ secrets.CLOUDFLARE_API_TOKEN != '' && secrets.CLOUDFLARE_ACCOUNT_ID != '' }}
+        run: |
+          if [ "$HAS_CLOUDFLARE" != true ]; then
+            echo "::warning::CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID aren't set as repository secrets, so there's nowhere to deploy. Not releasing (and not tagging)."
+            echo release=false >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$GITHUB_REF" = refs/heads/main ]; then
+            version=$(node -p "require('./package.json').version")
+            tag="v$version"
+            if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null; then
+              echo "$tag is already tagged."
+            else
+              git config user.name 'github-actions[bot]'
+              git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+              git tag -a "$tag" -m "Release $version"
+              git push origin "refs/tags/$tag"
+              echo "Tagged $tag."
+              echo release=true >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
+          # A tag push or "Run workflow" always releases; a main push only with a new tag.
+          if [ "$GITHUB_REF_TYPE" = tag ] || [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            echo release=true >> "$GITHUB_OUTPUT"
+          else
+            echo release=false >> "$GITHUB_OUTPUT"
+          fi
+
+  check:
+    needs: tag
+    if: needs.tag.outputs.release == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run typecheck:worker
+      - run: npm test
+
+  deploy:
+    needs: check
+    runs-on: ubuntu-latest
+    # Add required reviewers to this environment in Settings → Environments
+    # if you want a final "Approve" click before anything goes live.
+    environment: production
+    # The Cloudflare token is only given to the wrangler steps, never to
+    # `npm ci` or the build, where dependencies' own scripts run.
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+
+      # Build before deploying anything, so a broken build ships nothing.
+      # Everything here is baked into the JavaScript, so anyone who opens the
+      # app can read it, the TURN credential included: use one you can rotate
+      # or that only allows relaying.
+      - name: Build app
+        run: npm run build
+        env:
+          VITE_PUBLIC_URL: ${{ vars.VITE_PUBLIC_URL }}
+          VITE_TURN_URLS: ${{ vars.VITE_TURN_URLS }}
+          VITE_TURN_USERNAME: ${{ vars.VITE_TURN_USERNAME || secrets.VITE_TURN_USERNAME }}
+          VITE_TURN_CREDENTIAL: ${{ secrets.VITE_TURN_CREDENTIAL }}
+          VITE_PEER_HOST: ${{ vars.VITE_PEER_HOST }}
+          VITE_PEER_PORT: ${{ vars.VITE_PEER_PORT }}
+          VITE_PEER_PATH: ${{ vars.VITE_PEER_PATH }}
+          VITE_PEER_SECURE: ${{ vars.VITE_PEER_SECURE }}
+          VITE_PEER_KEY: ${{ vars.VITE_PEER_KEY }}
+
+      - name: Deploy app
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: npx wrangler deploy
+
+      # Optional Cloudflare TURN for /api/ice: copied to the Worker's own
+      # secrets when they're set here. Unset, the Worker keeps whatever it has.
+      - name: Sync Cloudflare TURN secrets
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          TURN_KEY_ID: ${{ secrets.TURN_KEY_ID }}
+          TURN_KEY_API_TOKEN: ${{ secrets.TURN_KEY_API_TOKEN }}
+        run: |
+          if [ -z "$TURN_KEY_ID" ] || [ -z "$TURN_KEY_API_TOKEN" ]; then
+            echo "No TURN_KEY_ID / TURN_KEY_API_TOKEN secrets; leaving the Worker's TURN settings as they are."
+            exit 0
+          fi
+          printf '%s' "$TURN_KEY_ID" | npx wrangler secret put TURN_KEY_ID
+          printf '%s' "$TURN_KEY_API_TOKEN" | npx wrangler secret put TURN_KEY_API_TOKEN

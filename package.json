@@ -1,0 +1,41 @@
+{
+  "name": "pivoice",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Voice rooms around a round table. Make a room, share the code, talk. Peer to peer over PeerJS, served from a Cloudflare Worker.",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "dev:local": "vite --mode localpeer",
+    "build": "vue-tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "preview:worker": "npm run build && wrangler dev",
+    "typecheck": "vue-tsc --noEmit",
+    "typecheck:worker": "tsc --noEmit -p worker",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "peer:local": "node scripts/local-peer-server.mjs",
+    "e2e": "node scripts/e2e.mjs"
+  },
+  "engines": {
+    "node": ">=22.12"
+  },
+  "dependencies": {
+    "@blobatar/vue": "^2.7.0",
+    "@fontsource-variable/noto-sans": "^5.3.0",
+    "blobatar": "^2.7.0",
+    "peerjs": "^1.5.5",
+    "vue": "^3.5.44"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261027.1",
+    "@types/node": "^24.19.1",
+    "@vitejs/plugin-vue": "^6.0.9",
+    "peer": "^1.0.2",
+    "typescript": "~5.9.3",
+    "vite": "^8.3.5",
+    "vitest": "^5.0.5",
+    "vue-tsc": "^3.3.12",
+    "wrangler": "^4.153.0"
+  }
+}

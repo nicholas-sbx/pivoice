@@ -1,0 +1,59 @@
+@import '@fontsource-variable/noto-sans/wght.css';
+@import './tokens.css';
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+}
+
+body {
+  font-family: var(--font);
+  font-size: 16px;
+  line-height: 1.375;
+  color: var(--text-normal);
+  background: var(--bg-tertiary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow: hidden;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+}
+
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--text-link);
+  outline-offset: 2px;
+}
+
+::selection {
+  background: rgba(88, 101, 242, 0.5);
+}
+
+/* Discord-ish thin scrollbars. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--bg-tertiary) transparent;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
