@@ -126,6 +126,19 @@ export class AudioEngine {
     return track
   }
 
+  /**
+   * How long the microphone takes to hand us audio, as the browser reports
+   * it. Used as a stand-in for everyone's capture delay in the latency
+   * breakdown, since we can't see theirs.
+   */
+  captureLatencyMs(): number | null {
+    const track = this.mic?.stream.getAudioTracks()[0]
+    const stats = (track as (MediaStreamTrack & { stats?: { averageLatency?: number } }) | undefined)?.stats
+    if (stats?.averageLatency) return stats.averageLatency
+    const latency = (track?.getSettings() as (MediaTrackSettings & { latency?: number }) | undefined)?.latency
+    return typeof latency === 'number' && latency > 0 ? latency * 1000 : null
+  }
+
   get micDeviceId(): string {
     return this.mic?.stream.getAudioTracks()[0]?.getSettings().deviceId ?? ''
   }

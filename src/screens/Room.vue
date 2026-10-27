@@ -12,12 +12,14 @@ import {
   toggleSpatial
 } from '../call'
 import ControlButton from '../components/ControlButton.vue'
+import DisplayPanel from '../components/DisplayPanel.vue'
 import Icon from '../components/Icon.vue'
 import RoundTable from '../components/RoundTable.vue'
 import SettingsPanel from '../components/SettingsPanel.vue'
 import UserMenu from '../components/UserMenu.vue'
 
 const settingsOpen = ref(false)
+const displayOpen = ref(false)
 const menu = ref<{ id: string; x: number; y: number } | null>(null)
 
 const selfMuted = computed(() => call.muted || call.deafened || !!call.micProblem)
@@ -86,6 +88,20 @@ onBeforeUnmount(() => removeEventListener('keydown', onKey))
           <Icon name="people" :size="20" />
           <span>{{ present }}</span>
         </div>
+        <div class="display-anchor">
+          <button
+            type="button"
+            class="bar-btn"
+            :class="{ active: displayOpen }"
+            title="Display settings"
+            aria-label="Display settings"
+            data-display-toggle
+            @click="displayOpen = !displayOpen"
+          >
+            <Icon name="gear" :size="20" />
+          </button>
+          <DisplayPanel v-if="displayOpen" @close="displayOpen = false" />
+        </div>
         <button type="button" class="invite" @click="copyInvite">
           <Icon name="link" :size="18" />
           Copy Invite
@@ -102,6 +118,9 @@ onBeforeUnmount(() => removeEventListener('keydown', onKey))
         :self-deafened="call.deafened"
         :code="call.prefs.showCode ? call.code : ''"
         :silenced="call.silenced"
+        :links="call.links"
+        :show-ping="call.prefs.showPing"
+        :show-route="call.prefs.showRoute"
         @angle="onAngle"
         @menu="(id, x, y) => (menu = { id, x, y })"
       />
@@ -235,6 +254,25 @@ h1 {
 .status.reconnecting,
 .status.connecting {
   color: var(--yellow);
+}
+.display-anchor {
+  position: relative;
+}
+.bar-btn {
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--interactive-normal);
+  cursor: pointer;
+}
+.bar-btn:hover,
+.bar-btn.active {
+  color: var(--interactive-active);
+  background: var(--bg-modifier-hover);
 }
 .people {
   display: inline-flex;

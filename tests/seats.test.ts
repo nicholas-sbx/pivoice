@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { Table, TAU, cyclicAfter, planSeats, seatDirection, seatOffset } from '../src/lib/seats'
+import { Table, TAU, cyclicAfter, planSeats, seatDirection, seatOffset, tableRadius } from '../src/lib/seats'
 
 const slot = (k: number, n: number) => (TAU * k) / n
 const close = (a: number, b: number) => expect(a).toBeCloseTo(b, 9)
@@ -107,6 +107,25 @@ describe('geometry', () => {
 
   it('orders newcomers starting after you', () => {
     expect(cyclicAfter(['a', 'b', 'me', 'c', 'd'], 'me')).toEqual(['c', 'd', 'a', 'b'])
+  })
+})
+
+describe('tableRadius', () => {
+  it('is half size for up to three people and full size from eight', () => {
+    expect(tableRadius(1, 360, 90)).toBe(180)
+    expect(tableRadius(3, 360, 90)).toBe(180)
+    expect(tableRadius(8, 360, 90)).toBe(360)
+    expect(tableRadius(12, 360, 90)).toBe(360)
+  })
+  it('grows steadily in between', () => {
+    const sizes = [3, 4, 5, 6, 7, 8].map(n => tableRadius(n, 360, 60))
+    for (let i = 1; i < sizes.length; i++) expect(sizes[i]).toBeGreaterThan(sizes[i - 1])
+  })
+  it('never squeezes neighbours together on a small screen', () => {
+    const r = tableRadius(5, 400, 90)
+    const gap = 2 * r * Math.sin(Math.PI / 5)
+    expect(gap).toBeGreaterThanOrEqual(90 * 2.3 - 1e-9)
+    expect(tableRadius(12, 200, 90)).toBe(200)
   })
 })
 

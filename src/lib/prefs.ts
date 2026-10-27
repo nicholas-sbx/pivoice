@@ -13,6 +13,12 @@ export interface Prefs {
   autoGainControl: boolean
   /** The room code is hidden until you ask to see it (screen sharing, streaming). */
   showCode: boolean
+  /** Ping beside everyone's name. */
+  showPing: boolean
+  /** A card under everyone with the route their audio takes and what it's costing. */
+  showRoute: boolean
+  /** Opus DTX for what people send you: less bandwidth in silence, ~9 ms more buffering. */
+  dtx: boolean
 }
 
 const KEY = 'pv.prefs'
@@ -26,7 +32,10 @@ export const DEFAULT_PREFS: Prefs = {
   echoCancellation: false,
   noiseSuppression: false,
   autoGainControl: false,
-  showCode: false
+  showCode: false,
+  showPing: true,
+  showRoute: false,
+  dtx: true
 }
 
 export function loadPrefs(): Prefs {
@@ -38,7 +47,7 @@ export function loadPrefs(): Prefs {
     if (raw.lastSpatial === 'stereo' || raw.lastSpatial === 'hrtf') p.lastSpatial = raw.lastSpatial
     if (typeof raw.inputId === 'string') p.inputId = raw.inputId
     if (typeof raw.outputId === 'string') p.outputId = raw.outputId
-    for (const k of ['echoCancellation', 'noiseSuppression', 'autoGainControl', 'showCode'] as const) {
+    for (const k of ['echoCancellation', 'noiseSuppression', 'autoGainControl', 'showCode', 'showPing', 'showRoute', 'dtx'] as const) {
       if (typeof raw[k] === 'boolean') p[k] = raw[k]
     }
     return p

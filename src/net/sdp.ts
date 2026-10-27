@@ -6,8 +6,15 @@
  *   the Opus frame size from the remote description's ptime).
  * - `useinbandfec=1`: in-band FEC costs no extra latency and covers single
  *   lost packets without waiting for anything.
- * - `stereo=0`, `usedtx=0`: mono voice, and no discontinuous transmission so
- *   the jitter buffer never has to re-settle after a silence.
+ * - `stereo=0`: mono voice.
+ * - `usedtx=1`: discontinuous transmission. When you're quiet the encoder
+ *   sends a tiny comfort-noise update every 400 ms instead of 50 packets a
+ *   second, and picks back up on the very first frame of speech, so nothing
+ *   gets clipped (a level gate of our own would lose the start of words).
+ *   It isn't free: measured in Chrome, the receiver's jitter buffer sits
+ *   about 9 ms deeper with it (36 vs 27 ms), so it's a setting. These
+ *   parameters describe what *we* want to receive, so each person's own
+ *   choice decides whether the people talking to them use it.
  * - `maxaveragebitrate`: a bit more headroom than the 32 kbps default, since
  *   there's no noise suppression to make the signal easy to code.
  */
@@ -16,12 +23,19 @@ export const OPUS_PARAMS: Record<string, string> = {
   useinbandfec: '1',
   stereo: '0',
   'sprop-stereo': '0',
-  usedtx: '0',
+  usedtx: '1',
   maxaveragebitrate: '64000'
 }
 export const PTIME_MS = 10
+/** Opus's encoder lookahead in VoIP mode, the other fixed cost of each frame. */
+export const OPUS_LOOKAHEAD_MS = 6.5
 
-export function tuneOpusSdp(sdp: string): string {
+export interface OpusTuning {
+  dtx: boolean
+}
+
+export function tuneOpusSdp(sdp: string, tuning: OpusTuning = { dtx: true }): string {
+  const wanted = { ...OPUS_PARAMS, usedtx: tuning.dtx ? '1' : '0' }
   const eol = sdp.includes('\r\n') ? '\r\n' : '\n'
   const lines = sdp.split(eol)
   const opus = new Set<string>()
@@ -57,7 +71,7 @@ export function tuneOpusSdp(sdp: string): string {
         const [k, ...v] = part.trim().split('=')
         if (k) params.set(k, v.join('='))
       }
-      for (const [k, v] of Object.entries(OPUS_PARAMS)) params.set(k, v)
+      for (const [k, v] of Object.entries(wanted)) params.set(k, v)
       out.push(`a=fmtp:${fmtp[1]} ${[...params].map(([k, v]) => `${k}=${v}`).join(';')}`)
       continue
     }

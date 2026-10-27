@@ -22,12 +22,12 @@ const sdp = [
 describe('tuneOpusSdp', () => {
   const out = tuneOpusSdp(sdp)
 
-  it('asks for 10 ms frames, FEC, mono and no DTX', () => {
+  it('asks for 10 ms frames, FEC, mono and DTX', () => {
     const fmtp = out.split('\r\n').find(l => l.startsWith('a=fmtp:111'))!
     expect(fmtp).toContain('minptime=10')
     expect(fmtp).toContain('useinbandfec=1')
     expect(fmtp).toContain('stereo=0')
-    expect(fmtp).toContain('usedtx=0')
+    expect(fmtp).toContain('usedtx=1')
     expect(fmtp.match(/minptime/g)).toHaveLength(1)
   })
 
@@ -46,6 +46,12 @@ describe('tuneOpusSdp', () => {
 
   it('is idempotent', () => {
     expect(tuneOpusSdp(out)).toBe(out)
+  })
+
+  it('turns DTX off when asked', () => {
+    const fmtp = tuneOpusSdp(sdp, { dtx: false }).split('\r\n').find(l => l.startsWith('a=fmtp:111'))!
+    expect(fmtp).toContain('usedtx=0')
+    expect(fmtp).toContain('minptime=10')
   })
 
   it('ignores SDP without Opus', () => {

@@ -129,6 +129,13 @@ try {
   for (const n of ['Eve', 'Finn', 'Gus']) extra.push(await open(n, code))
   await expectSeats(dan, 6, 'Dan with six')
   ok('six at the table')
+
+  // Ping beside everyone else, from the calls' own stats.
+  await dan.waitForSelector('.seat:not(.self) .ping', { timeout: 10_000 }).catch(() => {
+    throw new Error('no ping shown')
+  })
+  ok('ping shows: ' + (await dan.$$eval('.seat:not(.self) .ping', els => els.map(e => e.textContent.trim()).join(', '))))
+
   if (SHOTS) {
     await dan.click('button[aria-label^="Spatial Audio"]')
     await dan.waitForTimeout(1200)
@@ -136,6 +143,76 @@ try {
     await dan.click('button[aria-label="Voice Settings"]')
     await dan.waitForTimeout(300)
     await dan.screenshot({ path: `${SHOTS}/settings.png` })
+  }
+
+  // The route card, behind the toggle in the top bar.
+  if (await dan.$('.route')) throw new Error('route card shown by default')
+  await dan.click('button[aria-label="Display settings"]')
+  await dan.click('text=Show audio route')
+  await dan.click('button[aria-label="Display settings"]')
+  await dan.waitForSelector('.route .route-head:not(:has-text("Connecting"))', { timeout: 10_000 })
+  await dan.waitForFunction(() => [...document.querySelectorAll('.route')].some(r => r.textContent.includes('mouth to ear')), null, { timeout: 10_000 })
+  ok('route card: ' + (await dan.$eval('.route', e => e.innerText.replace(/\s*\n\s*/g, ' | '))))
+  // Muting stops the packets, not just the sound: Eve's bitrate on Dan's screen drops to nothing.
+  const kbpsOf = name =>
+    dan.$$eval(
+      '.seat',
+      (els, name) => {
+        const seat = els.find(e => e.querySelector('.name')?.textContent.trim() === name)
+        const m = seat?.querySelector('.route')?.textContent.match(/(\d+) kbps/)
+        return m ? Number(m[1]) : null
+      },
+      name
+    )
+  await extra[0].click('button[aria-label="Mute"]')
+  await dan.waitForFunction(
+    () => {
+      const seat = [...document.querySelectorAll('.seat')].find(e => e.querySelector('.name')?.textContent.trim() === 'Eve')
+      return /(^|\D)0 kbps/.test(seat?.querySelector('.route')?.textContent ?? '')
+    },
+    null,
+    { timeout: 10_000 }
+  ).catch(async () => {
+    throw new Error(`Eve muted but still sending (${await kbpsOf('Eve')} kbps)`)
+  })
+  ok('Eve muted: 0 kbps reaching Dan')
+  await extra[0].click('button[aria-label="Unmute"]')
+  await dan.waitForFunction(
+    () => {
+      const seat = [...document.querySelectorAll('.seat')].find(e => e.querySelector('.name')?.textContent.trim() === 'Eve')
+      const m = seat?.querySelector('.route')?.textContent.match(/(\d+) kbps/)
+      return m && Number(m[1]) > 0
+    },
+    null,
+    { timeout: 10_000 }
+  )
+  ok(`Eve unmuted: ${await kbpsOf('Eve')} kbps again`)
+
+  // Deafened: everyone else stops sending to you.
+  await dan.click('button[aria-label="Deafen"]')
+  await dan.waitForFunction(
+    () => {
+      const cards = [...document.querySelectorAll('.seat:not(.self) .route')]
+      return cards.length > 0 && cards.every(c => /(^|\D)0 kbps/.test(c.textContent))
+    },
+    null,
+    { timeout: 10_000 }
+  ).catch(() => {
+    throw new Error('Dan deafened but people are still sending to him')
+  })
+  ok('Dan deafened: nobody sends him audio')
+  await dan.click('button[aria-label="Undeafen"]')
+  await dan.waitForFunction(
+    () => [...document.querySelectorAll('.seat:not(.self) .route')].some(c => /[1-9]\d* kbps/.test(c.textContent)),
+    null,
+    { timeout: 10_000 }
+  )
+  ok('Dan undeafened: audio flowing again')
+
+  if (SHOTS) {
+    await dan.mouse.move(5, 300)
+    await dan.waitForTimeout(400)
+    await dan.screenshot({ path: `${SHOTS}/route.png` })
   }
 
   // Someone in the middle leaves: the rest close the gap.

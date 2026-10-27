@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, shallowRef, watch } from 'vue'
-import { Table, seatOffset } from '../lib/seats'
+import { Table, seatOffset, tableRadius } from '../lib/seats'
+import { SEAT_SPRING, isSettled, settle, spring, stepSpring } from '../lib/spring'
 import type { Member } from '../net/protocol'
+import { pingLevel, routeLabel, type LinkStats } from '../net/stats'
 import Avatar from './Avatar.vue'
 import Icon from './Icon.vue'
 
@@ -21,6 +23,9 @@ const props = defineProps<{
   selfDeafened: boolean
   code: string
   silenced: Record<string, boolean>
+  links: Record<string, LinkStats>
+  showPing: boolean
+  showRoute: boolean
 }>()
 
 const emit = defineEmits<{
@@ -41,7 +46,8 @@ const reducedMotion = typeof matchMedia === 'function' && matchMedia('(prefers-r
 const geometry = computed(() => {
   const { w, h } = size
   const avatar = Math.round(Math.max(56, Math.min(92, Math.min(w, h) * 0.1)))
-  const label = 34
+  // Name tag, plus the route card under it when that's on.
+  const label = props.showRoute ? 124 : 34
   // Room for the floating call controls along the bottom.
   const bottom = 108
   const top = 20
@@ -51,8 +57,29 @@ const geometry = computed(() => {
   const block = 2 * ring + avatar + label
   const cx = w / 2
   const cy = top + Math.max(0, (h - bottom - top - block) / 2) + avatar / 2 + ring
-  return { avatar, ring, cx, cy, table: ring - avatar * 0.22 }
+  return { avatar, ring, cx, cy }
 })
+
+/**
+ * How far out the seats are right now. The table grows with the number of
+ * people (half size for 1–3, full size from 8), on a spring like everything
+ * else so the seats ease outward as people sit down.
+ */
+const radius = spring(0)
+const tableEl = ref<HTMLElement>()
+
+function presentCount(): number {
+  let n = 0
+  for (const seat of table.seats.values()) if (!seat.leaving) n++
+  return n
+}
+
+function retargetRadius(snap: boolean) {
+  const g = geometry.value
+  // Route cards are wider than a name tag, so neighbours need more room.
+  radius.target = tableRadius(presentCount(), g.ring, g.avatar, props.showRoute ? 250 : undefined)
+  if (snap || radius.x === 0) settle(radius)
+}
 
 const byId = computed(() => {
   const map = new Map<string, Member>()
@@ -103,7 +130,16 @@ function frame(now: number) {
     table.finish()
     moving = false
   } else moving = table.step(dt)
-  if (table.seats.size !== seatIds.value.length) refreshSeats()
+  if (reducedMotion) settle(radius)
+  else {
+    stepSpring(radius, dt, SEAT_SPRING)
+    if (isSettled(radius, 0.05)) settle(radius)
+    else moving = true
+  }
+  if (table.seats.size !== seatIds.value.length) {
+    refreshSeats()
+    retargetRadius(false)
+  }
   paint()
   raf = moving ? requestAnimationFrame(frame) : 0
   if (!moving) settledTick.value++
@@ -114,13 +150,23 @@ function paintSeat(id: string) {
   const el = seatEls.get(id)
   if (!seat || !el) return
   const g = geometry.value
-  const { x, y } = seatOffset(seat.angle.x, g.ring)
+  const { x, y } = seatOffset(seat.angle.x, radius.x)
   const p = Math.max(0, Math.min(1, seat.presence.x))
   el.style.transform = `translate3d(${(g.cx + x).toFixed(2)}px, ${(g.cy + y).toFixed(2)}px, 0) translate(-50%, -50%) scale(${(0.55 + 0.45 * p).toFixed(4)})`
   el.style.opacity = p.toFixed(3)
 }
 
+function paintTable() {
+  const el = tableEl.value
+  if (!el) return
+  const g = geometry.value
+  const r = Math.max(0, radius.x - g.avatar * 0.22)
+  el.style.width = el.style.height = (2 * r).toFixed(2) + 'px'
+  el.style.transform = `translate3d(${(g.cx - r).toFixed(2)}px, ${(g.cy - r).toFixed(2)}px, 0)`
+}
+
 function paint() {
+  paintTable()
   for (const seat of table.seats.values()) {
     paintSeat(seat.id)
     if (seat.id !== props.selfId) emit('angle', seat.id, seat.angle.x)
@@ -135,13 +181,26 @@ watch(
     if (!ids.includes(props.selfId)) ids.unshift(props.selfId)
     table.sync(ids, props.selfId)
     refreshSeats()
+    retargetRadius(false)
     void nextTick(paint)
     kick()
   },
   { immediate: true }
 )
 
-watch(geometry, () => paint())
+// A resized window jumps straight to the new size; only people joining and leaving animate.
+watch(
+  () => props.showRoute,
+  () => {
+    retargetRadius(false)
+    kick()
+  }
+)
+
+watch(geometry, () => {
+  retargetRadius(true)
+  paint()
+})
 
 let observer: ResizeObserver | null = null
 onMounted(() => {
@@ -188,28 +247,38 @@ function lookFor(id: string): Element | null {
   return null
 }
 
+function n0(ms: number | null): string {
+  return ms == null ? '?' : String(Math.round(ms))
+}
+
+function breakdownTitle(s: LinkStats): string {
+  return [
+    `Microphone: ${n0(s.captureMs)} ms (yours, as your browser reports it)`,
+    `Codec: ${n0(s.codecMs)} ms (10 ms Opus frame + lookahead)`,
+    `Network: ${n0(s.rttMs == null ? null : s.rttMs / 2)} ms (half the round trip)`,
+    `Jitter buffer: ${n0(s.bufferMs)} ms`,
+    `Playout: ${n0(s.playoutMs)} ms (browser to speakers)`,
+    '? = not reported by this browser, counted as 0.'
+  ].join('\n')
+}
+
+function fmt(ms: number | null): string {
+  return ms == null ? '–' : `${Math.round(ms)} ms`
+}
+
 function onMenu(id: string, e: MouseEvent) {
   if (isSelf(id)) return
   e.preventDefault()
   emit('menu', id, e.clientX, e.clientY)
 }
 
-const tableStyle = computed(() => {
-  const g = geometry.value
-  return {
-    width: g.table * 2 + 'px',
-    height: g.table * 2 + 'px',
-    left: g.cx - g.table + 'px',
-    top: g.cy - g.table + 'px'
-  }
-})
 
 const count = computed(() => props.members.filter(m => !m.away).length || 1)
 </script>
 
 <template>
   <div ref="root" class="stage">
-    <div class="table" :style="tableStyle">
+    <div ref="tableEl" class="table">
       <div class="felt">
         <div v-if="code" class="code">{{ code }}</div>
         <div class="count">{{ count }} {{ count === 1 ? 'person' : 'people' }} at the table</div>
@@ -246,6 +315,39 @@ const count = computed(() => props.members.filter(m => !m.away).length || 1)
         <Icon v-if="mutedOf(id)" name="mic" :size="16" slash class="state" />
         <Icon v-if="deafenedOf(id)" name="headphones" :size="16" slash class="state" />
         <Icon v-if="silenced[id]" name="speaker" :size="16" slash class="state" />
+        <span
+          v-if="showPing && !isSelf(id) && links[id]?.rttMs != null"
+          class="ping"
+          :class="pingLevel(links[id].rttMs!)"
+          :title="routeLabel(links[id])"
+        >
+          {{ Math.round(links[id].rttMs!) }} ms
+        </span>
+      </div>
+      <div v-if="showRoute && !isSelf(id)" class="route">
+        <template v-if="links[id]">
+          <div class="route-head" :class="links[id].route ?? ''">
+            <span class="dot" />
+            {{ routeLabel(links[id]) }}
+          </div>
+          <div class="route-line">
+            {{ [links[id].protocol?.toUpperCase(), links[id].relayProtocol ? `${links[id].relayProtocol!.toUpperCase()} to relay` : '', links[id].codec, links[id].kbps == null ? '' : `${Math.round(links[id].kbps!)} kbps`]
+              .filter(Boolean)
+              .join(' · ') }}
+          </div>
+          <div v-if="links[id].mouthToEarMs != null" class="route-line big" :title="breakdownTitle(links[id])">
+            ≈ {{ Math.round(links[id].mouthToEarMs!) }} ms mouth to ear
+          </div>
+          <div v-if="links[id].mouthToEarMs != null" class="route-line dim wrap">
+            mic {{ n0(links[id].captureMs) }} · codec {{ n0(links[id].codecMs) }} · net {{ n0(links[id].rttMs! / 2) }} · buffer
+            {{ n0(links[id].bufferMs) }} · out {{ n0(links[id].playoutMs) }}
+          </div>
+          <div class="route-line dim">
+            jitter {{ fmt(links[id].jitterMs) }} · loss
+            {{ links[id].lossPct == null ? '–' : links[id].lossPct!.toFixed(links[id].lossPct! < 1 ? 1 : 0) + '%' }}
+          </div>
+        </template>
+        <div v-else class="route-head">Connecting…</div>
       </div>
     </div>
   </div>
@@ -261,6 +363,9 @@ const count = computed(() => props.members.filter(m => !m.away).length || 1)
 
 .table {
   position: absolute;
+  left: 0;
+  top: 0;
+  will-change: transform, width, height;
   border-radius: 50%;
   /* Seen from straight above: a flat disc, lit from overhead, shadow all round. */
   background: radial-gradient(circle at 50% 50%, #3a3c42 0%, #2f3136 60%, #26282c 100%);
@@ -355,6 +460,85 @@ const count = computed(() => props.members.filter(m => !m.away).length || 1)
 }
 .state {
   color: var(--interactive-normal);
+}
+.ping {
+  margin-left: 2px;
+  padding: 0 5px;
+  border-radius: 3px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 16px;
+  font-variant-numeric: tabular-nums;
+  background: rgba(255, 255, 255, 0.08);
+}
+.ping.good {
+  color: #3ba55c;
+}
+.ping.ok {
+  color: var(--yellow);
+}
+.ping.bad {
+  color: var(--red);
+}
+.route {
+  position: absolute;
+  top: calc(100% + 36px);
+  z-index: 1;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 236px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: rgba(17, 18, 20, 0.88);
+  box-shadow: 0 0 0 1px var(--border-subtle);
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--text-normal);
+  text-align: center;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.route-head {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-weight: 600;
+  color: var(--header-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  flex: none;
+}
+.route-head.local .dot,
+.route-head.direct .dot {
+  background: var(--green);
+}
+.route-head.relay .dot {
+  background: var(--yellow);
+}
+.route-line {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
+}
+.route-line:empty {
+  display: none;
+}
+.wrap {
+  white-space: normal;
+}
+.big {
+  font-weight: 600;
+  color: var(--header-primary);
+}
+.dim {
+  color: var(--text-muted);
 }
 .self .tag {
   background: rgba(88, 101, 242, 0.85);

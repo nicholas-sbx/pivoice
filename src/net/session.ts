@@ -36,6 +36,8 @@ export interface SessionOptions {
   /** What we send to everyone. Its track can be swapped later with replaceTrack. */
   stream: MediaStream
   peerOptions: PeerOptions
+  /** Ask the people talking to us to pause while they're silent (see sdp.ts). */
+  dtx: boolean
 }
 
 const PEER_OPEN_TIMEOUT_MS = 15_000
@@ -65,6 +67,7 @@ export class Session {
   private self: { name: string; muted: boolean; deafened: boolean }
   private stream: MediaStream
   private options: PeerOptions
+  private sdpTransform: (sdp: string) => string
   private connected = false
   private ended = false
   private lostAt = 0
@@ -84,6 +87,8 @@ export class Session {
     this.self = { name: opts.name, muted: opts.muted, deafened: opts.deafened }
     this.stream = opts.stream
     this.options = opts.peerOptions
+    const tuning = { dtx: opts.dtx }
+    this.sdpTransform = sdp => tuneOpusSdp(sdp, tuning)
   }
 
   get isHost(): boolean {
@@ -384,6 +389,7 @@ export class Session {
     this.hostId = hostId
     this.events.roster(members, hostId)
     this.syncCalls()
+    this.updateSenders()
   }
 
   /** One call per pair; the one with the smaller id places it, so it never happens twice. */
@@ -406,7 +412,7 @@ export class Session {
     const peer = this.peer
     if (this.ended || !peer || peer.destroyed) return
     if (peer.disconnected) return this.retryCall(id)
-    const call = peer.call(id, this.stream, { sdpTransform: tuneOpusSdp })
+    const call = peer.call(id, this.stream, { sdpTransform: this.sdpTransform })
     if (call) this.wireCall(call)
     else this.retryCall(id)
   }
@@ -416,7 +422,7 @@ export class Session {
       call.close()
       return
     }
-    call.answer(this.stream, { sdpTransform: tuneOpusSdp })
+    call.answer(this.stream, { sdpTransform: this.sdpTransform })
     this.wireCall(call)
   }
 
@@ -437,6 +443,7 @@ export class Session {
       clearTimeout(this.callTimers.get(id))
       this.callTimers.delete(id)
       prioritiseAudio(call.peerConnection)
+      this.updateSenders()
       this.events.stream(id, stream)
     })
     const ended = () => this.onCallEnded(call)
@@ -487,16 +494,49 @@ export class Session {
     this.self = { ...this.self, ...patch }
     if (this.host) this.host.updateSelf(patch)
     else this.send({ t: 'state', ...patch })
+    this.updateSenders()
   }
 
   /** A new microphone: swap it into every call without renegotiating. */
   replaceTrack(track: MediaStreamTrack) {
     for (const old of this.stream.getAudioTracks()) if (old !== track) this.stream.removeTrack(old)
     if (!this.stream.getAudioTracks().includes(track)) this.stream.addTrack(track)
-    for (const call of this.calls.values()) {
-      const sender = call.peerConnection?.getSenders().find(s => s.track?.kind === 'audio' || s.track === null)
-      void sender?.replaceTrack(track).catch(() => {})
+    this.updateSenders()
+  }
+
+  /**
+   * Don't send audio nobody will hear. While we're muted (deafened counts),
+   * or to someone who's deafened, the call's sender gets no track at all, so
+   * no packets go out (a disabled track would still send encoded silence
+   * 100 times a second). Swapping the track back is instant and needs no
+   * renegotiation. Quiet stretches while talking are Opus DTX's job (sdp.ts).
+   */
+  private updateSenders() {
+    const track = this.stream.getAudioTracks()[0] ?? null
+    for (const [id, call] of this.calls) {
+      const sender = audioSender(call.peerConnection)
+      if (!sender) continue
+      const deafened = this.members.find(m => m.id === id)?.deafened ?? false
+      const want = this.self.muted || deafened ? null : track
+      if (sender.track !== want) void sender.replaceTrack(want).catch(() => {})
     }
+  }
+
+  /** Each live call's WebRTC stats, keyed by who it's with. */
+  async getStats(): Promise<Map<string, RTCStatsReport>> {
+    const out = new Map<string, RTCStatsReport>()
+    await Promise.all(
+      [...this.calls].map(async ([id, call]) => {
+        const pc = call.peerConnection
+        if (!pc || !call.remoteStream) return
+        try {
+          out.set(id, await pc.getStats())
+        } catch {
+          /* closed under us */
+        }
+      })
+    )
+    return out
   }
 
   leave() {
@@ -548,6 +588,13 @@ export class Session {
     this.lastStatus = s
     this.events.status(s)
   }
+}
+
+/** The one audio sender on a call, found by its transceiver so it's there even with no track on it. */
+function audioSender(pc: RTCPeerConnection | undefined): RTCRtpSender | null {
+  if (!pc || pc.connectionState === 'closed') return null
+  const t = pc.getTransceivers().find(t => t.receiver.track?.kind === 'audio' || t.sender.track?.kind === 'audio')
+  return t?.sender ?? null
 }
 
 /** Mark our audio high priority so routers that honour DSCP queue it first. */

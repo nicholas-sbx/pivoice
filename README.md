@@ -8,7 +8,11 @@ others slide to their new seats, each moving as little as possible. Turn on
 spatial audio and each voice comes from where that person sits.
 
 <p>
-  <img src="docs/screenshots/room-6.jpg" width="49%" alt="Six people at the table">
+  <img src="docs/screenshots/room-6.jpg" width="49%" alt="Six people at the table, with ping">
+  <img src="docs/screenshots/route.jpg" width="49%" alt="Audio route cards: path, latency breakdown, loss">
+</p>
+<p>
+  <img src="docs/screenshots/room-3.jpg" width="49%" alt="Three people: the table at half size">
   <img src="docs/screenshots/settings.jpg" width="49%" alt="Voice settings">
 </p>
 <p>
@@ -58,12 +62,15 @@ and **Join Room**. An invite link (`…/#CODE`) opens straight to the join form
 with the code filled in, dotted out, and taken out of the address bar.
 
 **The table.** Top down: a flat round table, you at the bottom, everyone else
-evenly around it. Everyone's face is a [blobatar](https://blobatar.dev) made
+evenly around it. It's half size for one to three people and grows to full
+size by eight, easing outward as people sit down. Everyone's face is a [blobatar](https://blobatar.dev) made
 from their name, so the same name is the same creature on everyone's screen.
 Faces idle (breathe, blink), smile while they talk, doze off while deafened,
 look puzzled while reconnecting, and turn their eyes toward whoever is
 talking. A green ring shows who's talking, and mute and deafen show next to
-their names. Right-click someone for **User Volume** and **Mute** (for you only).
+their names, along with your ping to each of them (green under 80 ms, yellow
+under 160, red above). Right-click someone for **User Volume** and **Mute**
+(for you only).
 
 **Call controls.** A floating pill at the bottom: mute (`Ctrl+Shift+M`),
 deafen (`Ctrl+Shift+D`), spatial audio, voice settings, disconnect. Like
@@ -74,9 +81,18 @@ to show it and to copy it, so you can screen share without giving the room
 away. **Copy Invite** copies the link without showing it. The code shows in
 the middle of the table only while you have it revealed.
 
+**Display settings** (the gear in the top bar). **Show ping** (on) and **Show
+audio route** (off). The route card under each person shows how their audio
+reaches you (same network, direct peer to peer, or relayed through a TURN
+server, and which one), the transport, codec and bitrate, a mouth-to-ear
+estimate with its breakdown (mic, codec, network, jitter buffer, playout),
+and jitter and packet loss. It's all read once a second from the calls'
+own WebRTC stats. Hover the estimate for what each part means.
+
 **Voice settings.** Input and output device, an input level meter,
-spatial audio (**Off**, **Stereo**, **HRTF**), and echo cancellation, noise
-suppression and automatic gain control, all **off** by default.
+spatial audio (**Off**, **Stereo**, **HRTF**), echo cancellation, noise
+suppression and automatic gain control (all **off** by default), and
+silence suppression (DTX, on).
 
 ### Seating
 
@@ -108,9 +124,20 @@ to where they're going.
   off unless you turn them on. Each adds processing delay, and everyone's on
   headphones.
 - **10 ms Opus frames.** The SDP each side sends asks for `ptime=10`
-  instead of 20 ms, with in-band FEC, mono and no DTX
-  ([`src/net/sdp.ts`](src/net/sdp.ts)). Senders are marked high priority for
-  networks that honour DSCP.
+  instead of 20 ms, with in-band FEC and mono
+  ([`src/net/sdp.ts`](src/net/sdp.ts)). Measured: 100 packets a second.
+  Senders are marked high priority for networks that honour DSCP.
+- **Nothing sent that nobody will hear.** While you're muted (deafening
+  mutes you too), your calls carry no audio track at all, so no packets go
+  out. A disabled track would still send encoded silence 100 times a second.
+  Nobody sends audio to someone who's deafened. Swapping the track back is
+  instant and needs no renegotiation.
+- **Silence suppression (DTX), on by default.** While someone's quiet, Opus
+  sends a small comfort-noise update every 400 ms instead of 100 packets a
+  second, and resumes on the first frame of speech, so nothing is clipped.
+  It costs about 9 ms: measured in Chrome, the jitter buffer sat at ~36 ms
+  with it and ~27 ms without. Turn it off in Voice Settings to save those
+  9 ms. It applies to what people send *you*, from your next join.
 - **Spatial audio off by default.** With it off, each voice plays from a plain
   `<audio>` element, the shortest path the browser has from the network to your
   ears.
@@ -121,6 +148,24 @@ to where they're going.
   bottom facing the middle, so the far side of the table is in front of you
   and the seat on your left is ahead-left. Only the direction counts:
   nobody's quieter for sitting further away. There's no head tracking.
+
+**Where the rest of the delay is.** Measured on one machine, Chrome to Chrome
+(the network part is ~1 ms):
+
+| Stage | Delay | Who controls it |
+| --- | --- | --- |
+| Mic capture | ~10 ms (as Chrome reports it) | Chrome and your audio server |
+| Opus frame + lookahead | 10 + ~6.5 ms | us (10 ms is libwebrtc's smallest Opus frame) |
+| Network | ½ the round trip | the network |
+| Jitter buffer | ~27 ms (Chrome's floor here was ~28 ms), +9 with DTX | Chrome's NetEq. Pages can only raise its minimum. |
+| Playout to speakers | ~30 ms | Chrome and your audio server |
+
+That's ~85–95 ms mouth to ear even on one machine, against the ~10–20 ms of
+something like `pw-loopback`, and most of it is inside the browser, where a
+page can't reach. The route card shows these numbers live for each person.
+On Linux with PipeWire, starting Chrome with `PULSE_LATENCY_MSEC=10` (Chrome
+talks to PipeWire through its PulseAudio layer) may shrink the capture and
+playout buffers. It's worth trying, but it's outside the app.
 
 ## Rooms: the PeerJS trick
 

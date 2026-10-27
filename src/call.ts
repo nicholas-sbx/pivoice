@@ -5,6 +5,7 @@ import { loadPrefs, savePrefs, type Prefs } from './lib/prefs'
 import { fetchIceServers, peerOptions, publicUrl } from './net/config'
 import type { Member } from './net/protocol'
 import { Session, type SessionFailure, type SessionStatus } from './net/session'
+import { summarise, type LinkStats, type Snapshot } from './net/stats'
 
 /**
  * The one call this tab can be in, as reactive state for the UI, plus
@@ -40,12 +41,16 @@ export const call = reactive({
   volumes: {} as Record<string, number>,
   /** People you've muted for yourself. */
   silenced: {} as Record<string, boolean>,
+  /** Ping and route to each person, refreshed every second. */
+  links: {} as Record<string, LinkStats>,
   toasts: [] as Toast[]
 })
 
 let engine: AudioEngine | null = null
 let session: Session | null = null
 let speakingTimer: ReturnType<typeof setInterval> | null = null
+let statsTimer: ReturnType<typeof setInterval> | null = null
+const snapshots = new Map<string, Snapshot>()
 let toastSeq = 0
 
 export function getEngine(): AudioEngine | null {
@@ -101,6 +106,8 @@ export async function startCall(kind: 'create' | 'join', name: string, code = ''
   call.speaking = new Set()
   call.volumes = {}
   call.silenced = {}
+  call.links = {}
+  snapshots.clear()
 
   const eng = new AudioEngine()
   engine = eng
@@ -123,7 +130,8 @@ export async function startCall(kind: 'create' | 'join', name: string, code = ''
       muted: effectiveMuted(),
       deafened: call.deafened,
       stream: eng.sendStream,
-      peerOptions: peerOptions(iceServers)
+      peerOptions: peerOptions(iceServers),
+      dtx: call.prefs.dtx
     },
     {
       status: (status, failure) => {
@@ -163,6 +171,7 @@ function onStatus(status: SessionStatus, failure?: SessionFailure) {
       // The code stays out of the address bar, like everywhere else it's hidden by default.
       if (location.hash) history.replaceState(null, '', location.pathname + location.search)
       startSpeakingPoll()
+      startStatsPoll()
     }
   } else if (status === 'failed') {
     cleanup()
@@ -178,6 +187,10 @@ function cleanup() {
   engine = null
   if (speakingTimer) clearInterval(speakingTimer)
   speakingTimer = null
+  if (statsTimer) clearInterval(statsTimer)
+  statsTimer = null
+  call.links = {}
+  snapshots.clear()
   call.phase = 'home'
   call.joining = null
   call.members = []
@@ -203,6 +216,34 @@ function startSpeakingPoll() {
     if (now.size === prev.size && [...now].every(id => prev.has(id))) return
     call.speaking = now
   }, 50)
+}
+
+function startStatsPoll() {
+  if (statsTimer) clearInterval(statsTimer)
+  let busy = false
+  const poll = async () => {
+    const s = session
+    if (!s || busy) return
+    busy = true
+    try {
+      const reports = await s.getStats()
+      if (session !== s) return
+      const next: Record<string, LinkStats> = {}
+      for (const [id, report] of reports) {
+        const { stats, snapshot } = summarise(report.values() as Iterable<Record<string, unknown>>, snapshots.get(id), {
+          captureMs: engine?.captureLatencyMs() ?? null
+        })
+        if (snapshot) snapshots.set(id, snapshot)
+        next[id] = stats
+      }
+      for (const id of [...snapshots.keys()]) if (!reports.has(id)) snapshots.delete(id)
+      call.links = next
+    } finally {
+      busy = false
+    }
+  }
+  void poll()
+  statsTimer = setInterval(poll, 1000)
 }
 
 export function toggleMute() {

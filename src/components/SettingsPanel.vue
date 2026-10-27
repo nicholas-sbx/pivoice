@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { AudioEngine, type SpatialMode } from '../audio/engine'
-import { applyMicPrefs, call, getEngine, setOutput, setSpatial } from '../call'
+import { applyMicPrefs, call, getEngine, setOutput, setSpatial, updatePrefs } from '../call'
 import Icon from './Icon.vue'
+import Switch from './Switch.vue'
 
 /** Voice settings, popping up over the call controls. */
 
@@ -38,6 +39,12 @@ const modes: { value: SpatialMode; label: string; hint: string }[] = [
   { value: 'hrtf', label: 'HRTF', hint: 'Full 3D around your head, on headphones.' }
 ]
 const modeHint = computed(() => modes.find(m => m.value === call.prefs.spatial)?.hint)
+
+const dtxChanged = ref(false)
+function setDtx(on: boolean) {
+  updatePrefs({ dtx: on })
+  dtxChanged.value = true
+}
 
 const processing = [
   { key: 'echoCancellation', label: 'Echo Cancellation' },
@@ -127,19 +134,20 @@ onBeforeUnmount(() => {
 
     <div class="row">
       <span class="eyebrow">Voice Processing</span>
-      <label v-for="p in processing" :key="p.key" class="switch-row">
-        <span>{{ p.label }}</span>
-        <span class="switch" :class="{ on: call.prefs[p.key] }">
-          <input
-            type="checkbox"
-            class="sr-only"
-            :checked="call.prefs[p.key]"
-            @change="applyMicPrefs({ [p.key]: ($event.target as HTMLInputElement).checked })"
-          />
-          <span class="knob" />
-        </span>
-      </label>
+      <Switch
+        v-for="p in processing"
+        :key="p.key"
+        :label="p.label"
+        :model-value="call.prefs[p.key]"
+        @update:model-value="v => applyMicPrefs({ [p.key]: v })"
+      />
       <p class="note">Off for the lowest latency. Turn them on if you're not on headphones.</p>
+      <Switch
+        label="Silence Suppression (DTX)"
+        :hint="`People stop sending you audio while they're quiet. Saves bandwidth, adds ~9 ms of buffering.${dtxChanged ? ' Takes effect when you rejoin.' : ''}`"
+        :model-value="call.prefs.dtx"
+        @update:model-value="setDtx"
+      />
     </div>
   </div>
 </template>
@@ -266,44 +274,5 @@ select {
 }
 .note.bad {
   color: var(--red);
-}
-.switch-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 6px 0;
-  font-size: 15px;
-  font-weight: 500;
-  color: var(--header-primary);
-  cursor: pointer;
-}
-.switch {
-  position: relative;
-  width: 40px;
-  height: 24px;
-  border-radius: 14px;
-  background: #80848e;
-  transition: background-color 0.2s ease;
-  flex: none;
-}
-.switch.on {
-  background: var(--green);
-}
-.knob {
-  position: absolute;
-  top: 3px;
-  left: 3px;
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  background: #fff;
-  transition: transform 0.2s ease;
-}
-.switch.on .knob {
-  transform: translateX(16px);
-}
-.switch:has(input:focus-visible) {
-  outline: 2px solid var(--text-link);
-  outline-offset: 2px;
 }
 </style>
