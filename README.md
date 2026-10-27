@@ -226,20 +226,31 @@ Off by default, in **Voice Settings → Low Latency**. Pairs of people who both
 turn it on stop using WebRTC's audio for each other and use this instead:
 
 ```
-mic → pv-capture AudioWorklet: frames of 2.5–20 ms on the audio clock
-    → worker: our silence gate → WebCodecs AudioEncoder (the browser's libopus)
+mic → pv-capture AudioWorklet: frames of 2.5–20 ms on the audio clock (one 2.7 ms block for PCM)
+    → shared-memory ring → worker: our silence gate → WebCodecs AudioEncoder (the browser's libopus), or raw PCM
     → packet: frame + the previous 0–2 frames again + now and then a capture stamp
     → RTCDataChannel, unordered, maxRetransmits 0 (late is dropped, never queued)
-    → their worker: WebCodecs AudioDecoder
-    → pv-playback AudioWorklet: our jitter buffer → their channel strip (volume, spatial)
+    → their worker: WebCodecs AudioDecoder (or straight through for PCM)
+    → shared-memory ring → pv-playback AudioWorklet: our jitter buffer → their channel strip (volume, spatial)
 ```
 
-- **No main thread in the audio path.** The capture worklet talks straight to
-  a dedicated worker over a MessagePort, the data channels are transferred to
+- **No main thread in the audio path.** The capture worklet hands frames
+  straight to a dedicated worker through a lock-free ring in a
+  SharedArrayBuffer (the worker wakes on `Atomics.waitAsync`, the playback
+  worklet reads its ring at the top of each block), the data channels are transferred to
   that worker the moment they're created (Chrome only allows it then), and
   decoded audio goes straight from the worker to the playback worklet. Page
   work can't delay a packet. Where a browser can't transfer a data channel,
-  the page relays instead.
+  the page relays instead. Shared memory needs the page to be cross-origin
+  isolated, so the Worker sends `Cross-Origin-Opener-Policy: same-origin` and
+  `Cross-Origin-Embedder-Policy: require-corp` on everything (so does the
+  Vite dev server). Without isolation the engine falls back to MessagePorts;
+  the tab says which it's using.
+- **Raw PCM, for local networks.** No encoder and no lookahead: each 128-sample
+  block (2.7 ms) goes out as 16-bit PCM the moment the audio thread has it.
+  The fixed delay drops to one block, at about 1.3 Mbit/s per listener (more
+  with redundancy). Opus at 2.5 ms still costs a frame plus 2.5 ms of
+  lookahead.
 - **Opus at frame sizes WebRTC won't do.** WebCodecs' Opus takes
   `frameDuration` down to 2.5 ms and `application: 'lowdelay'`, which means
   CELT only and 2.5 ms of lookahead instead of 6.5. Encoding a frame takes
@@ -278,6 +289,20 @@ real hardware):
 | WebRTC audio | 66–71 ms | ~30–39 ms | 30 ms |
 | Low-latency engine, 5 ms frames | 36–37 ms | ~10–15 ms | 11 ms |
 
+And with two people, which is the path most calls take:
+
+| | Mouth to ear (measured) |
+| --- | --- |
+| Raw mic to speakers (the floor) | ≈ 11 ms |
+| Opus, 5 ms frames (defaults) | 24 ms |
+| Opus, 2.5 ms frames, margin 0 | 18 ms |
+| Raw PCM, margin 3 ms | 19 ms |
+| Raw PCM, margin 0 | 16–17 ms |
+| Raw PCM, margin 0, no shared memory | 18 ms |
+
+What's left between PCM and the floor is one capture block, the buffer the
+jitter buffer keeps (a block or so even at target 0) and the data channel hop.
+
 <p>
   <img src="docs/screenshots/ll-settings.jpg" width="60%" alt="Low-latency engine settings">
 </p>
@@ -288,6 +313,7 @@ starts, so changing it reconnects you on the spot:
 | Setting | Default | What it does |
 | --- | --- | --- |
 | Audio output buffer | Smallest | Web Audio's buffer to the speakers, for both engines: Smallest (Chrome: 128 frames, 2.7 ms), Small (~5 ms where the device offers it), or Browser default (~10 ms). The tab shows what you actually got. Bigger if it crackles. |
+| Codec | Opus | Opus, or Raw PCM (no encoder delay, ~1.3 Mbit/s per listener: LAN only). The Opus rows below only apply to Opus. |
 | Frame size | 5 ms | 2.5 / 5 / 10 / 20 ms. Each step down halves the frame delay and doubles the packets. |
 | Opus mode | Low delay | Low delay (CELT, 2.5 ms lookahead), VoIP or Audio (6.5 ms). |
 | Bitrate | 64 kbps | 12–256 kbps. |
@@ -305,7 +331,8 @@ starts, so changing it reconnects you on the spot:
 | Concealment | 12 ms | How long a gap is covered before it goes silent. |
 
 The tab also shows what the sending settings cost: the fixed delay (frame +
-lookahead), packets per second, and bandwidth per listener. At 2.5 ms frames
+lookahead, or one block for PCM), packets per second, bandwidth per listener,
+and whether the audio thread and worker share memory. At 2.5 ms frames
 the per-packet overhead of SCTP, DTLS, UDP and IP dominates, so expect a few
 hundred kbps per person you're talking to.
 
@@ -355,7 +382,8 @@ Both can be on at once. The Worker's servers come first.
 ## Deploying
 
 The app is one Cloudflare Worker named `voice` (from `wrangler.toml`), so it lives at `voice.<your-subdomain>.workers.dev`. It serves
-the static build in `dist/`, and `/api/ice` is the only thing that runs code.
+the static build in `dist/`, adds the cross-origin isolation headers the
+low-latency engine's shared memory needs, and answers `/api/ice`.
 CI normally deploys it (next section). By hand:
 
 ```sh
@@ -437,7 +465,7 @@ src/
                 session (joining, the call mesh, host hand-over), sdp, ICE config
   audio/        engine: mic, per-person channel strips, panning, speaking detection
   audio/ll/     the low-latency engine: worklets (capture, playback), worker
-                (encode, decode, network), jitter buffer, packet format, settings
+                (encode, decode, network), jitter buffer, shared-memory ring, packet format, settings
   components/   round table, call control buttons, settings, user menu, icons
   screens/      Home (make or join) and Room
   call.ts       the call as reactive state, and everything the UI can do to it

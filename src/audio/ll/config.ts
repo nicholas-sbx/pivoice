@@ -9,6 +9,14 @@ export type FrameMs = 2.5 | 5 | 10 | 20
 /** The pretend person the mic test's packets come back from (see worker.ts). */
 export const LOOP_ID = '__loop'
 export type OpusApplication = 'lowdelay' | 'voip' | 'audio'
+/**
+ * Opus, or raw 16-bit PCM: no encoder, no lookahead, one 128-sample render
+ * quantum (2.7 ms) per packet, about 0.8 Mbit/s a listener. For local networks.
+ */
+export type LLCodec = 'opus' | 'pcm'
+
+/** PCM goes out one render quantum at a time. */
+export const PCM_FRAME = 128
 
 /**
  * Bumped when the defaults change for a reason that should reach people
@@ -23,6 +31,7 @@ export interface LLConfig {
   rev: number
   enabled: boolean
   // Sending
+  codec: LLCodec
   frameMs: FrameMs
   application: OpusApplication
   bitrateKbps: number
@@ -58,6 +67,7 @@ export const APPLICATIONS: OpusApplication[] = ['lowdelay', 'voip', 'audio']
 export const LL_DEFAULTS: LLConfig = {
   rev: LL_REV,
   enabled: false,
+  codec: 'opus',
   frameMs: 5,
   application: 'lowdelay',
   bitrateKbps: 64,
@@ -101,6 +111,7 @@ export function sanitizeLL(raw: unknown): LLConfig {
   if (typeof r.dtx === 'boolean') c.dtx = r.dtx
   if (FRAME_OPTIONS.includes(r.frameMs as FrameMs)) c.frameMs = r.frameMs as FrameMs
   if (APPLICATIONS.includes(r.application as OpusApplication)) c.application = r.application as OpusApplication
+  if (r.codec === 'opus' || r.codec === 'pcm') c.codec = r.codec
   if (r.redundancy === 0 || r.redundancy === 1 || r.redundancy === 2) c.redundancy = r.redundancy
   for (const [k, [min, max]] of Object.entries(LL_RANGES) as [keyof typeof LL_RANGES, readonly [number, number, number]][]) {
     const v = r[k]
@@ -113,6 +124,16 @@ export function sanitizeLL(raw: unknown): LLConfig {
 /** Frame length in samples at 48 kHz. */
 export function frameSamples(ms: FrameMs): number {
   return Math.round(ms * 48)
+}
+
+/** What the capture worklet should cut the mic into for this config. */
+export function captureFrame(cfg: Pick<LLConfig, 'codec' | 'frameMs'>): number {
+  return cfg.codec === 'pcm' ? PCM_FRAME : frameSamples(cfg.frameMs)
+}
+
+/** The fixed cost of the sending side: the frame you wait to fill, plus the encoder's lookahead. */
+export function sendDelayMs(cfg: Pick<LLConfig, 'codec' | 'frameMs' | 'application'>): number {
+  return cfg.codec === 'pcm' ? (PCM_FRAME * 1000) / 48_000 : cfg.frameMs + lookaheadMs(cfg.application)
 }
 
 /** Opus lookahead for each mode: low delay is CELT only, 2.5 ms; the others 6.5 ms. */

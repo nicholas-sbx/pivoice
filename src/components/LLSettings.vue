@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { LL_DEFAULTS, LL_RANGES, lookaheadMs, type FrameMs, type LLConfig, type OpusApplication } from '../audio/ll/config'
+import { LL_DEFAULTS, LL_RANGES, type FrameMs, type LLConfig, type OpusApplication, captureFrame, sendDelayMs, type LLCodec } from '../audio/ll/config'
 import { call, getEngine, llSupported, setOutputBuffer, updateLL } from '../call'
 import Segmented from './Segmented.vue'
 import Slider from './Slider.vue'
@@ -27,6 +27,10 @@ const appHints: Record<OpusApplication, string> = {
   voip: 'Tuned for speech: 6.5 ms lookahead. Below 10 ms frames it’s CELT anyway.',
   audio: 'Tuned for music: 6.5 ms lookahead.'
 }
+const codecs: { value: LLCodec; label: string }[] = [
+  { value: 'opus', label: 'Opus' },
+  { value: 'pcm', label: 'Raw PCM (LAN)' }
+]
 const redundancy: { value: 0 | 1 | 2; label: string }[] = [
   { value: 0, label: 'Off' },
   { value: 1, label: '+1 frame' },
@@ -48,16 +52,21 @@ onBeforeUnmount(() => {
 })
 
 // What these choices cost: fixed delay, and bandwidth per listener.
-const fixedMs = computed(() => c.value.frameMs + lookaheadMs(c.value.application))
-const packetsPerSecond = computed(() => 1000 / c.value.frameMs)
+const fixedMs = computed(() => +sendDelayMs(c.value).toFixed(1))
+const frameMsNow = computed(() => (captureFrame(c.value) * 1000) / 48_000)
+const packetsPerSecond = computed(() => 1000 / frameMsNow.value)
 const wireKbps = computed(() => {
-  const payload = (c.value.bitrateKbps * 1000 * c.value.frameMs) / 1000 / 8
+  // PCM: 2 bytes a sample. Opus: whatever the bitrate gives for one frame.
+  const payload =
+    c.value.codec === 'pcm' ? captureFrame(c.value) * 2 : (c.value.bitrateKbps * 1000 * c.value.frameMs) / 1000 / 8
   // Our header, plus a rough 80 bytes of SCTP, DTLS, UDP and IP per packet.
   const perPacket = payload * (1 + c.value.redundancy) + 3 + 6 * (1 + c.value.redundancy) + 80
   return (perPacket * 8 * packetsPerSecond.value) / 1000
 })
 
 const r = LL_RANGES
+// Whether the page got cross-origin isolation (and so shared memory for the engine).
+const transport = typeof SharedArrayBuffer !== 'undefined' && globalThis.crossOriginIsolated ? 'shared' : 'messages'
 
 // What the device actually gave us (it rounds the request to what it supports).
 const buffer = computed(() => {
@@ -82,8 +91,9 @@ const buffer = computed(() => {
     />
 
     <div class="cost">
-      Fixed delay <strong>{{ fixedMs }} ms</strong> (frame + lookahead) · {{ packetsPerSecond.toFixed(0) }} packets/s · ≈
-      {{ wireKbps.toFixed(0) }} kbps per listener
+      Fixed delay <strong>{{ fixedMs }} ms</strong> ({{ c.codec === 'pcm' ? 'one block' : 'frame + lookahead' }}) ·
+      {{ packetsPerSecond.toFixed(0) }} packets/s · ≈ {{ wireKbps.toFixed(0) }} kbps per listener ·
+      {{ transport === 'shared' ? 'shared memory' : 'messages' }} between audio thread and worker
     </div>
 
     <span class="eyebrow">Both engines</span>
@@ -105,6 +115,15 @@ const buffer = computed(() => {
     </p>
 
     <span class="eyebrow">Sending</span>
+    <Segmented label="Codec" :options="codecs" :model-value="c.codec" @update:model-value="v => set('codec', v)" />
+    <p class="note">
+      {{
+        c.codec === 'pcm'
+          ? 'Raw 16-bit PCM: no encoder and no lookahead, one 2.7 ms block per packet, as soon as it’s captured. Megabits per listener (see above): for local networks.'
+          : 'The browser’s Opus: a fraction of the bandwidth, at the cost of a frame to fill and the encoder’s lookahead.'
+      }}
+    </p>
+    <template v-if="c.codec === 'opus'">
     <Segmented label="Frame size" :options="frames" :model-value="c.frameMs" @update:model-value="v => set('frameMs', v)" />
     <Segmented label="Opus mode" :options="apps" :model-value="c.application" @update:model-value="v => set('application', v)" />
     <p class="note">{{ appHints[c.application] }}</p>
@@ -118,6 +137,7 @@ const buffer = computed(() => {
       :model-value="c.complexity"
       @update:model-value="v => set('complexity', v)"
     />
+    </template>
     <Segmented label="Redundancy" :options="redundancy" :model-value="c.redundancy" @update:model-value="v => set('redundancy', v)" />
     <p class="note">Each packet repeats the frames before it, so one lost packet costs nothing. More bandwidth, no extra delay.</p>
     <Switch label="Silence Suppression (DTX)" hint="Send nothing while you’re quiet." :model-value="c.dtx" @update:model-value="v => set('dtx', v)" />

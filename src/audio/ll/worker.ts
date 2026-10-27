@@ -13,13 +13,15 @@
  */
 /// <reference lib="webworker" />
 import { LOOP_ID, type LLConfig } from './config'
-import { Unwrapper, decodePacket, encodePacket, type Frame } from './packet'
+import { Unwrapper, bytesToPcm, decodePacket, encodePacket, pcmToBytes, type Frame } from './packet'
+import { FrameRing, RING_MAX_FRAME, RING_SLOTS } from './ring'
 import type { CaptureFrame, PlaybackMessage } from './worklet'
 
 declare const self: DedicatedWorkerGlobalScope
 
 export type ToWorker =
-  | { type: 'init'; cfg: LLConfig; capture: MessagePort }
+  /** `ring`: when the page is cross-origin isolated, capture comes through shared memory instead of `capture`. */
+  | { type: 'init'; cfg: LLConfig; capture: MessagePort; ring?: SharedArrayBuffer }
   | { type: 'config'; cfg: LLConfig }
   | { type: 'active'; on: boolean }
   | { type: 'gate'; muted: boolean; deafened: string[] }
@@ -27,7 +29,8 @@ export type ToWorker =
   | { type: 'channel'; id: string; ch: RTCDataChannel }
   | { type: 'relayed'; id: string }
   | { type: 'packet'; id: string; buf: ArrayBuffer }
-  | { type: 'remote'; id: string; port: MessagePort }
+  /** `ring`: decoded audio for this person goes into shared memory their playback worklet reads, instead of `port`. */
+  | { type: 'remote'; id: string; port: MessagePort; ring?: SharedArrayBuffer }
   | { type: 'drop'; id: string }
   | { type: 'stats' }
   /** Mic test: also feed what we send straight back into our own receive side, as LOOP_ID. */
@@ -36,6 +39,8 @@ export type ToWorker =
 
 export interface WorkerRemoteStats {
   kbps: number | null
+  /** What they're sending: from the newest packet's flag. */
+  codec: 'opus' | 'pcm' | null
   /** Their newest capture stamp: their sample clock and wall-clock ms. */
   stamp: { ts: number; ms: number } | null
 }
@@ -52,6 +57,7 @@ const MAX_BUFFERED_BYTES = 16 * 1024
 
 interface Remote {
   port: MessagePort | null
+  ring: FrameRing | null
   decoder: AudioDecoder | null
   decoding: number[]
   unwrap: Unwrapper
@@ -59,6 +65,7 @@ interface Remote {
   bytes: number
   bytesAt: number
   stamp: { ts: number; ms: number } | null
+  codec: 'opus' | 'pcm' | null
 }
 
 let cfg: LLConfig
@@ -148,6 +155,11 @@ function isSilence(pcm: Float32Array): boolean {
 function encode(f: CaptureFrame) {
   if (!active || !cfg || (muted && !loop)) return
   if (cfg.dtx && isSilence(f.pcm)) return
+  if (cfg.codec === 'pcm') {
+    // No encoder: the samples go out as they are, the moment they're captured.
+    emit({ ts: f.ts, data: pcmToBytes(f.pcm) }, true)
+    return
+  }
   encoder ??= makeEncoder()
   const us = Math.round((f.ts * 1e6) / SR)
   if (encStartUs === null) {
@@ -174,12 +186,16 @@ function onEncoded(chunk: EncodedAudioChunk) {
   if (ts === undefined) return
   const data = new Uint8Array(chunk.byteLength)
   chunk.copyTo(data)
-  const frame: Frame = { ts, data }
+  emit({ ts, data }, false)
+}
+
+/** A finished frame: add the repeats of the ones before it, now and then a capture stamp, and send. */
+function emit(frame: Frame, pcm: boolean) {
   const frames = [...history.slice(history.length - cfg.redundancy), frame]
   history.push(frame)
   if (history.length > 2) history.shift()
-  const stamp = sent++ % STAMP_EVERY === 0 ? captureEpoch(ts) : null
-  send(encodePacket(frames, stamp))
+  const stamp = sent++ % STAMP_EVERY === 0 ? captureEpoch(frame.ts) : null
+  send(encodePacket(frames, stamp, pcm))
 }
 
 /** Wall-clock time a sample on our audio clock was captured at the mic. */
@@ -214,7 +230,7 @@ function send(buf: ArrayBuffer) {
 function remote(id: string): Remote {
   let r = remotes.get(id)
   if (!r) {
-    r = { port: null, decoder: null, decoding: [], unwrap: new Unwrapper(), lastDecoded: -Infinity, bytes: 0, bytesAt: performance.now(), stamp: null }
+    r = { port: null, ring: null, decoder: null, decoding: [], unwrap: new Unwrapper(), lastDecoded: -Infinity, bytes: 0, bytesAt: performance.now(), stamp: null, codec: null }
     remotes.set(id, r)
   }
   return r
@@ -228,8 +244,7 @@ function makeDecoder(r: Remote): AudioDecoder {
       a.close()
       // Its own timestamps count frames from the first and ignore gaps; ours don't.
       const ts = r.decoding.shift()
-      if (ts === undefined || !r.port) return
-      r.port.postMessage({ type: 'frame', ts, pcm } satisfies PlaybackMessage, [pcm.buffer])
+      if (ts !== undefined) deliver(r, ts, pcm)
     },
     error: e => {
       console.warn('low-latency decoder failed', e)
@@ -243,13 +258,29 @@ function makeDecoder(r: Remote): AudioDecoder {
   return dec
 }
 
+/** Decoded audio to their playback worklet: shared memory if we have it, a message if not. */
+function deliver(r: Remote, ts: number, pcm: Float32Array<ArrayBuffer>) {
+  if (r.ring) {
+    if (pcm.length <= RING_MAX_FRAME) r.ring.push(ts, pcm)
+  } else r.port?.postMessage({ type: 'frame', ts, pcm } satisfies PlaybackMessage, [pcm.buffer])
+}
+
 function receive(id: string, buf: ArrayBuffer) {
   const pkt = decodePacket(buf)
   if (!pkt) return
   const r = remote(id)
   r.bytes += buf.byteLength
+  r.codec = pkt.pcm ? 'pcm' : 'opus'
   const frames = pkt.frames.map(f => ({ ts: r.unwrap.unwrap(f.ts), data: f.data }))
   if (pkt.captureMs !== null && frames.length) r.stamp = { ts: frames[frames.length - 1].ts, ms: pkt.captureMs }
+  if (pkt.pcm) {
+    for (const f of frames) {
+      if (f.ts <= r.lastDecoded) continue
+      r.lastDecoded = f.ts
+      deliver(r, f.ts, bytesToPcm(f.data))
+    }
+    return
+  }
   r.decoder ??= makeDecoder(r)
   // Oldest first: a repeat of a frame we missed goes in before the new one.
   for (const f of frames) {
@@ -288,12 +319,31 @@ function drop(id: string) {
   r?.port?.close()
 }
 
+/**
+ * Capture through shared memory: sleep until the capture worklet publishes
+ * a frame, then take everything waiting. waitAsync keeps the worker free
+ * for its data channels in between.
+ */
+type AtomicsWithWaitAsync = {
+  waitAsync(a: Int32Array, i: number, v: number): { async: false; value: string } | { async: true; value: Promise<string> }
+}
+
+async function pumpCapture(ring: FrameRing) {
+  for (;;) {
+    const seen = ring.written
+    ring.drain((ts, pcm) => encode({ ts, pcm: new Float32Array(pcm) }))
+    const wait = (Atomics as unknown as AtomicsWithWaitAsync).waitAsync(ring.ctrl, 0, seen)
+    if (wait.async) await wait.value
+  }
+}
+
 self.onmessage = (e: MessageEvent<ToWorker>) => {
   const m = e.data
   switch (m.type) {
     case 'init':
       cfg = m.cfg
       m.capture.onmessage = (ev: MessageEvent<CaptureFrame>) => encode(ev.data)
+      if (m.ring) void pumpCapture(FrameRing.from(m.ring, RING_SLOTS, RING_MAX_FRAME))
       return
     case 'config': {
       const prev = cfg
@@ -337,6 +387,7 @@ self.onmessage = (e: MessageEvent<ToWorker>) => {
       const r = remote(m.id)
       r.port?.close()
       r.port = m.port
+      r.ring = m.ring ? FrameRing.from(m.ring, RING_SLOTS, RING_MAX_FRAME) : null
       return
     }
     case 'drop':
@@ -347,7 +398,7 @@ self.onmessage = (e: MessageEvent<ToWorker>) => {
       const out: Record<string, WorkerRemoteStats> = {}
       for (const [id, r] of remotes) {
         const seconds = (now - r.bytesAt) / 1000
-        out[id] = { kbps: seconds > 0 ? (r.bytes * 8) / 1000 / seconds : null, stamp: r.stamp }
+        out[id] = { kbps: seconds > 0 ? (r.bytes * 8) / 1000 / seconds : null, stamp: r.stamp, codec: r.codec }
         r.bytes = 0
         r.bytesAt = now
       }

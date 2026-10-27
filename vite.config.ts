@@ -15,7 +15,9 @@ export default defineConfig({
     alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) }
   },
   build: { target: 'es2022' },
-  server: { host: true },
+  // Same cross-origin isolation the Worker gives the real site (worker/index.ts).
+  server: { host: true, headers: { 'Cross-Origin-Opener-Policy': 'same-origin', 'Cross-Origin-Embedder-Policy': 'require-corp' } },
+  preview: { headers: { 'Cross-Origin-Opener-Policy': 'same-origin', 'Cross-Origin-Embedder-Policy': 'require-corp' } },
   test: {
     environment: 'node',
     include: ['tests/**/*.test.ts']

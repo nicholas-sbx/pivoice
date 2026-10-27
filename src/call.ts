@@ -1,6 +1,6 @@
 import { reactive } from 'vue'
 import { AudioEngine, type MicProblem, type SpatialMode } from './audio/engine'
-import { LOOP_ID, lookaheadMs, sanitizeLL, type LLConfig } from './audio/ll/config'
+import { LOOP_ID, sanitizeLL, sendDelayMs, type LLConfig } from './audio/ll/config'
 import { WebRTCLoopback } from './audio/loopback'
 import { LowLatencyEngine } from './audio/ll/engine'
 import { copyText } from './lib/copyText'
@@ -358,7 +358,7 @@ function startStatsPoll() {
         const { stats } = summarise(report.values() as Iterable<Record<string, unknown>>, null, { captureMs })
         const cfg = call.prefs.ll
         const outMs = engine ? (engine.ctx.baseLatency + (engine.ctx.outputLatency || 0)) * 1000 : null
-        const codecMs = cfg.frameMs + lookaheadMs(cfg.application)
+        const codecMs = sendDelayMs({ ...cfg, codec: llStats.codec ?? cfg.codec }) // their frame size isn't sent; ours is the best guess
         next[id] = {
           ...stats,
           engine: 'll',
@@ -366,7 +366,7 @@ function startStatsPoll() {
           jitterMs: llStats.jitterMs,
           lossPct: llStats.concealedPct,
           kbps: llStats.kbps,
-          codec: 'opus',
+          codec: llStats.codec ?? cfg.codec,
           playoutMs: outMs,
           codecMs,
           mouthToEarMs:

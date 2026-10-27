@@ -4,6 +4,7 @@
  *
  *   u8  version (1)
  *   u8  flags   bit 0: a capture-time stamp follows
+ *               bit 1: frames are raw 16-bit little-endian PCM, not Opus
  *   u8  frame count n
  *   [f64 capture time of the newest frame, ms since the epoch]   if flagged
  *   n × { u32 timestamp (sender's 48 kHz sample clock), u16 length, bytes }
@@ -15,6 +16,7 @@
 
 export const PACKET_VERSION = 1
 const FLAG_CAPTURE = 1
+const FLAG_PCM = 2
 
 export interface Frame {
   ts: number
@@ -25,16 +27,18 @@ export interface Packet {
   frames: Frame[]
   /** Wall-clock capture time of the newest frame, if the sender stamped it. */
   captureMs: number | null
+  /** Raw PCM frames (see pcmToBytes), not Opus. */
+  pcm: boolean
 }
 
-export function encodePacket(frames: readonly Frame[], captureMs: number | null = null): ArrayBuffer {
+export function encodePacket(frames: readonly Frame[], captureMs: number | null = null, pcm = false): ArrayBuffer {
   let size = 3 + (captureMs === null ? 0 : 8)
   for (const f of frames) size += 6 + f.data.byteLength
   const buf = new ArrayBuffer(size)
   const view = new DataView(buf)
   const bytes = new Uint8Array(buf)
   view.setUint8(0, PACKET_VERSION)
-  view.setUint8(1, captureMs === null ? 0 : FLAG_CAPTURE)
+  view.setUint8(1, (captureMs === null ? 0 : FLAG_CAPTURE) | (pcm ? FLAG_PCM : 0))
   view.setUint8(2, frames.length)
   let o = 3
   if (captureMs !== null) {
@@ -73,7 +77,27 @@ export function decodePacket(buf: ArrayBuffer): Packet | null {
     frames.push({ ts, data: new Uint8Array(buf, o + 6, len) })
     o += 6 + len
   }
-  return { frames, captureMs }
+  return { frames, captureMs, pcm: (flags & FLAG_PCM) !== 0 }
+}
+
+/** Float samples → 16-bit little-endian PCM bytes. */
+export function pcmToBytes(pcm: Float32Array): Uint8Array {
+  const out = new Uint8Array(pcm.length * 2)
+  const view = new DataView(out.buffer)
+  for (let i = 0; i < pcm.length; i++) {
+    const v = Math.max(-1, Math.min(1, pcm[i]))
+    view.setInt16(i * 2, v < 0 ? v * 0x8000 : v * 0x7fff, true)
+  }
+  return out
+}
+
+/** 16-bit little-endian PCM bytes → float samples. */
+export function bytesToPcm(bytes: Uint8Array): Float32Array<ArrayBuffer> {
+  const n = bytes.byteLength >> 1
+  const out = new Float32Array(n)
+  const view = new DataView(bytes.buffer, bytes.byteOffset, n * 2)
+  for (let i = 0; i < n; i++) out[i] = view.getInt16(i * 2, true) / 0x8000
+  return out
 }
 
 /**

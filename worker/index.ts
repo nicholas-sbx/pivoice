@@ -1,8 +1,10 @@
 /**
  * pivoice: the app's Worker.
  *
- * It serves the static build in dist/ (Cloudflare's asset handling does
- * that before this code ever runs) and one endpoint of its own:
+ * It serves the static build in dist/, adding the two headers that make the
+ * page cross-origin isolated (which the low-latency engine needs for its
+ * shared memory between audio thread and worker), and one endpoint of its
+ * own:
  *
  *   GET /api/ice  →  { iceServers: RTCIceServer[] }
  *
@@ -33,8 +35,24 @@ export default {
     const url = new URL(request.url)
     if (url.pathname === '/api/ice') return ice(request, env, url)
     if (url.pathname.startsWith('/api/')) return json({ error: 'Not found' }, 404)
-    return env.ASSETS.fetch(request)
+    return isolate(await env.ASSETS.fetch(request))
   }
+}
+
+/**
+ * Cross-origin isolation: SharedArrayBuffer only exists in pages served
+ * with these. Everything the app loads is its own origin; the broker and
+ * the calls are WebSocket and WebRTC, which these don't affect.
+ */
+export const ISOLATION_HEADERS = {
+  'Cross-Origin-Opener-Policy': 'same-origin',
+  'Cross-Origin-Embedder-Policy': 'require-corp'
+} as const
+
+function isolate(res: Response): Response {
+  const out = new Response(res.body, res)
+  for (const [k, v] of Object.entries(ISOLATION_HEADERS)) out.headers.set(k, v)
+  return out
 }
 
 async function ice(request: Request, env: Env, url: URL): Promise<Response> {

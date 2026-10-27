@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { LL_DEFAULTS, frameSamples, sanitizeLL } from '../src/audio/ll/config'
 import { JitterBuffer, type JitterConfig } from '../src/audio/ll/jitter'
-import { Unwrapper, decodePacket, encodePacket } from '../src/audio/ll/packet'
+import { Unwrapper, bytesToPcm, decodePacket, encodePacket, pcmToBytes } from '../src/audio/ll/packet'
 
 describe('packets', () => {
   it('round-trips frames and the capture stamp', () => {
@@ -16,6 +16,15 @@ describe('packets', () => {
       [16, [9]]
     ])
     expect(decodePacket(encodePacket(frames))!.captureMs).toBeNull()
+  })
+
+  it('flags raw PCM and round-trips its samples', () => {
+    const samples = new Float32Array([0, 0.5, -0.5, 1, -1, 0.25])
+    const p = decodePacket(encodePacket([{ ts: 7, data: pcmToBytes(samples) }], null, true))!
+    expect(p.pcm).toBe(true)
+    const back = bytesToPcm(p.frames[0].data)
+    back.forEach((v, i) => expect(v).toBeCloseTo(samples[i], 4))
+    expect(decodePacket(encodePacket([{ ts: 7, data: new Uint8Array(1) }]))!.pcm).toBe(false)
   })
 
   it('rejects truncated or foreign data', () => {

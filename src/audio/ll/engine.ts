@@ -1,6 +1,7 @@
 import workletUrl from './worklet.ts?worker&url'
 import LLWorker from './worker.ts?worker'
-import { LOOP_ID, frameSamples, type LLConfig } from './config'
+import { LOOP_ID, captureFrame, type LLConfig } from './config'
+import { FrameRing, RING_MAX_FRAME, RING_SLOTS } from './ring'
 import type { JitterConfig, JitterStats } from './jitter'
 import type { FromWorker, ToWorker, WorkerRemoteStats } from './worker'
 import type { CaptureMessage, PlaybackMessage } from './worklet'
@@ -30,6 +31,8 @@ import type { CaptureMessage, PlaybackMessage } from './worklet'
 
 export interface LLRemoteStats extends JitterStats {
   kbps: number | null
+  /** What they're sending us. */
+  codec: 'opus' | 'pcm' | null
   /** One way, sender's capture to our speakers, ms. Needs their capture stamps. */
   measuredMs: number | null
 }
@@ -60,6 +63,11 @@ export class LowLatencyEngine {
     )
   }
 
+  /**
+   * Shared memory between the worklets and the worker when the page is
+   * cross-origin isolated (the Worker sends the headers); messages when not.
+   */
+  readonly transport: 'shared' | 'messages' = typeof SharedArrayBuffer !== 'undefined' && globalThis.crossOriginIsolated ? 'shared' : 'messages'
   private worker: Worker
   private ready: Promise<void>
   private capture: AudioWorkletNode | null = null
@@ -85,7 +93,8 @@ export class LowLatencyEngine {
     this.worker = new LLWorker()
     this.worker.onmessage = (e: MessageEvent<FromWorker>) => this.onWorker(e.data)
     const capture = new MessageChannel()
-    this.toWorker({ type: 'init', cfg: this.cfg, capture: capture.port2 }, [capture.port2])
+    const captureRing = this.transport === 'shared' ? FrameRing.create(RING_SLOTS, RING_MAX_FRAME) : null
+    this.toWorker({ type: 'init', cfg: this.cfg, capture: capture.port2, ring: captureRing?.sab }, [capture.port2])
 
     // The capture node must be pulled to run; a silent gain to the speakers does that.
     this.sink = ctx.createGain()
@@ -99,7 +108,7 @@ export class LowLatencyEngine {
         outputChannelCount: [1],
         channelCount: 1,
         channelCountMode: 'explicit',
-        processorOptions: { frame: frameSamples(this.cfg.frameMs), active: this.active }
+        processorOptions: { frame: captureFrame(this.cfg), active: this.active, ring: captureRing?.sab }
       })
       this.capture.port.postMessage({ out: capture.port1 } satisfies CaptureMessage, [capture.port1])
       this.capture.connect(this.sink)
@@ -174,7 +183,7 @@ export class LowLatencyEngine {
     const prev = this.cfg
     this.cfg = { ...cfg }
     this.toWorker({ type: 'config', cfg: this.cfg })
-    if (prev.frameMs !== cfg.frameMs) this.capture?.port.postMessage({ frame: frameSamples(cfg.frameMs) } satisfies CaptureMessage)
+    if (captureFrame(prev) !== captureFrame(cfg)) this.capture?.port.postMessage({ frame: captureFrame(cfg) } satisfies CaptureMessage)
     const jitter = jitterConfig(cfg)
     for (const r of this.remotes.values()) r.node.port.postMessage({ type: 'config', jitter } satisfies PlaybackMessage)
   }
@@ -205,16 +214,17 @@ export class LowLatencyEngine {
     if (this.closed) return null
     const existing = this.remotes.get(id)
     if (existing) return existing.node
+    const ring = this.transport === 'shared' ? FrameRing.create(RING_SLOTS, RING_MAX_FRAME) : null
     const node = new AudioWorkletNode(this.ctx, 'pv-playback', {
       numberOfInputs: 0,
       numberOfOutputs: 1,
       outputChannelCount: [1],
-      processorOptions: { jitter: jitterConfig(this.cfg) }
+      processorOptions: { jitter: jitterConfig(this.cfg), ring: ring?.sab }
     })
     // Decoded audio goes straight from the worker to the node.
     const pipe = new MessageChannel()
     node.port.postMessage({ type: 'port', port: pipe.port1 } satisfies PlaybackMessage, [pipe.port1])
-    this.toWorker({ type: 'remote', id, port: pipe.port2 }, [pipe.port2])
+    this.toWorker({ type: 'remote', id, port: pipe.port2, ring: ring?.sab }, [pipe.port2])
     const r: Remote = { node, stats: null, worker: null, measured: [] }
     node.port.onmessage = (e: MessageEvent<{ type: 'stats' } & JitterStats>) => {
       if (e.data.type !== 'stats') return
@@ -271,7 +281,7 @@ export class LowLatencyEngine {
     const r = this.remotes.get(id)
     if (!r?.stats) return null
     const sorted = [...r.measured].sort((a, b) => a - b)
-    return { ...r.stats, kbps: r.worker?.kbps ?? null, measuredMs: sorted.length ? sorted[Math.floor(sorted.length / 2)] : null }
+    return { ...r.stats, kbps: r.worker?.kbps ?? null, codec: r.worker?.codec ?? null, measuredMs: sorted.length ? sorted[Math.floor(sorted.length / 2)] : null }
   }
 
   close() {

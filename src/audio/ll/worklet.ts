@@ -6,12 +6,14 @@
  *   pv-playback  decoded frames in (straight from the worker), a steady
  *                stream out through the JitterBuffer, one node per person
  *
- * Both talk to the worker over MessagePorts handed to them at start, so the
- * page's main thread is never in the audio path.
+ * Both talk to the worker directly, so the page's main thread is never in
+ * the audio path: through shared memory (FrameRing) when the page is
+ * cross-origin isolated, over MessagePorts when it isn't.
  *
  * Runs in the AudioWorkletGlobalScope, so only what's declared below exists.
  */
 import { JitterBuffer, type JitterConfig } from './jitter'
+import { FrameRing, RING_MAX_FRAME, RING_SLOTS } from './ring'
 
 declare const sampleRate: number
 declare const currentFrame: number
@@ -35,11 +37,14 @@ class Capture extends AudioWorkletProcessor {
   private start = 0
   private active = false
   private out: MessagePort | null = null
+  private ring: FrameRing | null = null
 
-  constructor(options: Options<{ frame: number; active: boolean }>) {
+  constructor(options: Options<{ frame: number; active: boolean; ring?: SharedArrayBuffer }>) {
     super()
     this.setFrame(options.processorOptions.frame)
     this.active = options.processorOptions.active
+    const sab = options.processorOptions.ring
+    if (sab) this.ring = FrameRing.from(sab, RING_SLOTS, RING_MAX_FRAME)
     this.port.onmessage = (e: MessageEvent<CaptureMessage>) => {
       if (e.data.out) this.out = e.data.out
       if (e.data.frame) this.setFrame(e.data.frame)
@@ -58,16 +63,21 @@ class Capture extends AudioWorkletProcessor {
   }
 
   process(inputs: Float32Array[][]): boolean {
-    if (!this.active || !this.out) return true
+    if (!this.active || (!this.out && !this.ring)) return true
     const input = inputs[0]?.[0]
     const n = input?.length ?? 128
     for (let i = 0; i < n; i++) {
       if (this.fill === 0) this.start = currentFrame + i
       this.buf[this.fill++] = input ? input[i] : 0
       if (this.fill === this.frame) {
-        const pcm = this.buf.slice()
-        const msg: CaptureFrame = { ts: this.start, pcm }
-        this.out.postMessage(msg, [pcm.buffer])
+        if (this.ring) {
+          this.ring.push(this.start, this.buf)
+          this.ring.notify()
+        } else if (this.out) {
+          const pcm = this.buf.slice()
+          const msg: CaptureFrame = { ts: this.start, pcm }
+          this.out.postMessage(msg, [pcm.buffer])
+        }
         this.fill = 0
       }
     }
@@ -84,10 +94,13 @@ export type PlaybackMessage =
 class Playback extends AudioWorkletProcessor {
   private jb: JitterBuffer
   private lastStats = 0
+  private ring: FrameRing | null = null
 
-  constructor(options: Options<{ jitter: Omit<JitterConfig, 'sampleRate'> }>) {
+  constructor(options: Options<{ jitter: Omit<JitterConfig, 'sampleRate'>; ring?: SharedArrayBuffer }>) {
     super()
     this.jb = new JitterBuffer({ ...options.processorOptions.jitter, sampleRate })
+    const sab = options.processorOptions.ring
+    if (sab) this.ring = FrameRing.from(sab, RING_SLOTS, RING_MAX_FRAME)
     const onMessage = (e: MessageEvent<PlaybackMessage>) => {
       const m = e.data
       if (m.type === 'frame') this.jb.push(m.ts, m.pcm, currentFrame)
@@ -99,6 +112,8 @@ class Playback extends AudioWorkletProcessor {
 
   process(_inputs: Float32Array[][], outputs: Float32Array[][]): boolean {
     const out = outputs[0][0]
+    // Whatever the worker has written since the last block is here now.
+    this.ring?.drain((ts, pcm) => this.jb.push(ts, pcm.slice(), currentFrame))
     this.jb.pull(out, currentFrame)
     for (let c = 1; c < outputs[0].length; c++) outputs[0][c].set(out)
     if (currentFrame - this.lastStats >= sampleRate / 2) {
