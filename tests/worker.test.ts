@@ -1,9 +1,33 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { isRoomCode } from '../src/lib/roomCode'
 import worker, { normaliseIceServers, type Env } from '../worker/index'
 
 const assets = { fetch: async () => new Response('<!doctype html>', { headers: { 'content-type': 'text/html' } }) }
-const env = (extra: Partial<Env> = {}): Env => ({ ASSETS: assets, ...extra })
+
+/** Stands in for the rooms: remembers which codes it was asked about, and which of those are taken. */
+function rooms(taken: (code: string) => boolean = () => false) {
+  const asked: string[] = []
+  const joined: string[] = []
+  const ns = {
+    getByName: (code: string) => ({
+      reserve: async () => {
+        asked.push(code)
+        return !taken(code)
+      },
+      fetch: async () => {
+        joined.push(code)
+        return new Response('upgraded')
+      }
+    })
+  }
+  return { ns: ns as unknown as Env['ROOMS'], asked, joined }
+}
+
+const env = (extra: Partial<Env> = {}): Env => ({ ASSETS: assets, ROOMS: rooms().ns, ...extra })
 const get = (path: string, headers: Record<string, string> = {}) => new Request('https://pivoice.example' + path, { headers })
+const post = (path: string, headers: Record<string, string> = {}) => new Request('https://pivoice.example' + path, { method: 'POST', headers })
+const SAME = { Origin: 'https://pivoice.example' }
+const UPGRADE = { Upgrade: 'websocket' }
 
 afterEach(() => vi.unstubAllGlobals())
 
@@ -48,6 +72,49 @@ describe('worker', () => {
     expect((await worker.fetch(get('/api/ice', { Origin: 'https://evil.example' }), e)).status).toBe(403)
     expect((await worker.fetch(get('/api/ice', { 'Sec-Fetch-Site': 'cross-site' }), e)).status).toBe(403)
     expect((await worker.fetch(get('/api/ice', { Origin: 'https://pivoice.example' }), e)).status).not.toBe(403)
+  })
+
+  it('makes rooms with a code the room agreed to', async () => {
+    const r = rooms(code => r.asked.length === 1 && !!code)
+    const res = await worker.fetch(post('/api/rooms', SAME), env({ ROOMS: r.ns }))
+    expect(res.status).toBe(201)
+    const { code } = (await res.json()) as { code: string }
+    expect(isRoomCode(code)).toBe(true)
+    // The first one it tried was taken.
+    expect(r.asked).toHaveLength(2)
+    expect(r.asked[1]).toBe(code)
+  })
+
+  it('gives up after a few taken codes', async () => {
+    const r = rooms(() => true)
+    expect((await worker.fetch(post('/api/rooms', SAME), env({ ROOMS: r.ns }))).status).toBe(503)
+    expect(r.asked).toHaveLength(5)
+  })
+
+  it('only makes rooms for our own pages, by POST', async () => {
+    expect((await worker.fetch(post('/api/rooms', { Origin: 'https://evil.example' }), env())).status).toBe(403)
+    expect((await worker.fetch(get('/api/rooms', SAME), env())).status).toBe(405)
+  })
+
+  it('hands WebSockets from our own pages to the room', async () => {
+    const r = rooms()
+    const e = env({ ROOMS: r.ns })
+    expect(await (await worker.fetch(get('/api/rooms/ABC234/ws', { ...SAME, ...UPGRADE }), e)).text()).toBe('upgraded')
+    expect(r.joined).toEqual(['ABC234'])
+    // Another site, no Origin at all, not a WebSocket, not a code: never reaches a room.
+    expect((await worker.fetch(get('/api/rooms/ABC234/ws', { Origin: 'https://evil.example', ...UPGRADE }), e)).status).toBe(403)
+    expect((await worker.fetch(get('/api/rooms/ABC234/ws', UPGRADE), e)).status).toBe(403)
+    expect((await worker.fetch(get('/api/rooms/ABC234/ws', SAME), e)).status).toBe(426)
+    expect((await worker.fetch(get('/api/rooms/ABC0S1/ws', { ...SAME, ...UPGRADE }), e)).status).toBe(404)
+    expect(r.joined).toEqual(['ABC234'])
+  })
+
+  it('rate limits rooms per IP when the limiter is bound', async () => {
+    const keys: string[] = []
+    const ROOM_LIMITER = { limit: async ({ key }: { key: string }) => (keys.push(key), { success: false }) }
+    const res = await worker.fetch(post('/api/rooms', { ...SAME, 'CF-Connecting-IP': '203.0.113.7' }), env({ ROOM_LIMITER }))
+    expect(res.status).toBe(429)
+    expect(keys).toEqual(['room:203.0.113.7'])
   })
 
   it('normalises the older single-object answer', () => {

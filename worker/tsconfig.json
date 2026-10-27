@@ -13,5 +13,5 @@
     "verbatimModuleSyntax": true,
     "noEmit": true
   },
-  "include": ["*.ts", "../tests/worker.test.ts"]
+  "include": ["*.ts", "../tests/worker.test.ts", "../tests/room.test.ts", "../tests/stubs/*.ts"]
 }

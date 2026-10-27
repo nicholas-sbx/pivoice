@@ -1,22 +1,24 @@
-import { Peer, type DataConnection, type MediaConnection, type PeerOptions } from 'peerjs'
-import { generateRoomCode, isMemberPeerId, newMemberPeerId, roomPeerId } from '../lib/roomCode'
-import { PROTOCOL_VERSION, parseHostMsg, successorRank, type ClientMsg, type HostMsg, type Member } from './protocol'
-import { RoomHost, type ClaimResult } from './roomHost'
+import { isRoomCode } from '../lib/roomCode'
+import { randomId } from '../lib/rng'
+import { apiUrl, roomSocketUrl } from './config'
+import { PeerLink } from './peer'
+import { PROTOCOL_VERSION, newMemberKey, type ClientMsg, type Member, type Signal } from './protocol'
+import { RoomSocket } from './roomSocket'
 import { tuneOpusSdp } from './sdp'
 
 /**
  * One person's side of a call.
  *
- * Everyone has a member PeerJS id (random) that the voice runs between: a
- * full mesh of WebRTC audio calls, no server in the middle, which is as
- * little latency as it gets. Separately, one of us holds the room id (see
- * RoomHost) and everyone else keeps a data channel to them for the roster.
+ * The room (a Durable Object on our Worker, see worker/room.ts) keeps the
+ * roster and passes signalling between us. The voice is a full mesh of
+ * WebRTC calls between members, no server in the middle, which is as little
+ * latency as it gets. If our socket to the room drops, the calls carry on
+ * while it reconnects; the room keeps our seat for a few seconds.
  *
- * If the host goes away, the call carries on (the audio never went through
- * them) while everyone works out from the last roster who's next in join
- * order. That person claims the room id, everyone else redials it and finds
- * them there. Someone further back in the queue only tries after a delay, in
- * case the people ahead of them left too.
+ * Who we are is a secret key we make up; the room derives our public id
+ * from it, so nobody else can claim our id, and coming back with the same
+ * key (Session.drop, then a new Session with `rejoin`) is coming back as the
+ * same member, in the same seat.
  */
 
 export type SessionStatus = 'connecting' | 'connected' | 'reconnecting' | 'failed' | 'ended'
@@ -24,7 +26,7 @@ export type SessionFailure = 'not-found' | 'full' | 'unreachable' | 'unsupported
 
 export interface SessionEvents {
   status(status: SessionStatus, failure?: SessionFailure): void
-  roster(members: Member[], hostId: string): void
+  roster(members: Member[]): void
   stream(memberId: string, stream: MediaStream): void
   streamEnd(memberId: string): void
   /** A low-latency audio channel to them opened or closed. */
@@ -38,496 +40,263 @@ export interface SessionOptions {
   deafened: boolean
   /** What we send to everyone. Its track can be swapped later with replaceTrack. */
   stream: MediaStream
-  peerOptions: PeerOptions
+  iceServers: RTCIceServer[]
   /** Ask the people talking to us to pause while they're silent (see sdp.ts). */
   dtx: boolean
   /** Experimental low-latency engine on (see audio/ll). */
   ll: boolean
   /**
-   * Come back as someone we already were (see Session.drop): the host
+   * Come back as someone we already were (see Session.drop): the room
    * still has us, marked reconnecting, so we keep our seat and place.
    */
-  selfId?: string
+  rejoin?: { key: string; joinedAt: number }
+}
+
+interface Voice {
+  link: PeerLink
+  /** Ours to put the mic on; the answerer gets it once the offer's in. */
+  transceiver: RTCRtpTransceiver | null
+  remote: MediaStream | null
+  timer: ReturnType<typeof setTimeout>
 }
 
 interface LLLink {
-  conn: DataConnection
+  link: PeerLink
   /** Only when we kept the channel (relay mode); normally the engine's worker holds it. */
   channel: RTCDataChannel | null
   up: boolean
+  timer: ReturnType<typeof setTimeout>
 }
 
 /** The SCTP stream our low-latency audio channel uses, agreed in advance by both ends. */
 const LL_CHANNEL_ID = 42
-const LL_LABEL = 'pv-ll'
-
-const PEER_OPEN_TIMEOUT_MS = 15_000
-const FIRST_DIAL_TIMEOUT_MS = 10_000
-/** Shorter while recovering: a host that's shutting down can swallow a dial without answering. */
-const RECOVER_DIAL_TIMEOUT_MS = 4_000
-const FIRST_DIAL_ATTEMPTS = 3
-const PING_EVERY_MS = 3_000
-const HOST_DEAD_AFTER_MS = 9_000
-/** How long the n-th person in the queue waits before trying to take over the room themselves. */
-export const TAKEOVER_STAGGER_MS = 2_500
-const RECOVER_GIVE_UP_MS = 60_000
+const CREATE_TIMEOUT_MS = 10_000
 const CALL_SETUP_TIMEOUT_MS = 20_000
 const CALL_RETRY_MS = 1_500
+/**
+ * Out of the room longer than this and the others may have dropped us
+ * meanwhile (the room keeps a seat 12 s), so our calls are suspect: start
+ * them again rather than wait for each to time out.
+ */
+const RESET_AFTER_DOWN_MS = 8_000
 /** Don't queue low-latency audio behind more than this: skip the packet instead. */
 const LL_MAX_BUFFERED = 16 * 1024
 
 export class Session {
-  readonly selfId: string
+  /** Our secret. Pass it back in `rejoin` to come back as ourselves. */
+  readonly key: string
+  /** Our public id, once the room has told us. */
+  selfId = ''
   code = ''
-  private peer: Peer | null = null
-  private host: RoomHost | null = null
-  private conn: DataConnection | null = null
-  private calls = new Map<string, MediaConnection>()
-  private callTimers = new Map<string, ReturnType<typeof setTimeout>>()
+  private room: RoomSocket | null = null
+  private voice = new Map<string, Voice>()
   private retryTimers = new Map<string, ReturnType<typeof setTimeout>>()
   private members: Member[] = []
-  private hostId = ''
   private self: { name: string; muted: boolean; deafened: boolean; ll: boolean }
   private llLinks = new Map<string, LLLink>()
   private llRetry = new Map<string, ReturnType<typeof setTimeout>>()
   /** Set by the app: takes a new low-latency channel (to its worker) and returns true, or leaves it with us. */
   adoptLL: ((id: string, ch: RTCDataChannel) => boolean) | null = null
   private stream: MediaStream
-  private options: PeerOptions
+  private iceServers: RTCIceServer[]
   private sdpTransform: (sdp: string) => string
-  private connected = false
   private ended = false
-  private lostAt = 0
-  private attempts = 0
-  private recovering = false
-  private openTimer: ReturnType<typeof setTimeout> | null = null
-  private recoverTimer: ReturnType<typeof setTimeout> | null = null
-  private pingTimer: ReturnType<typeof setInterval> | null = null
-  private peerRetryTimer: ReturnType<typeof setTimeout> | null = null
-  private peerRetries = 0
-  private lastHeard = 0
+  private downAt = 0
+  private resumeAt: number | null
 
   constructor(
     opts: SessionOptions,
     private events: SessionEvents
   ) {
-    this.selfId = opts.selfId ?? newMemberPeerId()
+    this.key = opts.rejoin?.key ?? newMemberKey()
+    this.resumeAt = opts.rejoin?.joinedAt ?? null
     this.self = { name: opts.name, muted: opts.muted, deafened: opts.deafened, ll: opts.ll }
     this.stream = opts.stream
-    this.options = opts.peerOptions
+    this.iceServers = opts.iceServers
     const tuning = { dtx: opts.dtx }
     this.sdpTransform = sdp => tuneOpusSdp(sdp, tuning)
   }
 
-  get isHost(): boolean {
-    return !!this.host
+  /** When we joined, room clock: what `rejoin` needs. */
+  get joinedAt(): number | null {
+    return this.members.find(m => m.id === this.selfId)?.joinedAt ?? this.resumeAt
   }
 
-  /** Make a new room with a fresh code. */
+  /** Make a new room. The Worker picks the code. */
   async create(): Promise<void> {
     this.events.status('connecting')
-    if (!(await this.openPeer())) return
-    for (let i = 0; i < 5 && !this.ended; i++) {
-      const r = await this.becomeHost(generateRoomCode(), [])
-      if (r === 'ok') return
-      if (r === 'unsupported') return this.fail('unsupported')
-      if (r === 'unreachable') return this.fail('unreachable')
+    if (!supported()) return this.fail('unsupported')
+    let code = ''
+    try {
+      const res = await fetch(apiUrl('rooms'), { method: 'POST', signal: AbortSignal.timeout(CREATE_TIMEOUT_MS) })
+      if (res.status === 503) return this.fail('busy')
+      const body = res.ok ? ((await res.json()) as { code?: unknown }) : {}
+      if (typeof body.code === 'string' && isRoomCode(body.code)) code = body.code
+    } catch {
+      /* below */
     }
-    if (!this.ended) this.fail('busy')
+    if (this.ended) return
+    if (!code) return this.fail('unreachable')
+    this.connect(code)
   }
 
   /** Join the room with this code. */
-  /**
-   * Join the room with this code. `orCreate`: if nobody has it (we were
-   * the only one there, say), take it ourselves rather than failing.
-   */
-  async join(code: string, orCreate = false): Promise<void> {
-    this.code = code
-    this.orCreate = orCreate
+  async join(code: string): Promise<void> {
     this.events.status('connecting')
-    if (!(await this.openPeer())) return
-    this.dial()
-  }
-  private orCreate = false
-
-  // ---- our own peer ------------------------------------------------------
-
-  /** Our own peer, retrying for a few seconds if the broker still holds our id (coming back as ourselves). */
-  private async openPeer(): Promise<boolean> {
-    for (let attempt = 0; ; attempt++) {
-      const r = await this.tryOpenPeer()
-      if (r !== 'taken') return r === 'ok'
-      if (attempt >= 12 || this.ended) {
-        this.fail('unreachable')
-        return false
-      }
-      await new Promise(res => setTimeout(res, 400))
-    }
+    if (!supported()) return this.fail('unsupported')
+    this.connect(code)
   }
 
-  private tryOpenPeer(): Promise<'ok' | 'taken' | 'fail'> {
-    return new Promise(resolve => {
-      const peer = new Peer(this.selfId, this.options)
-      this.peer = peer
-      let opened = false
-      const timer = setTimeout(() => {
-        this.fail('unreachable')
-        resolve('fail')
-      }, PEER_OPEN_TIMEOUT_MS)
-      peer.on('open', () => {
-        clearTimeout(timer)
-        opened = true
-        this.peerRetries = 0
-        resolve(this.ended ? 'fail' : 'ok')
-      })
-      peer.on('call', call => this.onIncomingCall(call))
-      peer.on('connection', conn => this.onIncomingLL(conn))
-      peer.on('disconnected', () => {
-        // Lost the broker. Calls and the data channel are peer to peer and
-        // carry on; we only need the broker to set up new ones.
-        if (!this.ended && !peer.destroyed) this.reconnectPeer()
-      })
-      peer.on('error', err => {
-        const type = (err as { type?: string }).type
-        if (type === 'browser-incompatible') {
-          clearTimeout(timer)
-          this.fail('unsupported')
-          resolve('fail')
-        } else if (type === 'unavailable-id' && !opened) {
-          clearTimeout(timer)
-          peer.destroy()
-          resolve('taken')
-        } else if (type === 'peer-unavailable') {
-          this.onPeerUnavailable(err.message)
-        }
-      })
-    })
-  }
+  // ---- the room ----------------------------------------------------------
 
-  private reconnectPeer() {
-    if (this.peerRetryTimer) return
-    const delay = Math.min(10_000, 500 * 2 ** this.peerRetries++)
-    this.peerRetryTimer = setTimeout(() => {
-      this.peerRetryTimer = null
-      const peer = this.peer
-      if (this.ended || !peer || peer.destroyed || !peer.disconnected) return
-      peer.reconnect()
-      // `disconnected` fires again if that didn't work.
-    }, delay)
-  }
-
-  /** PeerJS reports "nobody has that id" on the peer, naming the id. */
-  private onPeerUnavailable(message: string) {
-    if (this.code && message.includes(roomPeerId(this.code))) {
-      if (this.conn && !this.conn.open) {
-        this.conn.close()
-        this.conn = null
-        this.onDialFailed('missing')
-      }
-      return
-    }
-    for (const [id, call] of this.calls) {
-      if (message.includes(id)) call.close()
-    }
-  }
-
-  // ---- being the host ----------------------------------------------------
-
-  private async becomeHost(code: string, seed: Member[]): Promise<ClaimResult> {
-    const host = new RoomHost(code, this.selfMember(), this.options, {
-      roster: (members, hostId) => {
-        if (this.host === host) this.applyRoster(members, hostId)
-      },
-      displaced: () => this.onDisplaced(host)
-    }, seed)
-    this.host = host
-    const r = await host.claim()
-    if (this.host !== host || this.ended) {
-      host.stop(false)
-      return 'taken'
-    }
-    if (r !== 'ok') {
-      this.host = null
-      return r
-    }
+  private connect(code: string) {
     this.code = code
-    this.markConnected()
-    return 'ok'
-  }
-
-  /** Someone else holds the room id: go and find them like everyone else. */
-  private onDisplaced(host: RoomHost) {
-    if (this.host !== host) return
-    host.stop(false)
-    this.host = null
-    this.onLinkLost()
-  }
-
-  private selfMember(): Member {
-    const known = this.members.find(m => m.id === this.selfId)
-    return {
-      id: this.selfId,
-      name: this.self.name,
-      joinedAt: known?.joinedAt ?? Date.now(),
-      muted: this.self.muted,
-      deafened: this.self.deafened,
-      ll: this.self.ll,
-      away: false
-    }
-  }
-
-  // ---- talking to the host -----------------------------------------------
-
-  private dial() {
-    if (this.ended || this.host) return
-    const peer = this.peer
-    if (!peer || peer.destroyed) return this.fail('unreachable')
-    this.attempts++
-    if (peer.disconnected) {
-      // Can't dial without the broker; try again shortly.
-      return this.onDialFailed('timeout')
-    }
-    const conn = peer.connect(roomPeerId(this.code), { reliable: true })
-    this.conn = conn
-    this.clearOpenTimer()
-    this.openTimer = setTimeout(
-      () => {
-        if (this.conn !== conn || this.lastHeard > 0) return
-        conn.close()
-        this.conn = null
-        this.onDialFailed('timeout')
+    const room: RoomSocket = new RoomSocket(roomSocketUrl(code), () => this.hello(), {
+      welcome: id => this.room === room && this.onWelcome(id),
+      roster: members => this.room === room && this.applyRoster(members),
+      signal: (from, signal) => this.room === room && this.onSignal(from, signal),
+      down: () => {
+        if (this.room !== room) return
+        this.downAt = Date.now()
+        this.setStatus('reconnecting')
       },
-      // Coming back (orCreate) we may be dialling our own old room on its way out: don't wait long.
-      this.connected || this.orCreate ? RECOVER_DIAL_TIMEOUT_MS : FIRST_DIAL_TIMEOUT_MS
-    )
-    this.lastHeard = 0
-
-    conn.on('open', () => {
-      if (this.conn !== conn) return
-      this.send({ t: 'hello', v: PROTOCOL_VERSION, ...this.self })
+      failed: reason => this.room === room && this.fail(reason)
     })
-    conn.on('data', raw => {
-      if (this.conn !== conn) return
-      this.lastHeard = Date.now()
-      const msg = parseHostMsg(raw)
-      if (msg) this.onHostMessage(conn, msg)
-    })
-    const lost = () => {
-      if (this.conn !== conn) return
-      this.conn = null
-      this.clearOpenTimer()
-      this.stopPing()
-      if (this.lastHeard > 0) this.onLinkLost()
-      else this.onDialFailed('timeout')
-    }
-    conn.on('close', lost)
-    conn.on('error', lost)
+    this.room = room
+    room.open()
   }
 
-  private onHostMessage(conn: DataConnection, msg: HostMsg) {
-    switch (msg.t) {
-      case 'roster':
-        if (!msg.members.some(m => m.id === msg.hostId)) return
-        this.clearOpenTimer()
-        if (!this.pingTimer) this.startPing()
-        this.markConnected()
-        this.applyRoster(msg.members, msg.hostId)
-        return
-      case 'pong':
-        return
-      case 'full':
-        return this.fail('full')
-      case 'version':
-        return this.fail('version')
-      case 'rehome':
-        // The host is leaving: don't wait to notice, start looking now.
-        this.conn = null
-        this.stopPing()
-        conn.close()
-        this.onLinkLost()
-        return
-    }
+  private hello(): ClientMsg {
+    return { t: 'hello', v: PROTOCOL_VERSION, key: this.key, ...this.self, resume: this.joinedAt }
   }
 
-  private onDialFailed(kind: 'missing' | 'timeout') {
-    this.clearOpenTimer()
-    if (this.ended) return
-    if (!this.connected) {
-      if (this.attempts >= 2 && this.orCreate) {
-        // Nobody has the room: it's ours. If someone beats us to it, dial them.
-        void this.becomeHost(this.code, []).then(r => {
-          if (r === 'ok' || this.ended) return
-          this.attempts = 0
-          this.dial()
-        })
-        return
-      }
-      if (this.attempts >= FIRST_DIAL_ATTEMPTS) return this.fail(kind === 'missing' ? 'not-found' : 'unreachable')
-      this.recoverTimer = setTimeout(() => this.dial(), 700)
+  private onWelcome(id: string) {
+    this.selfId = id
+    const downFor = this.downAt ? Date.now() - this.downAt : 0
+    this.downAt = 0
+    if (downFor > RESET_AFTER_DOWN_MS) {
+      // The roster that follows sets them all up again.
+      for (const v of [...this.voice.values()]) v.link.close()
+      for (const id of [...this.llLinks.keys()]) this.closeLL(id)
+    }
+    this.setStatus('connected')
+  }
+
+  private signalTo(to: string, signal: Signal) {
+    this.room?.send({ t: 'signal', to, signal })
+  }
+
+  private newLink(peer: string, kind: 'voice' | 'll', id: string, offerer: boolean): PeerLink {
+    return new PeerLink(peer, kind, id, offerer, {
+      iceServers: this.iceServers,
+      sdpTransform: kind === 'voice' ? this.sdpTransform : undefined,
+      signal: s => this.signalTo(peer, s)
+    })
+  }
+
+  private onSignal(from: string, signal: Signal) {
+    if (this.ended || from === this.selfId) return
+    const member = this.members.find(m => m.id === from)
+    if (!member) return
+    const isOffer = 'sdp' in signal && signal.sdp.type === 'offer'
+    if (signal.kind === 'voice') {
+      const cur = this.voice.get(from)
+      if (isOffer) {
+        // Only the smaller id calls; a new offer means they've given up on the old one.
+        if (from > this.selfId || cur?.link.id === signal.link) return
+        if (cur) cur.link.close(false)
+        this.acceptCall(from, signal.link, signal.sdp.sdp)
+      } else if (cur?.link.id === signal.link) void cur.link.onSignal(signal)
       return
     }
-    this.scheduleRecover()
-  }
-
-  private markConnected() {
-    const first = !this.connected
-    this.connected = true
-    this.recovering = false
-    this.lostAt = 0
-    this.attempts = 0
-    if (first || this.lastStatus !== 'connected') this.setStatus('connected')
-  }
-
-  /** We had the room and lost the host. */
-  private onLinkLost() {
-    if (this.ended) return
-    if (!this.connected) return this.onDialFailed('timeout')
-    if (!this.lostAt) this.lostAt = Date.now()
-    this.attempts = 0
-    this.setStatus('reconnecting')
-    void this.recoverStep()
-  }
-
-  private scheduleRecover() {
-    if (this.ended || this.recoverTimer) return
-    const delay = Math.min(3_000, 600 * 2 ** Math.min(this.attempts, 3))
-    this.recoverTimer = setTimeout(() => {
-      this.recoverTimer = null
-      void this.recoverStep()
-    }, delay)
-  }
-
-  private async recoverStep() {
-    if (this.ended || this.host || this.conn || this.recovering) return
-    const elapsed = Date.now() - this.lostAt
-    if (elapsed > RECOVER_GIVE_UP_MS) return this.fail('unreachable')
-    const rank = successorRank(this.members, this.hostId, this.selfId)
-    if (elapsed >= rank * TAKEOVER_STAGGER_MS) {
-      this.recovering = true
-      const seed = this.members.filter(m => m.id !== this.hostId && m.id !== this.selfId)
-      const r = await this.becomeHost(this.code, seed)
-      this.recovering = false
-      if (r === 'ok' || this.ended) return
-    }
-    this.dial()
-  }
-
-  private startPing() {
-    this.stopPing()
-    this.pingTimer = setInterval(() => {
-      if (Date.now() - this.lastHeard > HOST_DEAD_AFTER_MS) {
-        // Data channels don't always notice a host that vanished.
-        const c = this.conn
-        this.conn = null
-        this.stopPing()
-        c?.close()
-        this.onLinkLost()
-        return
-      }
-      this.send({ t: 'ping', at: Date.now() })
-    }, PING_EVERY_MS)
-  }
-
-  private stopPing() {
-    if (this.pingTimer) clearInterval(this.pingTimer)
-    this.pingTimer = null
-  }
-
-  private clearOpenTimer() {
-    if (this.openTimer) clearTimeout(this.openTimer)
-    this.openTimer = null
-  }
-
-  private send(msg: ClientMsg) {
-    if (!this.conn?.open) return
-    try {
-      this.conn.send(msg)
-    } catch {
-      /* the close handler deals with it */
-    }
+    const cur = this.llLinks.get(from)
+    if (isOffer) {
+      if (from > this.selfId || cur?.link.id === signal.link) return
+      if (cur) this.closeLL(from)
+      if (!this.self.ll || !member.ll) return this.signalTo(from, { kind: 'll', link: signal.link, bye: true })
+      this.acceptLL(from, signal.link, signal.sdp.sdp)
+    } else if (cur?.link.id === signal.link) void cur.link.onSignal(signal)
   }
 
   // ---- the voice mesh ----------------------------------------------------
 
-  private applyRoster(members: Member[], hostId: string) {
+  private applyRoster(members: Member[]) {
     this.members = members
-    this.hostId = hostId
-    this.events.roster(members, hostId)
+    this.events.roster(members)
     this.syncCalls()
     this.syncLL()
     this.updateSenders()
   }
 
-  /** One call per pair; the one with the smaller id places it, so it never happens twice. */
+  /**
+   * One call per pair; the one with the smaller id places it, so it never
+   * happens twice. Calls to someone who's away carry on, but a new one waits
+   * until they're back: nothing could reach them to set it up.
+   */
   private syncCalls() {
     const want = new Set(this.members.map(m => m.id))
     want.delete(this.selfId)
-    for (const id of want) {
-      if (!this.calls.has(id) && this.selfId < id) this.placeCall(id)
+    for (const m of this.members) {
+      if (want.has(m.id) && !m.away && !this.voice.has(m.id) && this.selfId < m.id && !this.retryTimers.has(m.id)) this.placeCall(m.id)
     }
-    for (const id of [...this.calls.keys()]) if (!want.has(id)) this.closeCall(id)
-    for (const id of [...this.retryTimers.keys()]) {
-      if (!want.has(id)) {
-        clearTimeout(this.retryTimers.get(id))
-        this.retryTimers.delete(id)
-      }
+    for (const [id, v] of [...this.voice]) if (!want.has(id)) v.link.close()
+    for (const [id, t] of [...this.retryTimers]) {
+      if (want.has(id)) continue
+      clearTimeout(t)
+      this.retryTimers.delete(id)
     }
   }
 
   private placeCall(id: string) {
-    const peer = this.peer
-    if (this.ended || !peer || peer.destroyed) return
-    if (peer.disconnected) return this.retryCall(id)
-    const call = peer.call(id, this.stream, { sdpTransform: this.sdpTransform })
-    if (call) this.wireCall(call)
-    else this.retryCall(id)
+    if (this.ended || !this.room?.isUp) return this.retryCall(id)
+    const link = this.newLink(id, 'voice', randomId(8), true)
+    const transceiver = link.pc.addTransceiver('audio', { direction: 'sendrecv', streams: [this.stream] })
+    this.wireCall(id, link, transceiver)
+    void link.offer()
   }
 
-  private onIncomingCall(call: MediaConnection) {
-    if (this.ended || !isMemberPeerId(call.peer) || call.peer === this.selfId) {
-      call.close()
-      return
-    }
-    call.answer(this.stream, { sdpTransform: this.sdpTransform })
-    this.wireCall(call)
-  }
-
-  private wireCall(call: MediaConnection) {
-    const id = call.peer
-    const prev = this.calls.get(id)
-    this.calls.set(id, call)
-    if (prev && prev !== call) prev.close()
-    clearTimeout(this.callTimers.get(id))
-    this.callTimers.set(
-      id,
-      setTimeout(() => {
-        if (this.calls.get(id) === call && !call.remoteStream) call.close()
-      }, CALL_SETUP_TIMEOUT_MS)
-    )
-    call.on('stream', stream => {
-      if (this.calls.get(id) !== call) return
-      clearTimeout(this.callTimers.get(id))
-      this.callTimers.delete(id)
-      prioritiseAudio(call.peerConnection)
+  private acceptCall(id: string, linkId: string, sdp: string) {
+    const link = this.newLink(id, 'voice', linkId, false)
+    const v = this.wireCall(id, link, null)
+    void link.answer(sdp, () => {
+      const t = link.pc.getTransceivers().find(t => t.receiver.track.kind === 'audio')
+      if (!t) return
+      t.direction = 'sendrecv'
+      t.sender.setStreams?.(this.stream)
+      v.transceiver = t
       this.updateSenders()
-      this.events.stream(id, stream)
-    })
-    const ended = () => this.onCallEnded(call)
-    call.on('close', ended)
-    call.on('error', ended)
-    // PeerJS notices most dead calls, but not every one.
-    const pc = call.peerConnection
-    pc?.addEventListener('iceconnectionstatechange', () => {
-      if (pc.iceConnectionState === 'failed') call.close()
     })
   }
 
-  private onCallEnded(call: MediaConnection) {
-    const id = call.peer
-    if (this.calls.get(id) !== call) return
-    this.calls.delete(id)
-    clearTimeout(this.callTimers.get(id))
-    this.callTimers.delete(id)
+  private wireCall(id: string, link: PeerLink, transceiver: RTCRtpTransceiver | null): Voice {
+    const v: Voice = {
+      link,
+      transceiver,
+      remote: null,
+      timer: setTimeout(() => {
+        if (link.pc.connectionState !== 'connected') link.close()
+      }, CALL_SETUP_TIMEOUT_MS)
+    }
+    this.voice.set(id, v)
+    link.pc.ontrack = e => {
+      if (this.voice.get(id) !== v || e.track.kind !== 'audio') return
+      v.remote = e.streams[0] ?? new MediaStream([e.track])
+      this.events.stream(id, v.remote)
+    }
+    link.pc.addEventListener('connectionstatechange', () => {
+      if (link.pc.connectionState !== 'connected' || this.voice.get(id) !== v) return
+      clearTimeout(v.timer)
+      prioritiseAudio(link.pc)
+    })
+    link.onClose = () => this.onCallEnded(id, v)
+    this.updateSenders()
+    return v
+  }
+
+  private onCallEnded(id: string, v: Voice) {
+    clearTimeout(v.timer)
+    if (this.voice.get(id) !== v) return
+    this.voice.delete(id)
     this.events.streamEnd(id)
     if (this.selfId < id && this.members.some(m => m.id === id)) this.retryCall(id)
   }
@@ -538,19 +307,9 @@ export class Session {
       id,
       setTimeout(() => {
         this.retryTimers.delete(id)
-        if (!this.calls.has(id) && this.members.some(m => m.id === id)) this.placeCall(id)
+        if (!this.voice.has(id) && this.members.some(m => m.id === id && !m.away)) this.placeCall(id)
       }, CALL_RETRY_MS)
     )
-  }
-
-  private closeCall(id: string) {
-    const call = this.calls.get(id)
-    if (!call) return
-    this.calls.delete(id)
-    clearTimeout(this.callTimers.get(id))
-    this.callTimers.delete(id)
-    call.close()
-    this.events.streamEnd(id)
   }
 
   // ---- what the UI calls -------------------------------------------------
@@ -559,9 +318,7 @@ export class Session {
     const next = { ...this.self, ...patch }
     if (next.muted === this.self.muted && next.deafened === this.self.deafened && next.ll === this.self.ll) return
     this.self = next
-    const state = { muted: next.muted, deafened: next.deafened, ll: next.ll }
-    if (this.host) this.host.updateSelf(state)
-    else this.send({ t: 'state', ...state })
+    this.room?.send({ t: 'state', muted: next.muted, deafened: next.deafened, ll: next.ll })
     this.syncLL()
     this.updateSenders()
   }
@@ -582,9 +339,9 @@ export class Session {
    */
   private updateSenders() {
     const track = this.stream.getAudioTracks()[0] ?? null
-    for (const [id, call] of this.calls) {
-      const sender = audioSender(call.peerConnection)
-      if (!sender) continue
+    for (const [id, v] of this.voice) {
+      const sender = v.transceiver?.sender
+      if (!sender || v.link.closed) continue
       const deafened = this.members.find(m => m.id === id)?.deafened ?? false
       // Someone we're reaching over the low-latency engine doesn't need it twice.
       const viaLL = this.llLinks.get(id)?.up ?? false
@@ -596,72 +353,73 @@ export class Session {
   // ---- the low-latency engine's channels --------------------------------
 
   /**
-   * Pairs who both have the engine on get a second connection: a PeerJS
-   * data connection, used only for its peer connection, on which both ends
-   * add a pre-agreed channel that's unordered and never retransmits (PeerJS's
-   * own "unreliable" still retransmits). As with calls, the smaller id dials.
+   * Pairs who both have the engine on get a second peer connection, carrying
+   * only a pre-agreed data channel that's unordered and never retransmits.
+   * It's its own connection so it can come and go without touching the
+   * call, and so the channel can be handed to the engine's worker the moment
+   * it's made. As with calls, the smaller id dials.
    */
   private syncLL() {
-    const peer = this.peer
     for (const m of this.members) {
       if (m.id === this.selfId) continue
       const want = this.self.ll && m.ll && !this.ended
       const link = this.llLinks.get(m.id)
-      if (want && !link && this.selfId < m.id && peer && !peer.destroyed && !peer.disconnected && !this.llRetry.has(m.id)) {
-        const conn = peer.connect(m.id, { label: LL_LABEL, serialization: 'raw', reliable: false })
-        if (conn) this.wireLL(conn)
-      } else if (!want && link) this.closeLL(m.id)
+      if (want && !link && !m.away && this.selfId < m.id && this.room?.isUp && !this.llRetry.has(m.id)) this.placeLL(m.id)
+      else if (!want && link) this.closeLL(m.id)
     }
     for (const id of [...this.llLinks.keys()]) if (!this.members.some(m => m.id === id)) this.closeLL(id)
   }
 
-  private onIncomingLL(conn: DataConnection) {
-    const m = this.members.find(x => x.id === conn.peer)
-    if (conn.label !== LL_LABEL || !this.self.ll || this.ended || (m && !m.ll)) {
-      conn.on('open', () => conn.close())
-      return
-    }
-    this.wireLL(conn)
+  private placeLL(id: string) {
+    const link = this.newLink(id, 'll', randomId(8), true)
+    this.wireLL(id, link)
+    void link.offer()
   }
 
-  private wireLL(conn: DataConnection) {
-    const id = conn.peer
-    const prev = this.llLinks.get(id)
-    if (prev && prev.conn !== conn) this.closeLL(id)
-    const link: LLLink = { conn, channel: null, up: false }
-    this.llLinks.set(id, link)
-    conn.on('open', () => {
-      if (this.llLinks.get(id) !== link) return
-      const pc = conn.peerConnection
-      if (!pc) return
-      const ch = pc.createDataChannel('pv-audio', { negotiated: true, id: LL_CHANNEL_ID, ordered: false, maxRetransmits: 0 })
-      // Straight to the engine's worker if it'll take it (it then tells us
-      // via llState when it opens and closes); otherwise we keep it and relay.
-      if (this.adoptLL?.(id, ch)) return
-      link.channel = ch
-      ch.binaryType = 'arraybuffer'
-      ch.onopen = () => this.llState(id, true)
-      ch.onmessage = e => {
-        if (e.data instanceof ArrayBuffer) this.events.llPacket(id, e.data)
-      }
-      ch.onclose = () => this.llState(id, false)
-    })
-    conn.on('close', () => this.onLLClosed(id, link))
-    conn.on('error', () => this.onLLClosed(id, link))
+  private acceptLL(id: string, linkId: string, sdp: string) {
+    const link = this.newLink(id, 'll', linkId, false)
+    this.wireLL(id, link)
+    void link.answer(sdp)
+  }
+
+  private wireLL(id: string, link: PeerLink) {
+    const entry: LLLink = {
+      link,
+      channel: null,
+      up: false,
+      timer: setTimeout(() => {
+        if (!entry.up) link.close()
+      }, CALL_SETUP_TIMEOUT_MS)
+    }
+    this.llLinks.set(id, entry)
+    link.onClose = () => this.onLLClosed(id, entry)
+    // Made before the offer, so it's in it; negotiated, so both ends make the same one.
+    const ch = link.pc.createDataChannel('pv-audio', { negotiated: true, id: LL_CHANNEL_ID, ordered: false, maxRetransmits: 0 })
+    // Straight to the engine's worker if it'll take it (it then tells us
+    // via llState when it opens and closes); otherwise we keep it and relay.
+    if (this.adoptLL?.(id, ch)) return
+    entry.channel = ch
+    ch.binaryType = 'arraybuffer'
+    ch.onopen = () => this.llState(id, true)
+    ch.onmessage = e => {
+      if (e.data instanceof ArrayBuffer) this.events.llPacket(id, e.data)
+    }
+    ch.onclose = () => this.llState(id, false)
   }
 
   /** The low-latency channel to them opened or closed (whoever holds it). */
   llState(id: string, up: boolean) {
-    const link = this.llLinks.get(id)
-    if (!link || link.up === up) return
-    link.up = up
+    const entry = this.llLinks.get(id)
+    if (!entry || entry.up === up) return
+    entry.up = up
+    if (up) clearTimeout(entry.timer)
     this.events.llLink(id, up)
     this.updateSenders()
-    if (!up) this.onLLClosed(id, link)
+    if (!up) this.onLLClosed(id, entry)
   }
 
-  private onLLClosed(id: string, link: LLLink) {
-    if (this.llLinks.get(id) !== link) return
+  private onLLClosed(id: string, entry: LLLink) {
+    if (this.llLinks.get(id) !== entry) return
     this.closeLL(id)
     if (this.ended || !this.self.ll || this.selfId >= id) return
     // Still wanted: try again in a bit.
@@ -675,16 +433,17 @@ export class Session {
   }
 
   private closeLL(id: string) {
-    const link = this.llLinks.get(id)
-    if (!link) return
+    const entry = this.llLinks.get(id)
+    if (!entry) return
     this.llLinks.delete(id)
+    clearTimeout(entry.timer)
     try {
-      link.channel?.close()
-      link.conn.close()
+      entry.channel?.close()
     } catch {
       /* already gone */
     }
-    if (link.up) this.events.llLink(id, false)
+    entry.link.close()
+    if (entry.up) this.events.llLink(id, false)
     this.updateSenders()
   }
 
@@ -716,11 +475,10 @@ export class Session {
   async getLLStats(): Promise<Map<string, RTCStatsReport>> {
     const out = new Map<string, RTCStatsReport>()
     await Promise.all(
-      [...this.llLinks].map(async ([id, link]) => {
-        const pc = link.conn.peerConnection
-        if (!pc || !link.up) return
+      [...this.llLinks].map(async ([id, entry]) => {
+        if (!entry.up) return
         try {
-          out.set(id, await pc.getStats())
+          out.set(id, await entry.link.pc.getStats())
         } catch {
           /* closed under us */
         }
@@ -735,8 +493,7 @@ export class Session {
    * time it was handed to our speakers.
    */
   syncSource(id: string): RTCRtpSynchronizationSource | null {
-    const pc = this.calls.get(id)?.peerConnection
-    const receiver = pc?.getReceivers().find(r => r.track?.kind === 'audio')
+    const receiver = this.voice.get(id)?.transceiver?.receiver
     return receiver?.getSynchronizationSources()[0] ?? null
   }
 
@@ -744,11 +501,10 @@ export class Session {
   async getStats(): Promise<Map<string, RTCStatsReport>> {
     const out = new Map<string, RTCStatsReport>()
     await Promise.all(
-      [...this.calls].map(async ([id, call]) => {
-        const pc = call.peerConnection
-        if (!pc || !call.remoteStream) return
+      [...this.voice].map(async ([id, v]) => {
+        if (!v.remote || v.link.closed) return
         try {
-          out.set(id, await pc.getStats())
+          out.set(id, await v.link.pc.getStats())
         } catch {
           /* closed under us */
         }
@@ -759,60 +515,37 @@ export class Session {
 
   leave() {
     if (this.ended) return
-    this.send({ t: 'leave' })
-    this.host?.stop(true)
-    this.teardown()
+    this.teardown(true)
     this.setStatus('ended')
   }
 
   /**
    * Go without saying goodbye, to come straight back as the same member
-   * (see SessionOptions.selfId): the host keeps us as reconnecting for a
-   * few seconds, so we keep our seat. If we're the host, hand the room on.
+   * (see SessionOptions.rejoin): the room keeps us as reconnecting for a
+   * few seconds, so we keep our seat.
    */
   drop() {
     if (this.ended) return
-    this.host?.stop(true)
-    this.teardown()
+    this.teardown(false)
     this.setStatus('ended')
   }
 
   private fail(reason: SessionFailure) {
     if (this.ended) return
-    this.host?.stop(true)
-    this.teardown()
+    this.teardown(false)
     this.events.status('failed', reason)
   }
 
-  private teardown() {
+  private teardown(leave: boolean) {
     this.ended = true
-    this.host = null
-    this.clearOpenTimer()
-    this.stopPing()
-    if (this.recoverTimer) clearTimeout(this.recoverTimer)
-    if (this.peerRetryTimer) clearTimeout(this.peerRetryTimer)
-    for (const t of this.callTimers.values()) clearTimeout(t)
     for (const t of this.retryTimers.values()) clearTimeout(t)
-    this.callTimers.clear()
-    this.retryTimers.clear()
-    for (const call of this.calls.values()) call.close()
-    for (const id of [...this.llLinks.keys()]) this.closeLL(id)
     for (const t of this.llRetry.values()) clearTimeout(t)
+    this.retryTimers.clear()
     this.llRetry.clear()
-    this.calls.clear()
-    const conn = this.conn
-    const peer = this.peer
-    this.conn = null
-    this.peer = null
-    // Let a goodbye on the data channel get out before the peer goes.
-    setTimeout(() => {
-      try {
-        conn?.close()
-      } catch {
-        /* ignore */
-      }
-      if (peer && !peer.destroyed) peer.destroy()
-    }, 100)
+    // Goodbyes on each link first, so nobody waits to notice; then off the room.
+    for (const v of [...this.voice.values()]) v.link.close()
+    for (const id of [...this.llLinks.keys()]) this.closeLL(id)
+    this.room?.close(leave)
   }
 
   private lastStatus: SessionStatus | null = null
@@ -823,24 +556,20 @@ export class Session {
   }
 }
 
-/** The one audio sender on a call, found by its transceiver so it's there even with no track on it. */
-function audioSender(pc: RTCPeerConnection | undefined): RTCRtpSender | null {
-  if (!pc || pc.connectionState === 'closed') return null
-  const t = pc.getTransceivers().find(t => t.receiver.track?.kind === 'audio' || t.sender.track?.kind === 'audio')
-  return t?.sender ?? null
+function supported(): boolean {
+  return typeof RTCPeerConnection !== 'undefined' && typeof WebSocket !== 'undefined'
 }
 
-/** Mark our audio high priority so routers that honour DSCP queue it first. */
-function prioritiseAudio(pc: RTCPeerConnection | undefined) {
-  if (!pc) return
-  for (const sender of pc.getSenders()) {
-    if (sender.track?.kind !== 'audio') continue
-    const params = sender.getParameters()
+/** Mark our audio high priority so routers that honour DSCP queue it first. Even with no track on it yet (muted). */
+function prioritiseAudio(pc: RTCPeerConnection) {
+  for (const t of pc.getTransceivers()) {
+    if (t.receiver.track.kind !== 'audio' || t.currentDirection === 'stopped') continue
+    const params = t.sender.getParameters()
     if (!params.encodings?.length) continue
     for (const e of params.encodings as (RTCRtpEncodingParameters & { priority?: string; networkPriority?: string })[]) {
       e.priority = 'high'
       e.networkPriority = 'high'
     }
-    void sender.setParameters(params).catch(() => {})
+    void t.sender.setParameters(params).catch(() => {})
   }
 }

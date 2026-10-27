@@ -29,30 +29,27 @@ You need Node 22.12 or newer (CI uses 24, see `.nvmrc`).
 
 ```sh
 npm install
-npm run dev
+npm run dev          # the app on :5173 and the Worker (rooms included) on :8787
+npm run e2e          # optional, in another terminal: headless Chromium tabs with fake mics, end to end
 ```
 
 Open it in two browsers (or two profiles), make a room in one and join with
 the code in the other. Microphone permission is needed on `localhost` or
-HTTPS.
-
-To run without the public PeerJS broker:
-
-```sh
-npm run peer:local   # terminal 1: PeerJS broker on localhost:9000
-npm run dev:local    # terminal 2: the app, pointed at that broker
-npm run e2e          # optional: headless Chromium tabs with fake mics, end to end
-```
+HTTPS. Everything runs on your machine: `npm run dev` starts Vite and
+`wrangler dev` side by side, Vite passes `/api` (WebSockets too) through to
+the Worker, and the rooms' Durable Objects run locally in workerd. No
+Cloudflare account is needed for any of it. `npm run dev:app` and `npm run
+dev:worker` start just one half.
 
 The e2e run makes a room, has people join, checks everyone hears everyone
 (the fake mic beeps, which lights up speaking rings on the other screens),
-mutes, has the **host** leave and checks the call carries on, joins someone
-new after the hand-over, and fills the table to six. It needs Playwright
+mutes, has whoever made the room leave and checks the call carries on, joins
+someone new after that, and fills the table to six. It needs Playwright
 installed (`npm i -g playwright && npx playwright install chromium`).
 `SHOTS_DIR=docs/screenshots npm run e2e` retakes the screenshots above.
 
 `npm test` runs the unit tests (seat planning against brute force, the
-springs, the protocol, the Opus SDP tuning, the Worker), and `npm run
+springs, the protocol, the Opus SDP tuning, the Worker and the rooms), and `npm run
 typecheck` / `npm run typecheck:worker` the types.
 
 ## What's in it
@@ -339,30 +336,57 @@ hundred kbps per person you're talking to.
 Mixing engines in one room is fine: each pair decides for itself, and anyone
 without the engine on hears and is heard over WebRTC audio as before.
 
-## Rooms: the PeerJS trick
+## Rooms: a Durable Object each
 
-Borrowed from [gasmoney](https://github.com/nicholas-sbx/gasmoney-oneshot).
-There's no server of our own. The room **is** a PeerJS id,
-`pivoice-v1-room-<CODE>`: whoever holds that id on the free PeerJS broker is the
-room's host, and anyone who knows the code connects straight to it. The broker
-doubles as the room directory.
+Each room is a [Durable Object](https://developers.cloudflare.com/durable-objects/)
+on the app's own Worker, named by its code, so everyone with the code reaches
+the same one wherever they are ([`worker/room.ts`](worker/room.ts)). It
+keeps the roster and passes WebRTC offers, answers and ICE candidates
+between members. It never sees the audio: the voice is a full mesh of
+WebRTC calls between members, as before.
 
-- Everyone (the host too) also has a random member id. The voice runs between
-  member ids, so it never goes through the host.
-- The host only keeps the roster (who's in, muted, deafened) and sends it to
-  everyone over data channels. In each pair of members, the one with the
-  smaller id places the call, so no call happens twice.
-- **The host can leave.** The calls carry on. Everyone works out from the
-  last roster who's next in join order. That person claims the room id, and
-  everyone else redials it and finds them there. Someone further back in the
-  queue waits 2.5 s for each person ahead of them before trying, in case
-  those people left too. The broker only lets one person hold an id, so two
-  people can never both become host.
-- Someone who drops keeps their seat (shown reconnecting) for 12 seconds.
+- **Making a room.** `POST /api/rooms`: the Worker picks a random code (a
+  CSPRNG over ~594 million), asks that room to hold it for a minute, and
+  tries another if it's taken. Browsers never pick codes, so nobody can
+  squat one.
+- **Joining.** A WebSocket to `/api/rooms/CODE/ws`. A code nobody's using
+  gets turned away, and the room leaves nothing behind.
+- **Who you are.** Each tab makes up a secret key, and the room derives your
+  public id from it (the first 128 bits of its SHA-256). Ids can't be chosen,
+  so nobody can pass themselves off as you, and coming back with the same key
+  is coming back as you, in the same seat. The key only ever goes to the room,
+  over TLS, and the room keeps nothing but the id.
+- **Signalling.** The room stamps every offer, answer and candidate with who
+  sent it, passes it only to someone in the room right now, and rebuilds it
+  from known fields first, so nothing else rides along. In each pair the one
+  with the smaller id makes the offer, so two never cross. Each pair has one
+  peer connection for the call, and a second for the low-latency engine when
+  both have it on.
+- **Nobody's the host.** The room is the authority, so anyone can leave,
+  including whoever made it, and the call carries on.
+- **Dropping out.** If your socket drops, your calls carry on (they're peer
+  to peer) while it reconnects, and the room keeps your seat (shown
+  reconnecting) for 12 seconds. A deploy restarts every room: everyone
+  reconnects within a few seconds and the room is made again around them,
+  same seats, same order.
+- **Cheap while quiet.** The sockets use the hibernation API, so a room is
+  out of memory, and not billed, whenever nobody's joining or changing
+  anything. The keep-alive pings every 5 s are answered by the runtime
+  without waking it. A room with people in it wakes every 30 s to drop
+  sockets that went quiet. When everyone's gone, its storage is wiped.
+- **Limits.** 12 people a room. Each socket can burst 300 messages (a whole
+  room's worth of offers and candidates at once) and then 30 a second, 16 KB
+  each at most, and has to say hello within 10 s. Break the protocol and the
+  room closes the socket. Only the app's own pages (and any
+  `ALLOWED_ORIGINS`) may open a room socket or make a room. The optional
+  `ROOM_LIMITER` in `wrangler.toml` caps both per IP, which makes guessing
+  codes slow.
 - Codes avoid 0/O/1/I/L/5/S.
 
-**NAT traversal:** STUN first and pray (Google's and Cloudflare's public STUN
-plus PeerJS's best-effort relay), with two ways to add a real TURN relay:
+**NAT traversal:** STUN first and pray (Google's and Cloudflare's public
+STUN), with two ways to add a real TURN relay. Without one, two people who
+are both behind strict NATs (some offices, some mobile networks) can't hear
+each other:
 
 1. **Cloudflare TURN through the Worker.** The Worker's `/api/ice` mints
    short-lived Cloudflare Realtime TURN credentials, and the app asks for them
@@ -383,7 +407,10 @@ Both can be on at once. The Worker's servers come first.
 
 The app is one Cloudflare Worker named `voice` (from `wrangler.toml`), so it lives at `voice.<your-subdomain>.workers.dev`. It serves
 the static build in `dist/`, adds the cross-origin isolation headers the
-low-latency engine's shared memory needs, and answers `/api/ice`.
+low-latency engine's shared memory needs, runs the rooms, and answers
+`/api/ice`. The rooms are SQLite-backed Durable Objects, which the Workers
+Free plan includes; the first deploy creates them from the `[[migrations]]`
+in `wrangler.toml`.
 CI normally deploys it (next section). By hand:
 
 ```sh
@@ -402,7 +429,6 @@ come from the repo's Actions variables and secrets):
 | `VITE_PUBLIC_URL` | Canonical URL for invite links, e.g. `https://pivoice.example.com/`. Defaults to wherever the app was opened. |
 | `VITE_TURN_URLS` | Your TURN server(s), comma separated, e.g. `turn:turn.example.com:3478,turns:turn.example.com:5349`. |
 | `VITE_TURN_USERNAME`, `VITE_TURN_CREDENTIAL` | Its credentials. |
-| `VITE_PEER_HOST/PORT/PATH/SECURE/KEY` | A self-hosted PeerJS broker. Everyone in a room has to use the same one. |
 
 ### CI: releasing
 
@@ -447,7 +473,6 @@ checks for them and has no environment:
 | `VITE_TURN_URLS` | variable | no | Your TURN server(s), baked into the build. |
 | `VITE_TURN_USERNAME` | variable or secret | no | Its username. |
 | `VITE_TURN_CREDENTIAL` | secret | no | Its credential. A secret keeps it out of the repo and the logs, but it still ends up readable in the shipped JavaScript. |
-| `VITE_PEER_HOST`, `VITE_PEER_PORT`, `VITE_PEER_PATH`, `VITE_PEER_SECURE`, `VITE_PEER_KEY` | variables | no | A self-hosted PeerJS broker. |
 | `TURN_KEY_ID`, `TURN_KEY_API_TOKEN` | secrets | no | Cloudflare Realtime TURN key, copied to the Worker's secrets on each release so `/api/ice` can mint credentials. |
 
 ## Later
@@ -461,15 +486,16 @@ checks for them and has no environment:
 ```
 src/
   lib/          seats (planning + the animated Table), spring, room codes, prefs
-  net/          protocol (+ validation), roomHost (holding the room id),
-                session (joining, the call mesh, host hand-over), sdp, ICE config
+  net/          protocol (+ validation, shared with the Worker), roomSocket (the
+                WebSocket to the room), peer (one peer connection), session
+                (joining, the call mesh), sdp, ICE config
   audio/        engine: mic, per-person channel strips, panning, speaking detection
   audio/ll/     the low-latency engine: worklets (capture, playback), worker
                 (encode, decode, network), jitter buffer, shared-memory ring, packet format, settings
   components/   round table, call control buttons, settings, user menu, icons
   screens/      Home (make or join) and Room
   call.ts       the call as reactive state, and everything the UI can do to it
-worker/         the Cloudflare Worker: static assets + /api/ice
-scripts/        local PeerJS broker, e2e run
+worker/         the Cloudflare Worker: static assets, the rooms (a Durable Object each), /api/ice
+scripts/        dev (app + Worker), e2e run
 tests/          unit tests
 ```

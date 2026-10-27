@@ -15,11 +15,18 @@ export default defineConfig({
     alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) }
   },
   build: { target: 'es2022' },
-  // Same cross-origin isolation the Worker gives the real site (worker/index.ts).
-  server: { host: true, headers: { 'Cross-Origin-Opener-Policy': 'same-origin', 'Cross-Origin-Embedder-Policy': 'require-corp' } },
+  server: {
+    host: true,
+    // Same cross-origin isolation the Worker gives the real site (worker/index.ts).
+    headers: { 'Cross-Origin-Opener-Policy': 'same-origin', 'Cross-Origin-Embedder-Policy': 'require-corp' },
+    // The rooms and /api/ice are the Worker's: `npm run dev` runs it on 8787 (scripts/dev.mjs).
+    proxy: { '/api': { target: 'http://127.0.0.1:8787', ws: true } }
+  },
   preview: { headers: { 'Cross-Origin-Opener-Policy': 'same-origin', 'Cross-Origin-Embedder-Policy': 'require-corp' } },
   test: {
     environment: 'node',
+    // The Worker's runtime module, for testing the room outside workerd.
+    alias: { 'cloudflare:workers': fileURLToPath(new URL('./tests/stubs/cloudflare-workers.ts', import.meta.url)) },
     include: ['tests/**/*.test.ts']
   }
 })
