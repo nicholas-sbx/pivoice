@@ -1,7 +1,7 @@
 {
   "name": "pivoice",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Voice rooms around a round table. Make a room, share the code, talk. Peer to peer over PeerJS, served from a Cloudflare Worker.",
   "type": "module",
   "scripts": {
