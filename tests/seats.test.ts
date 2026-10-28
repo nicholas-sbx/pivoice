@@ -121,6 +121,11 @@ describe('tableRadius', () => {
     const sizes = [3, 4, 5, 6, 7, 8].map(n => tableRadius(n, 360, 60))
     for (let i = 1; i < sizes.length; i++) expect(sizes[i]).toBeGreaterThan(sizes[i - 1])
   })
+  it('keeps the seats clear of the middle on a small screen', () => {
+    // A small window: half size would put the seat across from you on top of the room code.
+    expect(tableRadius(2, 171, 56)).toBe(112)
+    expect(tableRadius(2, 100, 56)).toBe(100)
+  })
   it('never squeezes neighbours together on a small screen', () => {
     const r = tableRadius(5, 400, 90)
     const gap = 2 * r * Math.sin(Math.PI / 5)

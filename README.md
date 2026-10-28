@@ -392,7 +392,9 @@ becomes just the UI.
   PortAudio stream with the device's lowest suggested latency, so each
   block of mic audio and each block for the speakers go through the same
   callback on the same clock, with nothing queued between them. That's
-  what a `pw-loopback`-style round trip is made of. The mic test's
+  what a `pw-loopback`-style round trip is made of. On Windows it uses
+  WASAPI, not PortAudio's default MME (whose buffers alone are ~100 ms),
+  falling back to WDM-KS and then MME only if a device won't open. The mic test's
   **Raw** path in the app is exactly that: mic to speakers inside the
   callback.
 - **WebRTC from Go** ([pion](https://github.com/pion/webrtc)). The app
