@@ -324,10 +324,31 @@ try {
 
   // On a phone: a list of tiles while spatial audio is off, the table when it's on, a tap for someone's menu.
   {
-    const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, permissions: ['microphone'] })
+    const ctx = await browser.newContext({
+      viewport: { width: 390, height: 844 },
+      isMobile: true,
+      hasTouch: true,
+      permissions: ['microphone'],
+      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1'
+    })
     const phone = await ctx.newPage()
     phone.on('pageerror', e => console.error('[Pia] page error:', e.message))
+    // Everything on screen, measured (the page itself can't get wider: overflow is clipped, so a cut-off card wouldn't show there).
+    const offScreen = sel =>
+      phone.$$eval(sel, els =>
+        els
+          .filter(e => e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden')
+          .filter(e => {
+            const r = e.getBoundingClientRect()
+            return r.left < -0.5 || r.right > innerWidth + 0.5
+          })
+          .map(e => `${e.tagName.toLowerCase()}.${[...e.classList].join('.')}`)
+      )
     await phone.goto(APP + '#' + code)
+    await phone.waitForSelector('.card')
+    const cutHome = await offScreen('.card, .card *')
+    if (cutHome.length) throw new Error('phone: the start screen runs off the screen: ' + cutHome.slice(0, 5).join(', '))
+    if (await phone.$('.get-app')) throw new Error('phone: offered the desktop app on a phone')
     await phone.fill('input[autocomplete="nickname"]', 'Pia')
     await phone.tap('button:has-text("Join Room")')
     await phone.waitForSelector('.pill', { timeout: 20_000 })
@@ -339,6 +360,8 @@ try {
     if (await phone.$('.table')) throw new Error('phone: the table showed with spatial audio off')
     const wide = await phone.evaluate(() => document.documentElement.scrollWidth > innerWidth)
     if (wide) throw new Error('phone: the page is wider than the screen')
+    const cutRoom = await offScreen('.bar, .bar > *, .pill, .tile, .tile .tag')
+    if (cutRoom.length) throw new Error('phone: the room runs off the screen: ' + cutRoom.slice(0, 5).join(', '))
     await expectHearsSomeone(phone, 'Pia (phone)')
     await phone.tap('.tile:not(.self)')
     await phone.waitForSelector('.menu', { timeout: 5_000 }).catch(() => {
@@ -350,6 +373,10 @@ try {
       throw new Error('phone: spatial audio on but no table')
     })
     if (await phone.$('.tile')) throw new Error('phone: tiles still showing with spatial audio on')
+    await phone.tap('button[aria-label="Voice Settings"]')
+    const cutSheet = await offScreen('.panel')
+    if (cutSheet.length) throw new Error('phone: the settings sheet runs off the screen')
+    await phone.tap('button[aria-label="Voice Settings"]')
     ok(`phone: ${n} tiles with spatial audio off, the table with it on, a tap opens someone's menu`)
     if (SHOTS) {
       await phone.waitForTimeout(800)
