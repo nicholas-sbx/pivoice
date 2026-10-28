@@ -32,7 +32,8 @@ export class NativeVoice {
   /** Open the sound card with these settings. */
   async start(cfg: AppConfig) {
     this.configure(cfg)
-    const a = await this.bridge.request({ t: 'audio', on: true }, 'audio', 5000)
+    // The answer to this, not to an earlier "off" (a rejoin closes and reopens straight away).
+    const a = await this.bridge.request({ t: 'audio', on: true }, 'audio', 5000, m => m.on || !!m.error)
     if (!a?.on) this.micProblem = 'failed'
     else {
       this.info = a.info ?? null

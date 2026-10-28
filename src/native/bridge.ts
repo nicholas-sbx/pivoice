@@ -155,11 +155,16 @@ export class NativeBridge {
     return () => this.listeners.delete(listener)
   }
 
-  /** Ask for something and wait for the answer of that type. */
-  request<T extends FromApp['t']>(msg: ToApp, type: T, timeoutMs = 2000): Promise<Extract<FromApp, { t: T }> | null> {
+  /** Ask for something and wait for the answer of that type (that `match` accepts, if given). */
+  request<T extends FromApp['t']>(
+    msg: ToApp,
+    type: T,
+    timeoutMs = 2000,
+    match: (m: Extract<FromApp, { t: T }>) => boolean = () => true
+  ): Promise<Extract<FromApp, { t: T }> | null> {
     return new Promise(resolve => {
       const off = this.on(m => {
-        if (m.t !== type) return
+        if (m.t !== type || !match(m as Extract<FromApp, { t: T }>)) return
         off()
         clearTimeout(timer)
         resolve(m as Extract<FromApp, { t: T }>)

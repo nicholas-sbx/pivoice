@@ -125,6 +125,9 @@ func TestOtherProtocolOnlyGetsHello(t *testing.T) {
 	}
 	send(t, c, proto.In{T: "audio", On: true})
 	if m, err := read(c); err == nil {
-		t.Fatalf("acted for a page on another protocol: %v", m)
+		t.Fatalf("answered a page on another protocol: %v", m)
+	}
+	if b.engine.AudioOn() {
+		t.Fatal("opened the sound card for a page on another protocol")
 	}
 }

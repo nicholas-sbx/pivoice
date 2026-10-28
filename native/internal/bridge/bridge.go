@@ -48,6 +48,8 @@ type Conn struct {
 	send   func([]byte)
 	close  func()
 	authed atomic.Bool
+	// Said hello on our protocol: only then does anything it says reach the engine.
+	compatible bool
 
 	inMu  sync.Mutex
 	in    chan []byte
@@ -122,6 +124,7 @@ func (c *Conn) handle(m proto.In) {
 		}
 		b.mu.Unlock()
 		c.authed.Store(false)
+		c.compatible = false
 		if wasCurrent {
 			b.engine.SetEmitter(nil)
 			b.engine.Reset()
@@ -146,15 +149,16 @@ func (c *Conn) handle(m proto.In) {
 		b.engine.SetEmitter(nil)
 		b.engine.Reset()
 		c.emit(proto.Hello{T: "hello", Version: b.version, Protocol: proto.Protocol, OS: runtime.GOOS, Arch: runtime.GOARCH})
-		if m.Protocol == proto.Protocol {
+		c.compatible = m.Protocol == proto.Protocol
+		if c.compatible {
 			log.Printf("bridge: the page is here (site %s)", m.Site)
 			b.engine.SetEmitter(c.emit)
 		} else {
 			// The page tells the person which of us to update.
 			log.Printf("bridge: the page (site %s) speaks bridge protocol %d and we speak %d", m.Site, m.Protocol, proto.Protocol)
 		}
-	case !c.authed.Load():
-		// Not a word until hello.
+	case !c.authed.Load() || !c.compatible:
+		// Not a word until hello, and nothing at all from a page we can't understand.
 	default:
 		b.mu.Lock()
 		current := b.current == c
