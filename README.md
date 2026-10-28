@@ -643,7 +643,7 @@ checks for them and has no environment:
 | `CLOUDFLARE_API_TOKEN` | secret | yes | `wrangler deploy`. Only given to the wrangler steps, never to `npm ci` or the build, where dependencies' own scripts run. A token from the "Edit Cloudflare Workers" template is enough. |
 | `CLOUDFLARE_ACCOUNT_ID` | secret | yes | The same steps. |
 | `VITE_PUBLIC_URL` | variable | for the app | Baked into the site's build, and the site the app opens. |
-| `VITE_NATIVE_DOWNLOAD_URL` | variable | no | Where the site sends people for a newer app; `{version}` is filled in. Defaults to the GitHub release. The repo's private, so its releases are only reachable by people who can see it: point this somewhere public (or make the releases public) before sharing the app. |
+| `VITE_NATIVE_DOWNLOAD_URL` | variable | no | Where the site sends people for a newer app; `{version}` is filled in. Defaults to the GitHub release. |
 | `VITE_TURN_URLS` | variable | no | Your TURN server(s), baked into the build. |
 | `VITE_TURN_USERNAME` | variable or secret | no | Its username. |
 | `VITE_TURN_CREDENTIAL` | secret | no | Its credential. A secret keeps it out of the repo and the logs, but it still ends up readable in the shipped JavaScript. |
