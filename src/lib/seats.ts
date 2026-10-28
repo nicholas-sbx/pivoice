@@ -98,11 +98,15 @@ export function cyclicAfter(ids: readonly string[], selfId: string): string[] {
  * the table can be. Half that for 1–3 people, growing evenly to full size at
  * 8, but never so small that neighbours would be closer than `minGap`
  * (centre to centre): by default enough for their name tags not to touch.
+ * Nor closer to the middle than two faces' widths, so on a small screen the
+ * name tag of whoever sits across from you stays clear of the room code and
+ * the count in the middle of the table (on a big one, half size is further
+ * out than that anyway).
  */
 export function tableRadius(n: number, max: number, avatar: number, minGap = avatar * 2.3): number {
   const scale = n <= 3 ? 0.5 : Math.min(1, 0.5 + ((n - 3) / 5) * 0.5)
   const needed = n >= 2 ? minGap / (2 * Math.sin(Math.PI / n)) : 0
-  return Math.min(max, Math.max(max * scale, needed))
+  return Math.min(max, Math.max(max * scale, needed, avatar * 2))
 }
 
 export interface Seat {
