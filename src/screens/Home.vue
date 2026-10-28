@@ -192,7 +192,7 @@ onMounted(() => {
 </template>
 
 <style scoped>
-/* Dark, like the rest of the app, with only a hint of the brand colour behind the card. */
+/* Dark and flat like the rest of the app: the brand colour is for the buttons, not the whole screen. */
 .home {
   position: relative;
   height: 100%;
@@ -200,10 +200,7 @@ onMounted(() => {
   place-items: center;
   overflow-y: auto;
   padding: 40px 16px;
-  background:
-    radial-gradient(ellipse 70% 55% at 50% 0%, rgba(88, 101, 242, 0.16), transparent 70%),
-    radial-gradient(ellipse 60% 50% at 50% 100%, rgba(88, 101, 242, 0.08), transparent 70%),
-    var(--bg-tertiary);
+  background: var(--bg-tertiary);
 }
 
 .card {
