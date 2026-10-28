@@ -187,9 +187,3 @@ export function forgetApp() {
   }
   location.reload()
 }
-
-/** Where to get this version of the app (VITE_NATIVE_DOWNLOAD_URL, `{version}` filled in). */
-export function downloadUrl(version: string): string {
-  const template = import.meta.env.VITE_NATIVE_DOWNLOAD_URL?.trim() || 'https://github.com/nicholas-sbx/pivoice/releases/tag/native-v{version}'
-  return template.replaceAll('{version}', version)
-}

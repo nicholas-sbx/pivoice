@@ -2,7 +2,8 @@
 import { computed } from 'vue'
 import { copyText } from '../lib/copyText'
 import { toast } from '../call'
-import { downloadUrl, forgetApp, native } from '../native/bridge'
+import { forgetApp, native } from '../native/bridge'
+import { APP_DOWNLOADS, downloadUrl } from '../native/downloads'
 
 /**
  * In the app, when the page and the app can't work together: which of the
@@ -14,7 +15,11 @@ import { downloadUrl, forgetApp, native } from '../native/bridge'
 
 const inWindow = typeof window !== 'undefined' && !!window.__pivoiceNative
 const verdict = computed(() => native.verdict)
-const link = computed(() => (verdict.value && !verdict.value.ok && verdict.value.action === 'download' ? downloadUrl(verdict.value.latest) : ''))
+const latest = computed(() => (verdict.value && !verdict.value.ok && verdict.value.action === 'download' ? verdict.value.latest : ''))
+// Straight to the file for the platform this app runs on; the release's page otherwise.
+const file = computed(() => APP_DOWNLOADS.find(d => d.os === native.app?.os))
+const link = computed(() => (latest.value ? downloadUrl(latest.value, file.value?.file) : ''))
+const page = computed(() => (latest.value ? downloadUrl(latest.value) : ''))
 
 function reload() {
   location.reload()
@@ -47,8 +52,11 @@ async function copyLink() {
         </p>
         <code class="link">{{ link }}</code>
         <div class="actions">
-          <a class="button primary" :href="link" target="_blank" rel="noopener">Download {{ verdict.latest }}</a>
+          <a class="button primary" :href="link" target="_blank" rel="noopener">
+            Download {{ verdict.latest }}<template v-if="file"> for {{ file.label }}</template>
+          </a>
           <button type="button" @click="copyLink">Copy Link</button>
+          <a v-if="file" class="button" :href="page" target="_blank" rel="noopener">All Platforms</a>
         </div>
       </template>
       <template v-else>

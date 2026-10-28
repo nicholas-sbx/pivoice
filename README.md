@@ -454,6 +454,10 @@ built. Then:
 - **Same protocol, newer app out**: a note on the start screen, and you
   carry on.
 
+**Getting it.** The start screen on the website has a download button for
+each platform there's an app for (yours highlighted), straight to the newest
+release's file; the list is in [`src/native/downloads.ts`](src/native/downloads.ts).
+
 **Running it.** `pivoice` opens the window; `pivoice ABC234` or `pivoice
 https://…/#ABC234` goes straight to that room. Flags: `--browser`, `--url`
 (another site, e.g. your dev server), `--devtools`, `--version`, and for

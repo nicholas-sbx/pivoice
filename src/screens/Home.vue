@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { call, startCall } from '../call'
-import { downloadUrl, native } from '../native/bridge'
+import { isNative, native } from '../native/bridge'
+import { APP_DOWNLOADS, downloadUrl, visitorOS } from '../native/downloads'
 import Icon from '../components/Icon.vue'
 import { codeFromHash, CODE_LENGTH, isRoomCode, normalizeRoomCode } from '../lib/roomCode'
 import { cleanName } from '../net/protocol'
@@ -21,6 +22,15 @@ const fromInvite = !!code.value
 if (fromInvite) history.replaceState(null, '', location.pathname + location.search)
 const busy = computed(() => call.phase === 'joining')
 const version = __APP_VERSION__
+// On the website: the app for each platform, yours first and highlighted.
+const appVersion = __NATIVE_VERSION__
+const mine = visitorOS()
+const downloads = [...APP_DOWNLOADS].sort((a, b) => Number(b.os === mine) - Number(a.os === mine))
+// In the app, when a newer one's out: the file for the platform it runs on.
+const newerUrl = computed(() => {
+  const v = native.verdict?.ok ? native.verdict.newer : null
+  return v ? downloadUrl(v, APP_DOWNLOADS.find(d => d.os === native.app?.os)?.file) : ''
+})
 
 function checkName(): string | null {
   const n = cleanName(name.value)
@@ -90,7 +100,7 @@ onMounted(() => {
       <div v-if="call.error" class="banner" role="alert">{{ call.error }}</div>
       <div v-if="native.verdict?.ok && native.verdict.newer" class="banner info">
         Pivoice app {{ native.verdict.newer }} is out (you have {{ native.app?.version }}):
-        <a :href="downloadUrl(native.verdict.newer)" target="_blank" rel="noopener">download it</a> when you get a moment.
+        <a :href="newerUrl" target="_blank" rel="noopener">download it</a> when you get a moment.
       </div>
 
       <label class="field">
@@ -154,6 +164,23 @@ onMounted(() => {
         <button v-if="fromInvite" type="button" class="link" :disabled="busy" @click="create">
           Or make a new room instead
         </button>
+      </div>
+
+      <div v-if="!isNative && downloads.length" class="get-app">
+        <span>Lowest latency in the app <small>v{{ appVersion }}</small></span>
+        <div class="get-app-buttons">
+          <a
+            v-for="d in downloads"
+            :key="d.os"
+            class="get-app-button"
+            :class="{ mine: d.os === mine }"
+            :href="downloadUrl(appVersion, d.file)"
+            :download="d.file"
+            rel="noopener"
+          >
+            {{ d.label }}
+          </a>
+        </div>
       </div>
 
       <footer>
@@ -391,6 +418,48 @@ h3 {
   text-decoration: underline;
 }
 
+.get-app {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+  margin-top: 24px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border-subtle);
+  font-size: 13px;
+  color: var(--header-secondary);
+  text-align: left;
+}
+.get-app small {
+  color: var(--text-muted);
+}
+.get-app-buttons {
+  display: flex;
+  gap: 8px;
+}
+.get-app-button {
+  padding: 6px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  color: var(--interactive-normal);
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+}
+.get-app-button:hover {
+  border-color: var(--bg-accent-hover);
+  color: var(--interactive-hover);
+}
+.get-app-button.mine {
+  border-color: var(--brand);
+  background: var(--brand);
+  color: #fff;
+}
+.get-app-button.mine:hover {
+  border-color: var(--brand-hover);
+  background: var(--brand-hover);
+}
 footer {
   display: flex;
   justify-content: space-between;
