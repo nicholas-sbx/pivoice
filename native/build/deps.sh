@@ -37,6 +37,7 @@ common=(-DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$prefix" -DCMAKE_INST
 sha256() { if command -v sha256sum >/dev/null; then sha256sum "$1" | cut -d' ' -f1; else shasum -a 256 "$1" | cut -d' ' -f1; fi; }
 
 # A .pc file for a library built here, so build.sh (and cgo) find it like any other.
+# -lm in Libs, not Libs.private: cgo doesn't ask pkg-config for static flags.
 pc() {
   mkdir -p "$prefix/lib/pkgconfig"
   cat > "$prefix/lib/pkgconfig/$1.pc" <<EOF
@@ -47,8 +48,7 @@ includedir=\${prefix}/include
 Name: $1
 Description: $2
 Version: $3
-Libs: -L\${libdir} -l$1
-Libs.private: -lm
+Libs: -L\${libdir} -l$1 -lm
 Cflags: -I\${includedir}
 EOF
 }
