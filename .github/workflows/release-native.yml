@@ -98,9 +98,10 @@ jobs:
           # The oldest Ubuntu with WebKitGTK 4.1, so the binary runs on as many distros as it can (glibc 2.35+).
           - os: ubuntu-22.04
             asset: pivoice-linux-amd64.tar.gz
-          # One universal binary, Apple silicon and Intel.
-          - os: macos-14
-            asset: pivoice-macos.tar.gz
+          # macOS is switched off for now (its runners can queue for a long time).
+          # Uncomment to bring it back: one universal binary, Apple silicon and Intel.
+          # - os: macos-14
+          #   asset: pivoice-macos.tar.gz
           - os: windows-latest
             asset: pivoice-windows-amd64.exe
     runs-on: ${{ matrix.os }}
@@ -196,7 +197,6 @@ jobs:
           It's one file; there's nothing to install.
 
           - **Linux** (x86-64): \`tar -xzf pivoice-linux-amd64.tar.gz && ./pivoice\`. Needs WebKitGTK 4.1 (\`libwebkit2gtk-4.1-0\` on Debian and Ubuntu, \`webkit2gtk4.1\` on Fedora), which most desktops already have.
-          - **macOS** (11+, Apple silicon and Intel): unpack it, then \`xattr -d com.apple.quarantine pivoice && ./pivoice\`. It isn't notarized, so macOS won't open it from a download otherwise. It asks for the microphone the first time.
           - **Windows** (10 and 11, x86-64): run \`pivoice-windows-amd64.exe\`. SmartScreen may warn first, since it isn't signed: More info → Run anyway. Uses the WebView2 runtime that comes with Windows.
 
           Pass an invite link or a room code to go straight to it: \`./pivoice https://…/#ABC234\`. \`--browser\` opens the UI in your browser instead of its own window.
