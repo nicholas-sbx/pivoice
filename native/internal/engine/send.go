@@ -119,6 +119,8 @@ func (s *sender) process(b capBlock, p *dsp.Settings) capBlock {
 		}
 	}
 	if s.chain == nil {
+		// It wouldn't start: the mic goes out as it is, and the meter (left to us while processing's on) still moves.
+		raiseLevel(&s.e.selfLevel, rms(b.pcm))
 		return b
 	}
 	out := s.chain.Process(b.pcm, b.ref)
