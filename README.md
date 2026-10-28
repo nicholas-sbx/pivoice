@@ -622,11 +622,12 @@ The release then runs three jobs in order:
 
 The app releases the same way, keyed on `native/VERSION` and tagged
 `native-vX.Y.Z`: bump the file on main and push, push a tag yourself, or
-**Run workflow**. Its jobs: **tag**, **check** (`gofmt`, `go vet`, `go test
--race`, where the engine's tests run two engines on fake sound cards over
-real WebRTC), **build** on Linux (Ubuntu 22.04, so glibc 2.35+), macOS (one
-universal binary) and Windows, and **release**, which publishes a GitHub
-release with the three files and how to run each. It needs no secrets, only
+**Run workflow**. Three jobs start at once: **tag**, **check** (`gofmt`, `go
+vet`, `go test -race`, where the engine's tests run two engines on fake sound
+cards over real WebRTC) and **build** on Linux (Ubuntu 22.04, so glibc
+2.35+), macOS (one universal binary) and Windows. **release** waits for all
+of them, so nothing ships unless the tests passed too, and publishes a
+GitHub release with the three files and how to run each. It needs no secrets, only
 `VITE_PUBLIC_URL`, the site it opens: without it, a main push builds but
 doesn't tag or release.
 

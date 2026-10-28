@@ -89,8 +89,8 @@ jobs:
         env:
           PKG_CONFIG_PATH: ${{ github.workspace }}/native/build/pkgconfig
 
+  # In parallel with check: a release waits for both, so nothing ships unless the tests pass too.
   build:
-    needs: check
     strategy:
       fail-fast: false
       matrix:
@@ -166,7 +166,7 @@ jobs:
           if ldd dist/pivoice.exe | grep -iE 'portaudio|opus|libstdc|libgcc|libwinpthread'; then echo "::error::needs a DLL that won't be there"; exit 1; fi
           cp dist/pivoice.exe "${{ matrix.asset }}"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: ${{ matrix.asset }}
           path: ${{ matrix.asset }}
@@ -175,7 +175,7 @@ jobs:
           retention-days: 1
 
   release:
-    needs: [tag, build]
+    needs: [tag, check, build]
     if: needs.tag.outputs.release == 'true'
     runs-on: ubuntu-latest
     permissions:
