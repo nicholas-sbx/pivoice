@@ -1,0 +1,203 @@
+# The app (native/), released on its own, separately from the site:
+# - bump native/VERSION on main and push: if there's no native-vX.Y.Z tag for
+#   it yet, the tag job adds one and the release runs;
+# - or push a tag like native-v0.2.0 yourself (it must match native/VERSION);
+# - or press "Run workflow" on the Actions tab (on main it also adds a missing tag).
+# A push to any other branch that touches native/ checks and builds it on all
+# three platforms and releases nothing, so a broken build shows up before main.
+# Nothing outside native/ starts this workflow, and nothing in native/ starts
+# the site's (release-web.yml).
+name: Release app
+
+on:
+  push:
+    branches: ['**']
+    tags: ['native-v*']
+    paths: [native/**, .github/workflows/release-native.yml]
+  workflow_dispatch:
+
+# Releases queue behind each other; a branch's newer push replaces its older check.
+concurrency:
+  group: release-native-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/') }}
+
+permissions:
+  contents: read
+
+jobs:
+  # Decides whether this run releases, tagging the version on main if it isn't yet.
+  tag:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      release: ${{ steps.tag.outputs.release }}
+      version: ${{ steps.tag.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+      - id: tag
+        env:
+          # The site the app opens, baked into it. The same variable the site's build uses.
+          SITE_URL: ${{ vars.VITE_PUBLIC_URL }}
+        run: |
+          version=$(tr -d '[:space:]' < native/VERSION)
+          tag="native-v$version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          release=false
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            if [ "$GITHUB_REF_NAME" != "$tag" ]; then
+              echo "::error::Tag $GITHUB_REF_NAME doesn't match native/VERSION ($version)."
+              exit 1
+            fi
+            release=true
+          elif [ "$GITHUB_REF" = refs/heads/main ]; then
+            if [ -z "$SITE_URL" ]; then
+              echo "::warning::The VITE_PUBLIC_URL variable isn't set, so the app wouldn't know which site to open. Not releasing (and not tagging)."
+            elif git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null; then
+              echo "$tag is already tagged."
+              [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] && release=true
+            else
+              git config user.name 'github-actions[bot]'
+              git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+              git tag -a "$tag" -m "Pivoice app $version"
+              git push origin "refs/tags/$tag"
+              echo "Tagged $tag."
+              release=true
+            fi
+          fi
+          echo "release=$release" >> "$GITHUB_OUTPUT"
+
+  check:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: native
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: native/go.mod
+          cache-dependency-path: native/go.sum
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev libgtk-3-dev portaudio19-dev libopus-dev pkg-config
+      - name: gofmt
+        run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+      - run: go vet ./...
+        env:
+          PKG_CONFIG_PATH: ${{ github.workspace }}/native/build/pkgconfig
+      # The engine's tests run two engines on fake sound cards, talking over real WebRTC.
+      - run: go test -race ./...
+        env:
+          PKG_CONFIG_PATH: ${{ github.workspace }}/native/build/pkgconfig
+
+  build:
+    needs: check
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The oldest Ubuntu with WebKitGTK 4.1, so the binary runs on as many distros as it can (glibc 2.35+).
+          - os: ubuntu-22.04
+            asset: pivoice-linux-amd64.tar.gz
+          # One universal binary, Apple silicon and Intel.
+          - os: macos-14
+            asset: pivoice-macos.tar.gz
+          - os: windows-latest
+            asset: pivoice-windows-amd64.exe
+    runs-on: ${{ matrix.os }}
+    env:
+      PIVOICE_URL: ${{ vars.VITE_PUBLIC_URL }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: native/go.mod
+          cache-dependency-path: native/go.sum
+
+      - name: Build (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev libgtk-3-dev libasound2-dev cmake pkg-config
+          native/build/deps.sh
+          STATIC_AUDIO=1 native/build.sh "$PWD/dist/pivoice"
+          # PortAudio and Opus are in the binary; ALSA is loaded when it starts.
+          if ldd dist/pivoice | grep -E 'portaudio|opus|asound'; then echo "::error::linked against a shared audio library"; exit 1; fi
+          tar -czf "${{ matrix.asset }}" -C dist pivoice
+
+      - name: Build (macOS)
+        if: runner.os == 'macOS'
+        env:
+          MACOSX_DEPLOYMENT_TARGET: '11.0'
+          CMAKE_ARGS: -DCMAKE_OSX_ARCHITECTURES=arm64;x86_64 -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0
+        run: |
+          command -v pkg-config >/dev/null || brew install pkgconf
+          native/build/deps.sh
+          GOARCH=arm64 STATIC_AUDIO=1 native/build.sh "$PWD/dist/pivoice-arm64"
+          GOARCH=amd64 STATIC_AUDIO=1 native/build.sh "$PWD/dist/pivoice-amd64"
+          lipo -create -output dist/pivoice dist/pivoice-arm64 dist/pivoice-amd64
+          # Ad hoc: Apple silicon won't run an unsigned binary at all. (Not notarized: see the release notes.)
+          codesign --force --sign - dist/pivoice
+          lipo -info dist/pivoice
+          if otool -L dist/pivoice | grep -E 'portaudio|opus'; then echo "::error::linked against a shared audio library"; exit 1; fi
+          tar -czf "${{ matrix.asset }}" -C dist pivoice
+
+      - uses: msys2/setup-msys2@v2
+        if: runner.os == 'Windows'
+        with:
+          msystem: UCRT64
+          path-type: inherit
+          install: >-
+            git
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-pkgconf
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
+        env:
+          CMAKE_GENERATOR: Ninja
+        run: |
+          native/build/deps.sh
+          STATIC_AUDIO=1 native/build.sh "$PWD/dist/pivoice.exe"
+          if ldd dist/pivoice.exe | grep -iE 'portaudio|opus|libstdc|libgcc|libwinpthread'; then echo "::error::needs a DLL that won't be there"; exit 1; fi
+          cp dist/pivoice.exe "${{ matrix.asset }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: ${{ matrix.asset }}
+          if-no-files-found: error
+
+  release:
+    needs: [tag, build]
+    if: needs.tag.outputs.release == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v5
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.tag.outputs.version }}
+        run: |
+          tag="native-v$VERSION"
+          cat > notes.md <<EOF
+          The Pivoice app $VERSION: the site, with the audio done natively (one duplex sound card callback, WebRTC from Go).
+          It's one file; there's nothing to install.
+
+          - **Linux** (x86-64): \`tar -xzf pivoice-linux-amd64.tar.gz && ./pivoice\`. Needs WebKitGTK 4.1 (\`libwebkit2gtk-4.1-0\` on Debian and Ubuntu, \`webkit2gtk4.1\` on Fedora), which most desktops already have.
+          - **macOS** (11+, Apple silicon and Intel): unpack it, then \`xattr -d com.apple.quarantine pivoice && ./pivoice\`. It isn't notarized, so macOS won't open it from a download otherwise. It asks for the microphone the first time.
+          - **Windows** (10 and 11, x86-64): run \`pivoice-windows-amd64.exe\`. SmartScreen may warn first, since it isn't signed: More info → Run anyway. Uses the WebView2 runtime that comes with Windows.
+
+          Pass an invite link or a room code to go straight to it: \`./pivoice https://…/#ABC234\`. \`--browser\` opens the UI in your browser instead of its own window.
+          EOF
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$tag" dist/* --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$tag" dist/* --repo "$GITHUB_REPOSITORY" --title "Pivoice app $VERSION" --notes-file notes.md --latest=false
+          fi

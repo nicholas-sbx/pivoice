@@ -4,9 +4,9 @@
 # (CI passes the repo's VITE_PUBLIC_URL); without it, pass --url when you
 # run it.
 #
-# Needs Go, a C compiler and pkg-config, PortAudio and Opus (static
-# libraries if you want a binary that runs anywhere: CI builds its own, see
-# .github/workflows/release-native.yml), and on Linux WebKitGTK 4.1 and GTK 3.
+# Needs Go, a C compiler and pkg-config, PortAudio and Opus (your system's,
+# or static ones from build/deps.sh with STATIC_AUDIO=1, which is how CI
+# makes a binary that runs anywhere), and on Linux WebKitGTK 4.1 and GTK 3.
 # NOWEBVIEW=1 builds without the window (--browser and --headless only).
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -21,13 +21,19 @@ export CGO_ENABLED=1
 tags=()
 [[ ${NOWEBVIEW:-} == 1 ]] && tags=(-tags nowebview)
 ldflags="-s -w -X main.siteURL=${PIVOICE_URL:-}"
-# Link PortAudio and Opus statically when asked (CI), so all the binary
-# needs from the system is its webview and sound server.
+# Link PortAudio and Opus statically (CI): the libraries build/deps.sh made,
+# which are the only copies on that pkg-config path, so the linker can't
+# pick shared ones. What they need from the system goes in by hand.
 if [[ ${STATIC_AUDIO:-} == 1 ]]; then
-  export PKG_CONFIG="pkg-config --static"
+  [[ -d build/deps/lib/pkgconfig ]] || { echo "STATIC_AUDIO=1 needs build/deps.sh run first" >&2; exit 1; }
+  export PKG_CONFIG_PATH="$PWD/build/deps/lib/pkgconfig:$PKG_CONFIG_PATH"
+  case "$(go env GOOS)" in
+    linux) export CGO_LDFLAGS="${CGO_LDFLAGS:-} -lm" ;;
+    windows) export CGO_LDFLAGS="${CGO_LDFLAGS:-} -lwinmm -lole32 -luuid -lsetupapi" ;;
+  esac
 fi
 # No console window on Windows.
 [[ "$(go env GOOS)" == windows ]] && ldflags+=" -H windowsgui"
 
-go build -trimpath "${tags[@]}" -ldflags "$ldflags" -o "$out" .
+go build -trimpath ${tags[@]+"${tags[@]}"} -ldflags "$ldflags" -o "$out" .
 echo "built $out ($(du -h "$out" | cut -f1))"

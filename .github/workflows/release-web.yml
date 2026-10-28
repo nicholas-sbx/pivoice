@@ -1,4 +1,5 @@
-# Runs only when you release:
+# The site (everything but native/), released on its own; the app has
+# release-native.yml. Runs only when you release:
 # - bump the version on main (`npm version patch --no-git-tag-version`, then
 #   commit and push): if there's no vX.Y.Z tag for it yet, the tag job adds
 #   one and the release runs;
@@ -8,19 +9,20 @@
 # package.json without a new version stops at the tag job. So does any run
 # before the Cloudflare secrets are set, without tagging, so adding them and
 # pressing "Run workflow" (or the next push) releases that version.
-name: Release
+# Changes to native/ never start this.
+name: Release site
 
 on:
   push:
     tags: ['v*']
     branches: [main]
     # This file too, so a change here picks up a version still waiting for its tag.
-    paths: [package.json, .github/workflows/release.yml]
+    paths: [package.json, .github/workflows/release-web.yml]
   workflow_dispatch:
 
 # Never run two releases at once; a second one waits for the first.
 concurrency:
-  group: release
+  group: release-web
   cancel-in-progress: false
 
 # Only the tag job writes to the repo, and only to add the version tag.
@@ -113,8 +115,33 @@ jobs:
           VITE_TURN_USERNAME: ${{ vars.VITE_TURN_USERNAME || secrets.VITE_TURN_USERNAME }}
           VITE_TURN_CREDENTIAL: ${{ secrets.VITE_TURN_CREDENTIAL }}
 
+      # The build tells people on an older app to download native/VERSION's
+      # release, so make sure it's out first. When both were bumped in one push,
+      # release-native.yml is building it right now: wait for it (it tags first,
+      # then publishes). If there's no such tag at all, the app was never
+      # released at that version (its release isn't set up): carry on.
+      - name: Wait for the app release this site points to
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="native-v$(tr -d '[:space:]' < native/VERSION)"
+          for i in $(seq 1 120); do
+            if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              echo "$tag is out."
+              exit 0
+            fi
+            if [ "$i" -gt 6 ] && ! git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null; then
+              echo "::warning::There's no $tag (the app's never been released at native/VERSION), so the site can't point anyone to it. Deploying anyway."
+              exit 0
+            fi
+            echo "Waiting for $tag..."
+            sleep 30
+          done
+          echo "::error::$tag is tagged but its release never came out (did release-native.yml fail?). Fix that and run this again."
+          exit 1
+
       # Also creates or migrates the rooms' Durable Object class ([[migrations]] in wrangler.toml).
-      - name: Deploy app
+      - name: Deploy site
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
