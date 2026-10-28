@@ -13,7 +13,7 @@
  */
 /// <reference lib="webworker" />
 import { LOOP_ID, type LLConfig } from './config'
-import { Unwrapper, bytesToPcm, decodePacket, encodePacket, pcmToBytes, type Frame } from './packet'
+import { PING, PONG, Unwrapper, bytesToPcm, decodePacket, decodePing, encodePacket, encodePing, pcmToBytes, type Frame } from './packet'
 import { FrameRing, RING_MAX_FRAME, RING_SLOTS } from './ring'
 import type { CaptureFrame, PlaybackMessage } from './worklet'
 
@@ -43,6 +43,8 @@ export interface WorkerRemoteStats {
   codec: 'opus' | 'pcm' | null
   /** Their newest capture stamp: their sample clock and wall-clock ms. */
   stamp: { ts: number; ms: number } | null
+  /** Round trip over this channel, ms: the median of the last few pings. */
+  rttMs: number | null
 }
 
 export type FromWorker =
@@ -54,6 +56,14 @@ const SR = 48_000
 const STAMP_EVERY = 20
 /** Skip a packet rather than queue it behind this much unsent data: queued audio is late audio. */
 const MAX_BUFFERED_BYTES = 16 * 1024
+/**
+ * Ping everyone this often over their channel. That's how ping is measured
+ * for people on this engine: getStats() on the peer connection would do,
+ * but in Chrome it stalls the network thread the packets come in on, and
+ * the jitter buffer pays for that once a second.
+ */
+const PING_EVERY_MS = 1000
+const RTT_SAMPLES = 5
 
 interface Remote {
   port: MessagePort | null
@@ -66,6 +76,7 @@ interface Remote {
   bytesAt: number
   stamp: { ts: number; ms: number } | null
   codec: 'opus' | 'pcm' | null
+  rtts: number[]
 }
 
 let cfg: LLConfig
@@ -230,7 +241,7 @@ function send(buf: ArrayBuffer) {
 function remote(id: string): Remote {
   let r = remotes.get(id)
   if (!r) {
-    r = { port: null, ring: null, decoder: null, decoding: [], unwrap: new Unwrapper(), lastDecoded: -Infinity, bytes: 0, bytesAt: performance.now(), stamp: null, codec: null }
+    r = { port: null, ring: null, decoder: null, decoding: [], unwrap: new Unwrapper(), lastDecoded: -Infinity, bytes: 0, bytesAt: performance.now(), stamp: null, codec: null, rtts: [] }
     remotes.set(id, r)
   }
   return r
@@ -265,7 +276,48 @@ function deliver(r: Remote, ts: number, pcm: Float32Array<ArrayBuffer>) {
   } else r.port?.postMessage({ type: 'frame', ts, pcm } satisfies PlaybackMessage, [pcm.buffer])
 }
 
+/** One message to one person, on their channel or through the page. */
+function sendTo(id: string, buf: ArrayBuffer) {
+  const ch = channels.get(id)
+  if (ch === 'relayed') post({ type: 'send', to: [id], buf }, [buf])
+  else if (ch?.readyState === 'open') {
+    try {
+      ch.send(buf)
+    } catch {
+      /* closing */
+    }
+  }
+}
+
+function onPing(id: string, kind: number, sentMs: number) {
+  if (kind === PING) {
+    sendTo(id, encodePing(PONG, sentMs))
+    return
+  }
+  const rtt = performance.now() - sentMs
+  if (!(rtt >= 0 && rtt < 10_000)) return
+  const r = remote(id)
+  r.rtts.push(rtt)
+  if (r.rtts.length > RTT_SAMPLES) r.rtts.shift()
+}
+
+setInterval(() => {
+  const now = performance.now()
+  for (const id of channels.keys()) if (id !== LOOP_ID) sendTo(id, encodePing(PING, now))
+}, PING_EVERY_MS)
+
+function median(xs: number[]): number | null {
+  if (!xs.length) return null
+  const s = [...xs].sort((a, b) => a - b)
+  return s[Math.floor(s.length / 2)]
+}
+
 function receive(id: string, buf: ArrayBuffer) {
+  const ping = decodePing(buf)
+  if (ping) {
+    onPing(id, ping.kind, ping.sentMs)
+    return
+  }
   const pkt = decodePacket(buf)
   if (!pkt) return
   const r = remote(id)
@@ -398,7 +450,7 @@ self.onmessage = (e: MessageEvent<ToWorker>) => {
       const out: Record<string, WorkerRemoteStats> = {}
       for (const [id, r] of remotes) {
         const seconds = (now - r.bytesAt) / 1000
-        out[id] = { kbps: seconds > 0 ? (r.bytes * 8) / 1000 / seconds : null, stamp: r.stamp, codec: r.codec }
+        out[id] = { kbps: seconds > 0 ? (r.bytes * 8) / 1000 / seconds : null, stamp: r.stamp, codec: r.codec, rttMs: median(r.rtts) }
         r.bytes = 0
         r.bytesAt = now
       }

@@ -319,7 +319,7 @@ const count = computed(() => props.members.filter(m => !m.away).length || 1)
             v-if="showPing && !isSelf(id) && links[id]?.rttMs != null"
             class="ping"
             :class="pingLevel(links[id].rttMs!)"
-            :title="routeLabel(links[id])"
+            :title="links[id].route ? routeLabel(links[id]) : undefined"
           >
             {{ Math.round(links[id].rttMs!) }} ms
           </span>

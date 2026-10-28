@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { LL_DEFAULTS, frameSamples, sanitizeLL } from '../src/audio/ll/config'
 import { JitterBuffer, type JitterConfig } from '../src/audio/ll/jitter'
-import { Unwrapper, bytesToPcm, decodePacket, encodePacket, pcmToBytes } from '../src/audio/ll/packet'
+import { PING, PONG, Unwrapper, bytesToPcm, decodePacket, decodePing, encodePacket, encodePing, pcmToBytes } from '../src/audio/ll/packet'
 
 describe('packets', () => {
   it('round-trips frames and the capture stamp', () => {
@@ -16,6 +16,14 @@ describe('packets', () => {
       [16, [9]]
     ])
     expect(decodePacket(encodePacket(frames))!.captureMs).toBeNull()
+  })
+
+  it('tells pings from audio packets', () => {
+    expect(decodePing(encodePing(PING, 1234.5))).toEqual({ kind: PING, sentMs: 1234.5 })
+    expect(decodePing(encodePing(PONG, 7))!.kind).toBe(PONG)
+    // Neither side mistakes one for the other, and old clients drop pings as a bad version.
+    expect(decodePacket(encodePing(PING, 1))).toBeNull()
+    expect(decodePing(encodePacket([{ ts: 7, data: new Uint8Array(1) }]))).toBeNull()
   })
 
   it('flags raw PCM and round-trips its samples', () => {
@@ -49,6 +57,9 @@ describe('config', () => {
     expect(sanitizeLL(null)).toEqual(LL_DEFAULTS)
     // Settings saved before the current defaults reset to them, keeping only whether it's on.
     expect(sanitizeLL({ enabled: true, frameMs: 2.5, dtxThresholdDb: -55 })).toEqual({ ...LL_DEFAULTS, enabled: true })
+    // On by default since rev 3: an "off" saved before then was just the old default.
+    expect(sanitizeLL({ rev: 2, enabled: false }).enabled).toBe(true)
+    expect(sanitizeLL({ rev: LL_DEFAULTS.rev, enabled: false }).enabled).toBe(false)
     const c = sanitizeLL({ rev: LL_DEFAULTS.rev, frameMs: 2.5, bitrateKbps: 9999, minBufferMs: 50, maxBufferMs: 20, redundancy: 7, application: 'nope' })
     expect(c.frameMs).toBe(2.5)
     expect(c.bitrateKbps).toBe(256)

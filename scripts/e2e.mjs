@@ -237,9 +237,10 @@ try {
   await expectSeats(dan, 5, 'Dan after Finn left')
   ok('Finn left, five remain')
 
-  // The experimental low-latency engine, between the two people who turn it on.
+  // The low-latency engine is on by default, so everyone's on it; Eve turns it
+  // off, and only the pairs with her go back to WebRTC audio.
   const eve = extra[0]
-  const enableLL = async p => {
+  const toggleLL = async p => {
     await p.click('button[aria-label="Voice Settings"]')
     await p.click('button[role="tab"]:has-text("Low Latency")')
     await p.click('text=Low-Latency Engine (Experimental)')
@@ -251,36 +252,47 @@ try {
       (els, name) => els.find(e => e.querySelector('.name')?.textContent.trim() === name)?.querySelector('.route')?.innerText ?? '',
       name
     )
-  const webrtcCard = await cardFor(dan, 'Eve')
-  await enableLL(dan)
-  await enableLL(eve)
-  await dan.waitForFunction(
-    () => {
-      const seat = [...document.querySelectorAll('.seat')].find(e => e.querySelector('.name')?.textContent.trim() === 'Eve')
-      return /low-latency engine/i.test(seat?.querySelector('.route')?.textContent ?? '')
-    },
-    null,
-    { timeout: 20_000 }
-  ).catch(() => {
-    throw new Error('Dan and Eve both turned on the low-latency engine but it never took over')
+  const engineOf = (page, name, re) =>
+    page.waitForFunction(
+      ([name, src]) => {
+        const seat = [...document.querySelectorAll('.seat')].find(e => e.querySelector('.name')?.textContent.trim() === name)
+        return new RegExp(src, 'i').test(seat?.querySelector('.route')?.textContent ?? '')
+      },
+      [name, re.source],
+      { timeout: 20_000 }
+    )
+  await engineOf(dan, 'Eve', /low-latency engine/).catch(() => {
+    throw new Error('the low-latency engine should carry everyone by default')
   })
-  // Still hearing her, now over the new engine.
-  await extra[0].click('button[aria-label="Mute"]')
-  await extra[0].click('button[aria-label="Unmute"]')
+  await dan.waitForTimeout(3000)
+  const llCard = await cardFor(dan, 'Eve')
+  if (!/pcm/i.test(llCard)) throw new Error('the low-latency engine should send raw PCM by default: ' + llCard)
+  await toggleLL(eve)
+  await engineOf(dan, 'Eve', /webrtc audio/).catch(() => {
+    throw new Error('Eve turned the low-latency engine off but Dan still has her on it')
+  })
+  // Still hearing her, now over WebRTC audio.
+  await eve.click('button[aria-label="Mute"]')
+  await eve.click('button[aria-label="Unmute"]')
   await dan.waitForFunction(
     () => [...document.querySelectorAll('.seat.speaking')].some(e => e.querySelector('.name')?.textContent.trim() === 'Eve'),
     null,
     { timeout: 15_000 }
   ).catch(() => {
-    throw new Error('low-latency engine up, but Dan never heard Eve')
+    throw new Error('Eve back on WebRTC audio, but Dan never heard her')
   })
   await dan.waitForTimeout(4000)
   const one = s => s.replace(/\s*\n\s*/g, ' | ')
-  ok('Eve on WebRTC audio:     ' + one(webrtcCard))
-  ok('Eve on low-latency engine: ' + one(await cardFor(dan, 'Eve')))
-  // Everyone else stays on WebRTC audio, and still works.
-  if (!/webrtc audio/i.test(await cardFor(dan, 'Bob'))) throw new Error('Bob should still be on WebRTC audio')
-  ok('the others stay on WebRTC audio')
+  ok('Eve on low-latency engine: ' + one(llCard))
+  ok('Eve on WebRTC audio:       ' + one(await cardFor(dan, 'Eve')))
+  // Everyone else stays on the engine, and still works.
+  if (!/low-latency engine/i.test(await cardFor(dan, 'Bob'))) throw new Error('Bob should still be on the low-latency engine')
+  ok('the others stay on the low-latency engine')
+  await toggleLL(eve)
+  await engineOf(dan, 'Eve', /low-latency engine/).catch(() => {
+    throw new Error('Eve turned the low-latency engine back on but it never took over')
+  })
+  ok('Eve back on the low-latency engine')
   if (SHOTS) {
     await dan.mouse.move(5, 300)
     await dan.waitForTimeout(500)

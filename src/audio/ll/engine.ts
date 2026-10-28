@@ -35,6 +35,8 @@ export interface LLRemoteStats extends JitterStats {
   codec: 'opus' | 'pcm' | null
   /** One way, sender's capture to our speakers, ms. Needs their capture stamps. */
   measuredMs: number | null
+  /** Round trip over the engine's own channel, ms (pings from the worker). */
+  rttMs: number | null
 }
 
 export interface LLEngineEvents {
@@ -281,7 +283,13 @@ export class LowLatencyEngine {
     const r = this.remotes.get(id)
     if (!r?.stats) return null
     const sorted = [...r.measured].sort((a, b) => a - b)
-    return { ...r.stats, kbps: r.worker?.kbps ?? null, codec: r.worker?.codec ?? null, measuredMs: sorted.length ? sorted[Math.floor(sorted.length / 2)] : null }
+    return {
+      ...r.stats,
+      kbps: r.worker?.kbps ?? null,
+      codec: r.worker?.codec ?? null,
+      rttMs: r.worker?.rttMs ?? null,
+      measuredMs: sorted.length ? sorted[Math.floor(sorted.length / 2)] : null
+    }
   }
 
   close() {

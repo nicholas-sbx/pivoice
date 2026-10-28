@@ -12,9 +12,17 @@
  * Frames run oldest first; the last is the new one, the others are repeats
  * of the frames before it (redundancy), so a lost packet costs nothing as
  * long as the next one arrives.
+ *
+ * Pings share the channel, with a first byte no audio packet has (so a
+ * client that predates them just drops them):
+ *
+ *   u8  PING or PONG
+ *   f64 the pinger's clock when it sent the ping, ms (a pong echoes it)
  */
 
 export const PACKET_VERSION = 1
+export const PING = 0xf0
+export const PONG = 0xf1
 const FLAG_CAPTURE = 1
 const FLAG_PCM = 2
 
@@ -78,6 +86,23 @@ export function decodePacket(buf: ArrayBuffer): Packet | null {
     o += 6 + len
   }
   return { frames, captureMs, pcm: (flags & FLAG_PCM) !== 0 }
+}
+
+export function encodePing(kind: typeof PING | typeof PONG, sentMs: number): ArrayBuffer {
+  const buf = new ArrayBuffer(9)
+  const view = new DataView(buf)
+  view.setUint8(0, kind)
+  view.setFloat64(1, sentMs, true)
+  return buf
+}
+
+/** A ping or pong, or null for anything else. */
+export function decodePing(buf: ArrayBuffer): { kind: typeof PING | typeof PONG; sentMs: number } | null {
+  if (!(buf instanceof ArrayBuffer) || buf.byteLength !== 9) return null
+  const view = new DataView(buf)
+  const kind = view.getUint8(0)
+  if (kind !== PING && kind !== PONG) return null
+  return { kind, sentMs: view.getFloat64(1, true) }
 }
 
 /** Float samples → 16-bit little-endian PCM bytes. */

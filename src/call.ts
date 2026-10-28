@@ -340,7 +340,16 @@ function startStatsPoll() {
     busy = true
     try {
       ll?.refresh()
-      const [reports, llReports] = await Promise.all([s.getStats(), s.getLLStats()])
+      // getStats() stalls Chrome's network thread, which is where the
+      // low-latency engine's packets come in, and its jitter buffer grows
+      // to cover the hiccup. So people on that engine get their ping from
+      // its own pings, and the full stats are only read for the route card.
+      const full = call.prefs.showRoute
+      const onLL = (id: string) => !!ll && s.isLL(id)
+      const [reports, llReports] = await Promise.all([
+        s.getStats(id => full || !onLL(id)),
+        full ? s.getLLStats() : Promise.resolve(new Map<string, RTCStatsReport>())
+      ])
       if (session !== s) return
       const next: Record<string, LinkStats> = {}
       const captureMs = engine?.captureLatencyMs() ?? null
@@ -350,11 +359,15 @@ function startStatsPoll() {
         stats.measuredMs = measureWebRTC(s, id, stats.playoutMs)
         next[id] = stats
       }
-      for (const [id, report] of llReports) {
-        const llStats = ll?.stats(id)
+      for (const m of call.members) {
+        const id = m.id
+        const llStats = onLL(id) ? ll?.stats(id) : null
         if (!llStats) continue
-        // Route and ping from the low-latency connection; everything else from the engine.
-        const { stats } = summarise(report.values() as Iterable<Record<string, unknown>>, null, { captureMs })
+        // Route from the low-latency connection (route card only), ping from the engine's pings if
+        // that's all we have; everything else from the engine.
+        const report = llReports.get(id)
+        const { stats } = summarise((report?.values() ?? []) as Iterable<Record<string, unknown>>, null, { captureMs })
+        stats.rttMs ??= llStats.rttMs
         const cfg = call.prefs.ll
         const outMs = engine ? (engine.ctx.baseLatency + (engine.ctx.outputLatency || 0)) * 1000 : null
         const codecMs = sendDelayMs({ ...cfg, codec: llStats.codec ?? cfg.codec }) // their frame size isn't sent; ours is the best guess
