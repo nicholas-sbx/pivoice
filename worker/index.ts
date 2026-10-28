@@ -4,9 +4,11 @@ import type { Env } from './env'
 /**
  * pivoice: the app's Worker.
  *
- * It serves the static build in dist/, adding the two headers that make the
- * page cross-origin isolated (which the low-latency engine needs for its
- * shared memory between audio thread and worker), and a small API:
+ * The static build in dist/ is served by Workers static assets without
+ * running this code (wrangler.toml's run_worker_first), with the two headers
+ * that make the page cross-origin isolated coming from public/_headers (the
+ * low-latency engine needs them for shared memory between audio thread and
+ * worker). This Worker is just a small API:
  *
  *   POST /api/rooms           →  { code }   a new room, its code held for a minute
  *   GET  /api/rooms/CODE/ws   →  WebSocket  into that room (a Durable Object, see room.ts)
@@ -34,24 +36,8 @@ export default {
     const ws = ROOM_WS.exec(url.pathname)
     if (ws) return joinRoom(request, env, url, ws[1])
     if (url.pathname.startsWith('/api/')) return json({ error: 'Not found' }, 404)
-    return isolate(await env.ASSETS.fetch(request))
+    return env.ASSETS.fetch(request)
   }
-}
-
-/**
- * Cross-origin isolation: SharedArrayBuffer only exists in pages served
- * with these. Everything the app loads is its own origin; the rooms and
- * the calls are WebSocket and WebRTC, which these don't affect.
- */
-export const ISOLATION_HEADERS = {
-  'Cross-Origin-Opener-Policy': 'same-origin',
-  'Cross-Origin-Embedder-Policy': 'require-corp'
-} as const
-
-function isolate(res: Response): Response {
-  const out = new Response(res.body, res)
-  for (const [k, v] of Object.entries(ISOLATION_HEADERS)) out.headers.set(k, v)
-  return out
 }
 
 async function ice(request: Request, env: Env, url: URL): Promise<Response> {
