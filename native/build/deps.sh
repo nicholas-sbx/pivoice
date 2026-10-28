@@ -38,7 +38,8 @@ git -c advice.detachedHead=false clone -q --depth 1 --branch "$PA_TAG" https://g
 got=$(git -C "$src/portaudio" rev-parse HEAD)
 [[ $got == "$PA_COMMIT" ]] || { echo "portaudio $PA_TAG is $got, expected $PA_COMMIT" >&2; exit 1; }
 # Static, and only the host APIs the app uses: ALSA (loaded at run time), CoreAudio, WASAPI/WDM-KS/MME.
-cmake -S "$src/portaudio" -B "$src/portaudio-build" "${common[@]}" \
+# 19.7.0 asks for an older CMake than CMake 4 still speaks to; it builds fine on the newer rules.
+cmake -S "$src/portaudio" -B "$src/portaudio-build" "${common[@]}" -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
   -DPA_BUILD_SHARED=OFF -DPA_BUILD_STATIC=ON -DPA_LIBNAME_ADD_SUFFIX=OFF \
   -DPA_USE_JACK=OFF -DPA_ALSA_DYNAMIC=ON -DPA_USE_ASIO=OFF -DPA_USE_DS=OFF
 cmake --build "$src/portaudio-build" --config Release --parallel
