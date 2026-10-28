@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { MIN_TILE_H, TILE_GAP, layoutTiles } from '../src/lib/tiles'
+import { MIN_TILE_H, TILE_GAP, layoutTiles, tileSpacing } from '../src/lib/tiles'
 
 // A phone in portrait: what's left of the screen under the top bar and above the call controls.
 const PHONE = { w: 344, h: 560 }
@@ -39,6 +39,18 @@ describe('tiles', () => {
     const t = layoutTiles(4, 700, 260)
     expect(t.cols).toBeGreaterThan(1)
     expect(t.scroll).toBe(false)
+  })
+
+  it('leaves more room at the edges for a few people than for a full call', () => {
+    let last = Infinity
+    for (let n = 1; n <= 12; n++) {
+      const { edge, gap } = tileSpacing(n)
+      expect(edge).toBeLessThanOrEqual(last)
+      expect(gap).toBeLessThanOrEqual(edge)
+      last = edge
+    }
+    expect(tileSpacing(1).edge).toBeGreaterThanOrEqual(20)
+    expect(tileSpacing(12).edge).toBeGreaterThanOrEqual(8)
   })
 
   it('keeps the avatar inside the tile', () => {

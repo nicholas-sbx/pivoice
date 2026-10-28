@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
-import { layoutTiles, TILE_GAP } from '../lib/tiles'
+import { layoutTiles, tileSpacing } from '../lib/tiles'
 import { touchFirst } from '../lib/viewport'
 import type { Member } from '../net/protocol'
 import { pingLevel, routeLabel, type LinkStats } from '../net/stats'
@@ -38,8 +38,9 @@ const people = computed(() => {
   return self ? [self, ...others] : others
 })
 
+const spacing = computed(() => tileSpacing(people.value.length))
 const layout = computed(() => {
-  const t = layoutTiles(people.value.length, size.w, size.h)
+  const t = layoutTiles(people.value.length, size.w, size.h, spacing.value.gap)
   // The route line under the name needs room too, so the face gives way.
   return props.showRoute && !t.row ? { ...t, avatar: 2 * Math.round(Math.max(32, Math.min(t.avatar, t.h - 78)) / 2) } : t
 })
@@ -88,7 +89,7 @@ function mouthToEar(s: LinkStats): string {
 </script>
 
 <template>
-  <div ref="root" class="grid" :class="{ scroll: layout.scroll, route: showRoute }" :style="{ '--gap': TILE_GAP + 'px' }">
+  <div ref="root" class="grid" :class="{ scroll: layout.scroll, route: showRoute }" :style="{ '--gap': spacing.gap + 'px', '--edge': spacing.edge + 'px' }">
     <div
       v-for="m in people"
       :key="m.id"
@@ -129,7 +130,9 @@ function mouthToEar(s: LinkStats): string {
   position: absolute;
   inset: 0;
   /* Clear of the call controls (and a phone's home bar) at the bottom. */
-  padding: 12px 8px calc(100px + env(safe-area-inset-bottom));
+  /* The edge room shrinks as people join (lib/tiles); the content box it leaves is what the tiles are sized to. */
+  padding: var(--edge) calc(var(--edge) + env(safe-area-inset-right)) calc(100px + env(safe-area-inset-bottom))
+    calc(var(--edge) + env(safe-area-inset-left));
   display: flex;
   flex-wrap: wrap;
   justify-content: center;

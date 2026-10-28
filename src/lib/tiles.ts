@@ -24,6 +24,19 @@ export interface TileLayout {
 }
 
 export const TILE_GAP = 8
+
+/**
+ * Room around the tiles: generous with a few people, so nothing sits hard
+ * against the screen's edge, and tightening as the call fills up, when
+ * every pixel goes to the tiles. Edge is each side (and the top); gap is
+ * between tiles.
+ */
+export function tileSpacing(n: number): { edge: number; gap: number } {
+  if (n <= 2) return { edge: 24, gap: 16 }
+  if (n <= 4) return { edge: 20, gap: 14 }
+  if (n <= 8) return { edge: 16, gap: 12 }
+  return { edge: 12, gap: TILE_GAP }
+}
 /** A list row: an avatar, a name and its icons, comfortably tappable. */
 export const MIN_TILE_H = 60
 /** Narrower than this and names get cut to nothing. */
