@@ -62,9 +62,10 @@ with the code filled in, dotted out, and taken out of the address bar.
 evenly around it. It's half size for one to three people and grows to full
 size by eight, easing outward as people sit down. Everyone's face is a [blobatar](https://blobatar.dev) made
 from their name, so the same name is the same creature on everyone's screen.
-Faces idle (breathe, blink), smile while they talk, doze off while deafened,
-look puzzled while reconnecting, and turn their eyes toward whoever is
-talking. A green ring shows who's talking, and mute and deafen show next to
+Faces smile while they talk, doze off while deafened and look puzzled while
+reconnecting. They're still pictures, not animations: animated blobatars
+restyle every face every frame on the main thread, which took a whole core
+with six at the table and showed up as wandering latency. A green ring shows who's talking, and mute and deafen show next to
 their names, along with your ping to each of them (green under 80 ms, yellow
 under 160, red above). Right-click someone for **User Volume** and **Mute**
 (for you only).
@@ -243,7 +244,7 @@ mic → pv-capture AudioWorklet: frames of 2.5–20 ms on the audio clock (one 2
   `Cross-Origin-Embedder-Policy: require-corp` on everything (so does the
   Vite dev server). Without isolation the engine falls back to MessagePorts;
   the tab says which it's using.
-- **Raw PCM, for local networks.** No encoder and no lookahead: each 128-sample
+- **Raw PCM by default, for local networks.** No encoder and no lookahead: each 128-sample
   block (2.7 ms) goes out as 16-bit PCM the moment the audio thread has it.
   The fixed delay drops to one block, at about 1.3 Mbit/s per listener (more
   with redundancy). Opus at 2.5 ms still costs a frame plus 2.5 ms of
@@ -291,9 +292,9 @@ And with two people, which is the path most calls take:
 | | Mouth to ear (measured) |
 | --- | --- |
 | Raw mic to speakers (the floor) | ≈ 11 ms |
-| Opus, 5 ms frames (defaults) | 24 ms |
+| Opus, 5 ms frames | 24 ms |
 | Opus, 2.5 ms frames, margin 0 | 18 ms |
-| Raw PCM, margin 3 ms | 19 ms |
+| Raw PCM, margin 3 ms (defaults) | 19 ms |
 | Raw PCM, margin 0 | 16–17 ms |
 | Raw PCM, margin 0, no shared memory | 18 ms |
 
@@ -310,7 +311,7 @@ starts, so changing it reconnects you on the spot:
 | Setting | Default | What it does |
 | --- | --- | --- |
 | Audio output buffer | Smallest | Web Audio's buffer to the speakers, for both engines: Smallest (Chrome: 128 frames, 2.7 ms), Small (~5 ms where the device offers it), or Browser default (~10 ms). The tab shows what you actually got. Bigger if it crackles. |
-| Codec | Opus | Opus, or Raw PCM (no encoder delay, ~1.3 Mbit/s per listener: LAN only). The Opus rows below only apply to Opus. |
+| Codec | Raw PCM | Raw PCM (no encoder delay, ~1.3 Mbit/s per listener: LAN only), or Opus for a fraction of the bandwidth. The Opus rows below only apply to Opus. |
 | Frame size | 5 ms | 2.5 / 5 / 10 / 20 ms. Each step down halves the frame delay and doubles the packets. |
 | Opus mode | Low delay | Low delay (CELT, 2.5 ms lookahead), VoIP or Audio (6.5 ms). |
 | Bitrate | 64 kbps | 12–256 kbps. |

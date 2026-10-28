@@ -114,8 +114,6 @@ function setSeatEl(id: string) {
 
 let raf = 0
 let last = 0
-/** Bumped whenever the seats come to rest. */
-const settledTick = ref(0)
 
 function kick() {
   if (raf) return
@@ -143,7 +141,6 @@ function frame(now: number) {
   }
   paint()
   raf = moving ? requestAnimationFrame(frame) : 0
-  if (!moving) settledTick.value++
 }
 
 function paintSeat(id: string) {
@@ -251,14 +248,6 @@ function moodOf(id: string): 'idle' | 'talking' | 'deafened' | 'away' {
   return speakingOf(id) ? 'talking' : 'idle'
 }
 
-/** Everyone looks at whoever's talking (the talker looks at whoever else is). */
-function lookFor(id: string): Element | null {
-  for (const other of props.speaking) {
-    if (other !== id && speakingOf(other)) return seatEls.get(other) ?? null
-  }
-  return null
-}
-
 function n0(ms: number | null): string {
   return ms == null ? '?' : String(Math.round(ms))
 }
@@ -317,8 +306,6 @@ const count = computed(() => props.members.filter(m => !m.away).length || 1)
           :name="member(id)?.name ?? ''"
           :size="geometry.avatar"
           :mood="moodOf(id)"
-          :look="lookFor(id)"
-          :layout="settledTick"
         />
       </div>
       <div class="under">
