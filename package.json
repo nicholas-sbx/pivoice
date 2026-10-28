@@ -1,7 +1,7 @@
 {
   "name": "pivoice",
   "private": true,
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Voice rooms around a round table. Make a room, share the code, talk. Peer-to-peer voice, with rooms on Cloudflare Durable Objects.",
   "type": "module",
   "scripts": {
