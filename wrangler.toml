@@ -1,4 +1,4 @@
-# The app: a Worker that serves the static build in dist/, runs the rooms
+# The app: static build in dist/ plus a Worker that runs the rooms
 # (one Durable Object each) and mints TURN credentials at /api/ice.
 # Deployed by .github/workflows/release.yml.
 name = "voice"
@@ -8,9 +8,10 @@ compatibility_date = "2026-09-01"
 [assets]
 directory = "./dist"
 binding = "ASSETS"
-# Everything goes through the Worker so it can add the cross-origin
-# isolation headers (see worker/index.ts); it hands static files straight on.
-run_worker_first = true
+# Only the API runs the Worker. Static files are served straight from the
+# assets, which Cloudflare doesn't count against the Worker request limits; the
+# cross-origin isolation headers for them come from public/_headers.
+run_worker_first = ["/api/*"]
 
 # The rooms. SQLite-backed, which is what the Workers Free plan allows.
 [[durable_objects.bindings]]

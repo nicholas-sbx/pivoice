@@ -1,0 +1,6 @@
+# Served by Workers static assets without invoking the Worker (see
+# run_worker_first in wrangler.toml). Cross-origin isolation is what gives the
+# low-latency engine SharedArrayBuffer.
+/*
+  Cross-Origin-Opener-Policy: same-origin
+  Cross-Origin-Embedder-Policy: require-corp
