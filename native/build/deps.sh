@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Builds PortAudio and Opus as static libraries into build/deps, so the app
+# Builds PortAudio and Opus as static libraries into build/deps (or DEPS_DIR), so the app
 # needs nothing from the system but its webview and its sound server (on
 # Linux even ALSA is only looked for when the app starts: PA_ALSA_DYNAMIC).
 # Then build with STATIC_AUDIO=1 ./build.sh. CI does both.
 #
 # Needs cmake, a C compiler, curl and git. CMAKE_ARGS adds to every cmake
-# configure (CI: universal macOS libraries).
+# configure (CI: one macOS architecture at a time, each into its own DEPS_DIR).
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -14,8 +14,8 @@ OPUS_SHA256=65c1d2f78b9f2fb20082c38cbe47c951ad5839345876e46941612ee87f9a7ce1
 PA_TAG=v19.7.0
 PA_COMMIT=147dd722548358763a8b649b3e4b41dfffbcfbb6
 
-prefix=$PWD/deps
-src=$PWD/deps-src
+prefix=${DEPS_DIR:-$PWD/deps}
+src=$prefix-src
 rm -rf "$prefix" "$src"
 mkdir -p "$src"
 # shellcheck disable=SC2206
