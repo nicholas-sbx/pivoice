@@ -14,6 +14,7 @@ import (
 The audio thread: one duplex callback per block, mic in and speakers out.
 
 	mic block ──copy──▶ capture channel ──▶ sender goroutine (send.go)
+	  (with what played, for echo cancellation, only when that's on)
 	each person: inbox ──▶ jitter buffer ──▶ volume, pan ──▶ speakers
 
 Decoded frames reach each person's jitter buffer through a buffered
@@ -57,9 +58,11 @@ type source struct {
 	lastDecoded int64
 	dec         *opus.Decoder
 	stamp       atomic.Pointer[stamp]
-	pcm         atomic.Bool
-	gotCodec    atomic.Bool
-	bytes       atomic.Int64
+	// Frames thrown away because the audio thread hadn't taken the last 64 yet.
+	dropped  atomic.Int64
+	pcm      atomic.Bool
+	gotCodec atomic.Bool
+	bytes    atomic.Int64
 }
 
 type sourceStats struct {
@@ -76,6 +79,7 @@ func (s *source) deliver(ts float64, pcm []float32) {
 	select {
 	case s.inbox <- frame{ts, pcm}:
 	default:
+		s.dropped.Add(1)
 	}
 }
 
@@ -89,6 +93,12 @@ type remote struct {
 	// float32 bits: volume (0 while silenced), and left/right gains from where they sit.
 	gain       atomic.Uint32
 	panL, panR atomic.Uint32
+	// Interaural delay, samples, float32 bits: > 0 delays the right ear, < 0 the left.
+	itd atomic.Uint32
+	// Audio thread only: the last samples heard, for the far ear's delay, and the delay it's gliding from.
+	hist    [itdHistory]float32
+	histPos int
+	itdNow  float32
 	// Loudest block (RMS) since the levels were last read, float32 bits.
 	level atomic.Uint32
 }
@@ -114,10 +124,50 @@ func raiseLevel(a *atomic.Uint32, v float32) {
 	}
 }
 
+// Room for the longest interaural delay (32 samples) and then some.
+const itdHistory = 64
+
+// mixITD mixes one person in with the far ear delayed: a fractional
+// delay read from a short history of what they just said, gliding to the
+// new delay over the block when their seat moves, so it never clicks.
+func (r *remote) mixITD(mix, out []float32, l, rr, target float32) {
+	from := r.itdNow
+	n := float32(len(mix))
+	for i, v := range mix {
+		r.hist[r.histPos] = v
+		d := from + (target-from)*float32(i+1)/n
+		late := r.delayed(d)
+		if d > 0 {
+			out[2*i] += v * l
+			out[2*i+1] += late * rr
+		} else {
+			out[2*i] += late * l
+			out[2*i+1] += v * rr
+		}
+		r.histPos = (r.histPos + 1) % itdHistory
+	}
+	r.itdNow = target
+}
+
+// delayed is the sample d (fractional, either sign) before the newest one in the history.
+func (r *remote) delayed(d float32) float32 {
+	if d < 0 {
+		d = -d
+	}
+	d = min(d, itdHistory-2)
+	k := int(d)
+	frac := d - float32(k)
+	a := r.hist[(r.histPos-k+itdHistory)%itdHistory]
+	b := r.hist[(r.histPos-k-1+itdHistory)%itdHistory]
+	return a + (b-a)*frac
+}
+
 type capBlock struct {
 	ts   int64
 	inMs float64
 	pcm  []float32
+	// What played over the same block, mono (only for echo cancellation).
+	ref []float32
 }
 
 type jitterCfg struct {
@@ -149,20 +199,17 @@ func (m *mixer) process(in, out []float32, t audio.Times) {
 	n := len(in)
 	clock := float64(m.clock)
 
-	// The mic: its level always (the meter, the gate's threshold), the samples to the sender when it wants them.
-	raiseLevel(&e.selfLevel, rms(in))
-	if e.capturing.Load() {
-		// A buffer the sender has handed back (or a block dropped, if it's that far behind).
-		select {
-		case buf := <-e.capFree:
-			if cap(buf) < n {
-				buf = make([]float32, n)
-			}
-			buf = buf[:n]
-			copy(buf, in)
-			e.capture <- capBlock{ts: m.clock, inMs: t.InputMs, pcm: buf}
-		default:
-		}
+	// The mic: its level (the meter, the gate's threshold; the sender
+	// measures it after processing instead, when there is any), and the
+	// samples to the sender when it wants them: straight away, unless echo
+	// cancellation wants what this block plays alongside.
+	if e.processing.Load() == nil {
+		raiseLevel(&e.selfLevel, rms(in))
+	}
+	echoRef := e.echoRef.Load()
+	capturing := e.capturing.Load()
+	if capturing && !echoRef {
+		m.handoff(in, nil, t)
 	}
 
 	clear(out)
@@ -194,10 +241,17 @@ func (m *mixer) process(in, out []float32, t audio.Times) {
 		if g == 0 {
 			continue
 		}
+		if itd := loadF(&r.itd); itd != 0 || r.itdNow != 0 {
+			r.mixITD(mix, out, l, rr, itd)
+			continue
+		}
 		for i, v := range mix {
 			out[2*i] += v * l
 			out[2*i+1] += v * rr
 		}
+	}
+	if capturing && echoRef {
+		m.handoff(in, out, t)
 	}
 	if e.rawLoop.Load() {
 		for i, v := range in {
@@ -206,6 +260,34 @@ func (m *mixer) process(in, out []float32, t audio.Times) {
 		}
 	}
 	m.clock += int64(n)
+}
+
+// handoff a mic block to the sender in a buffer it handed back (and with
+// it, mixed to mono, what's playing: out, if it's wanted), or count it lost
+// if the sender's that far behind.
+func (m *mixer) handoff(in, out []float32, t audio.Times) {
+	n := len(in)
+	select {
+	case buf := <-m.e.capFree:
+		need := n
+		if out != nil {
+			need = 2 * n
+		}
+		if cap(buf) < need {
+			buf = make([]float32, need)
+		}
+		b := capBlock{ts: m.clock, inMs: t.InputMs, pcm: buf[:n]}
+		copy(b.pcm, in)
+		if out != nil {
+			b.ref = buf[n:need]
+			for i := range b.ref {
+				b.ref[i] = 0.5 * (out[2*i] + out[2*i+1])
+			}
+		}
+		m.e.capture <- b
+	default:
+		m.e.capDropped.Add(1)
+	}
 }
 
 // pull one block of this source into mix (added).

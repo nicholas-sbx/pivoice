@@ -14,13 +14,20 @@ import {
 import ControlButton from '../components/ControlButton.vue'
 import DisplayPanel from '../components/DisplayPanel.vue'
 import Icon from '../components/Icon.vue'
+import PeopleGrid from '../components/PeopleGrid.vue'
 import RoundTable from '../components/RoundTable.vue'
 import SettingsPanel from '../components/SettingsPanel.vue'
 import UserMenu from '../components/UserMenu.vue'
+import { isNative } from '../native/bridge'
+import { useCompact } from '../lib/viewport'
 
 const settingsOpen = ref(false)
 const displayOpen = ref(false)
 const menu = ref<{ id: string; x: number; y: number } | null>(null)
+
+// On a phone, the table only while seats mean something (spatial audio); otherwise a list of tiles.
+const compact = useCompact()
+const asList = computed(() => compact.value && call.prefs.spatial === 'off')
 
 const selfMuted = computed(() => call.muted || call.deafened || !!call.micProblem)
 const present = computed(() => call.members.filter(m => !m.away).length || 1)
@@ -28,7 +35,7 @@ const spatialLabel = computed(() =>
   call.prefs.spatial === 'off'
     ? 'Spatial Audio: Off'
     : call.prefs.spatial === 'hrtf'
-      ? 'Spatial Audio: HRTF'
+      ? `Spatial Audio: ${isNative ? 'Stereo + ITD' : 'HRTF'}`
       : 'Spatial Audio: Stereo'
 )
 const isMac = /Mac|iPhone|iPad/.test(navigator.platform)
@@ -78,9 +85,9 @@ onBeforeUnmount(() => removeEventListener('keydown', onKey))
           </button>
         </div>
         <div class="divider" />
-        <div class="status" :class="call.status">
+        <div class="status" :class="call.status" :title="call.status === 'connected' ? 'Voice Connected' : 'Reconnecting…'">
           <Icon name="signal" :size="16" />
-          <span>{{ call.status === 'connected' ? 'Voice Connected' : 'Reconnecting…' }}</span>
+          <span class="status-text">{{ call.status === 'connected' ? 'Voice Connected' : 'Reconnecting…' }}</span>
         </div>
       </div>
       <div class="right">
@@ -102,15 +109,29 @@ onBeforeUnmount(() => removeEventListener('keydown', onKey))
           </button>
           <DisplayPanel v-if="displayOpen" @close="displayOpen = false" />
         </div>
-        <button type="button" class="invite" @click="copyInvite">
+        <button type="button" class="invite" title="Copy invite link" @click="copyInvite">
           <Icon name="link" :size="18" />
-          Copy Invite
+          <span class="invite-text">Copy Invite</span>
         </button>
       </div>
     </header>
 
     <main class="stage">
+      <PeopleGrid
+        v-if="asList"
+        :members="call.members"
+        :self-id="call.selfId"
+        :speaking="call.speaking"
+        :self-muted="selfMuted"
+        :self-deafened="call.deafened"
+        :silenced="call.silenced"
+        :links="call.links"
+        :show-ping="call.prefs.showPing"
+        :show-route="call.prefs.showRoute"
+        @menu="(id, x, y) => (menu = { id, x, y })"
+      />
       <RoundTable
+        v-else
         :members="call.members"
         :self-id="call.selfId"
         :speaking="call.speaking"
@@ -169,8 +190,9 @@ onBeforeUnmount(() => removeEventListener('keydown', onKey))
 }
 .bar {
   flex: none;
-  height: 48px;
-  padding: 0 8px 0 16px;
+  height: calc(52px + env(safe-area-inset-top));
+  padding: env(safe-area-inset-top) calc(12px + env(safe-area-inset-right)) 0 calc(20px + env(safe-area-inset-left));
+  gap: 16px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -183,8 +205,12 @@ onBeforeUnmount(() => removeEventListener('keydown', onKey))
 .right {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 12px;
   min-width: 0;
+}
+.right {
+  flex: none;
+  gap: 10px;
 }
 .muted-icon {
   color: var(--text-muted);
@@ -198,6 +224,7 @@ h1 {
   white-space: nowrap;
 }
 .code {
+  flex: none;
   display: inline-flex;
   align-items: center;
   gap: 2px;
@@ -235,18 +262,24 @@ h1 {
   color: var(--interactive-hover);
 }
 .divider {
+  flex: none;
   width: 1px;
   height: 24px;
-  margin: 0 8px;
+  margin: 0 4px;
   background: var(--bg-accent);
 }
 .status {
+  min-width: 0;
   display: inline-flex;
   align-items: center;
   gap: 6px;
   font-size: 14px;
   font-weight: 600;
   white-space: nowrap;
+}
+.status-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .status.connected {
   color: var(--green);
@@ -286,9 +319,10 @@ h1 {
 .invite {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  height: 32px;
-  padding: 0 14px;
+  gap: 8px;
+  height: 34px;
+  padding: 0 16px;
+  white-space: nowrap;
   border: 0;
   border-radius: 3px;
   background: var(--brand);
@@ -300,6 +334,33 @@ h1 {
 }
 .invite:hover {
   background: var(--brand-hover);
+}
+/* Narrower windows: the words go before anything gets squeezed, icons and the code stay. */
+@media (max-width: 760px) {
+  .bar h1,
+  .bar .muted-icon {
+    display: none;
+  }
+  .bar {
+    padding-left: calc(12px + env(safe-area-inset-left));
+  }
+}
+@media (max-width: 600px) {
+  .status-text,
+  .invite-text {
+    display: none;
+  }
+  .invite {
+    width: 34px;
+    padding: 0;
+    justify-content: center;
+  }
+}
+@media (max-width: 380px) {
+  .people,
+  .divider {
+    display: none;
+  }
 }
 
 .stage {
@@ -315,7 +376,7 @@ h1 {
   right: 0;
   margin: 0 auto;
   width: max-content;
-  bottom: 24px;
+  bottom: calc(24px + env(safe-area-inset-bottom));
   display: flex;
   align-items: center;
   gap: 8px;
@@ -327,6 +388,12 @@ h1 {
 }
 .settings-anchor {
   position: relative;
+}
+@media (max-width: 380px) {
+  .pill {
+    gap: 6px;
+    padding: 6px;
+  }
 }
 .sep {
   width: 1px;

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/nicholas-sbx/pivoice/native/internal/audio"
+	"github.com/nicholas-sbx/pivoice/native/internal/dsp"
 	"github.com/nicholas-sbx/pivoice/native/internal/ll"
 	"github.com/nicholas-sbx/pivoice/native/internal/opus"
 	"github.com/nicholas-sbx/pivoice/native/internal/proto"
@@ -63,6 +64,11 @@ type sender struct {
 	vframe []float32
 	vfill  int
 	venc   *opus.Encoder
+
+	// The mic's processing, while any of it is on, and what it was last
+	// made for (so one that wouldn't start isn't retried every block).
+	chain    *dsp.Chain
+	chainFor dsp.Settings
 }
 
 func frameLen(c proto.LLConfig) int {
@@ -78,14 +84,67 @@ func (s *sender) run() {
 			s.configure(*c)
 		}
 		t := s.e.targets.Load()
+		pcm := b.pcm
+		if p := s.e.processing.Load(); p != nil || s.chain != nil {
+			b = s.process(b, p)
+		}
 		s.feedLL(b, t)
 		s.feedVoice(b, t)
-		s.e.capFree <- b.pcm
+		s.e.capFree <- pcm
 	}
 	s.closeEncoder()
 	if s.venc != nil {
 		s.venc.Close()
 	}
+	s.setChain(nil)
+}
+
+// process the mic block through the chain, made (or remade) to the
+// settings first. What comes out is stamped with the input samples it
+// came from, so the capture stamps (mouth to ear) count the processing too.
+func (s *sender) process(b capBlock, p *dsp.Settings) capBlock {
+	switch {
+	case p == nil:
+		s.setChain(nil)
+		return b
+	case s.chain == nil:
+		if *p != s.chainFor {
+			s.setChain(p)
+		}
+	default:
+		if !s.chain.Settings().SameStages(*p) {
+			s.setChain(p)
+		} else {
+			s.chain.Retune(*p)
+		}
+	}
+	if s.chain == nil {
+		// It wouldn't start: the mic goes out as it is, and the meter (left to us while processing's on) still moves.
+		raiseLevel(&s.e.selfLevel, rms(b.pcm))
+		return b
+	}
+	out := s.chain.Process(b.pcm, b.ref)
+	raiseLevel(&s.e.selfLevel, rms(out))
+	back := int64(s.chain.Delay() + len(out) - len(b.pcm))
+	return capBlock{ts: b.ts - back, inMs: b.inMs - float64(back)*1000/audio.SampleRate, pcm: out}
+}
+
+func (s *sender) setChain(p *dsp.Settings) {
+	if s.chain != nil {
+		s.chain.Close()
+		s.chain = nil
+	}
+	s.chainFor = dsp.Settings{}
+	if p == nil {
+		return
+	}
+	s.chainFor = *p
+	c, err := dsp.NewChain(*p)
+	if err != nil {
+		log.Printf("processing: %v", err)
+		return
+	}
+	s.chain = c
 }
 
 func (s *sender) configure(c proto.LLConfig) {

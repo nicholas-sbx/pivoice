@@ -35,6 +35,12 @@ type Info struct {
 	OutputLatencyMs float64 `json:"outputLatencyMs"`
 	// The block size the callback has been getting, samples.
 	Block int `json:"block"`
+	// How the host API is driving it, where that varies (WASAPI: "exclusive", "shared, raw", "shared").
+	Mode string `json:"mode,omitempty"`
+	// Glitches since the stream opened: the mic's buffer overflowing (samples lost
+	// before we saw them), and the speakers running dry (we were late with a block).
+	InputOverflows   int64 `json:"inputOverflows"`
+	OutputUnderflows int64 `json:"outputUnderflows"`
 }
 
 type DeviceDesc struct {

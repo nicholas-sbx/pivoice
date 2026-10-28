@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/nicholas-sbx/pivoice/native/internal/audio"
+	"github.com/nicholas-sbx/pivoice/native/internal/dsp"
 	"github.com/nicholas-sbx/pivoice/native/internal/ll"
 	"github.com/nicholas-sbx/pivoice/native/internal/proto"
 )
@@ -66,9 +67,17 @@ type Engine struct {
 	llConfig  atomic.Pointer[proto.LLConfig]
 	targets   atomic.Pointer[targets]
 	selfLevel atomic.Uint32
-	capture   chan capBlock
-	capFree   chan []float32
-	mixer     *mixer
+	// The mic's processing: nil while it's all off, and then the sender
+	// doesn't so much as look at it. echoRef: the audio thread hands the
+	// sender what played too (echo cancellation's reference).
+	processing atomic.Pointer[dsp.Settings]
+	echoRef    atomic.Bool
+	// Mic blocks the sender wasn't ready for (since the sound card opened).
+	capDropped atomic.Int64
+	gcPauses   gcPauses
+	capture    chan capBlock
+	capFree    chan []float32
+	mixer      *mixer
 }
 
 func New(opts Options) *Engine {
@@ -203,11 +212,15 @@ func (e *Engine) setLL(c proto.LLConfig) {
 
 func (e *Engine) configure(c proto.Config) {
 	e.setLL(c.LL)
+	e.setProcessing(c.Processing)
 	// Applies to links made from now on: it's in the SDP (the page reconnects you when it changes).
 	e.dtx.Store(c.DTX)
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	devicesChanged := c.InputID != e.cfg.InputID || c.OutputID != e.cfg.OutputID
+	if x, ok := e.opts.Backend.(interface{ SetExclusive(bool) bool }); ok && x.SetExclusive(c.Exclusive) {
+		devicesChanged = true
+	}
 	e.cfg = c
 	e.spatial = c.Spatial
 	for id, r := range e.people {
@@ -219,6 +232,19 @@ func (e *Engine) configure(c proto.Config) {
 	}
 }
 
+func (e *Engine) setProcessing(p proto.Processing) {
+	s := dsp.Settings{Echo: p.Echo, Noise: p.Noise, Gain: p.Gain, GateThreshold: float32(p.GateThreshold), GateGraceMs: float32(p.GateGraceMs), NoiseLookahead: p.NoiseLookahead}
+	if !s.Active() {
+		e.processing.Store(nil)
+		e.echoRef.Store(false)
+		return
+	}
+	if old := e.processing.Load(); old == nil || *old != s {
+		e.processing.Store(&s)
+	}
+	e.echoRef.Store(s.Echo)
+}
+
 func (e *Engine) peer(m proto.In) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -228,7 +254,8 @@ func (e *Engine) peer(m proto.In) {
 		e.prefs[m.ID] = p
 	}
 	if m.Volume != nil {
-		p.volume = max(0, min(1, *m.Volume))
+		// Up to 200%, for someone who's quiet.
+		p.volume = max(0, min(2, *m.Volume))
 	}
 	if m.Silenced != nil {
 		p.silenced = *m.Silenced
@@ -241,10 +268,22 @@ func (e *Engine) peer(m proto.In) {
 	}
 }
 
+// Head radius and the speed of sound, for Woodworth's ITD.
+const (
+	headRadiusM = 0.0875
+	soundMps    = 343.0
+)
+
 // applyPrefsLocked sets someone's gain and pan for the audio thread.
 // Panning is equal-power, from the direction of their seat (seatDirection
 // in src/lib/seats.ts), the same law as Web Audio's "equalpower" panner.
-// HRTF isn't done natively yet, so it pans the same way.
+//
+// "hrtf" (shown as Stereo + ITD in the app) adds the time difference
+// between the ears on top: the far ear hears them a little later, by
+// Woodworth's formula, (a/c)(θ + sin θ) for a head of radius a and a
+// source θ off the midline, so at most 0.66 ms (32 samples) for someone
+// straight to one side. Only the far ear is delayed: what you hear first
+// is as early as it ever was.
 func (e *Engine) applyPrefsLocked(id string, r *remote) {
 	p := e.prefs[id]
 	if p == nil {
@@ -258,6 +297,7 @@ func (e *Engine) applyPrefsLocked(id string, r *remote) {
 	if e.spatial == "off" || r.test {
 		storeF(&r.panL, 1)
 		storeF(&r.panR, 1)
+		storeF(&r.itd, 0)
 		return
 	}
 	x := -math.Sin(p.angle)
@@ -270,6 +310,25 @@ func (e *Engine) applyPrefsLocked(id string, r *remote) {
 	pos := (math.Asin(max(-1, min(1, x)))/(math.Pi/2) + 1) / 2
 	storeF(&r.panL, float32(math.Cos(pos*math.Pi/2)))
 	storeF(&r.panR, float32(math.Sin(pos*math.Pi/2)))
+	itd := 0.0
+	if e.spatial == "hrtf" {
+		itd = woodworth(x)
+	}
+	storeF(&r.itd, float32(itd))
+}
+
+// woodworth is the interaural delay, samples, for a source whose direction
+// has sideways component x (-1 left .. 1 right): > 0 delays the right ear,
+// < 0 the left. θ is the angle off the midline; behind folds onto in front,
+// as the panning does.
+func woodworth(x float64) float64 {
+	theta := math.Asin(min(1, math.Abs(x)))
+	d := headRadiusM / soundMps * (theta + math.Sin(theta)) * audio.SampleRate
+	if x > 0 {
+		// On your right: it's the left ear that's further away.
+		return -d
+	}
+	return d
 }
 
 // ---- the people we hear ---------------------------------------------------------
@@ -432,6 +491,7 @@ func (e *Engine) openAudioLocked() {
 	}
 	e.stream = s
 	e.audioErr = ""
+	e.capDropped.Store(0)
 	e.stopTick = make(chan struct{})
 	go e.levels(e.stopTick)
 	e.rebuildLocked()

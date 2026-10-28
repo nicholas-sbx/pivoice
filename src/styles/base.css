@@ -15,6 +15,15 @@ body,
   height: 100%;
 }
 
+/*
+ * Nothing may stick out past the screen's edge, even invisibly (tooltips
+ * and name tags are laid out wider than they look): a phone browser zooms
+ * the whole page out to fit whatever does.
+ */
+#app {
+  overflow: hidden;
+}
+
 body {
   font-family: var(--font);
   font-size: 16px;

@@ -2,6 +2,8 @@ package engine
 
 import (
 	"fmt"
+	"math"
+	"runtime/metrics"
 	"sort"
 	"time"
 
@@ -49,10 +51,26 @@ type TestStats struct {
 }
 
 type Stats struct {
-	T     string               `json:"t"` // "stats"
-	Peers map[string]LinkStats `json:"peers"`
-	Test  *TestStats           `json:"test"`
-	Audio any                  `json:"audio"`
+	T        string               `json:"t"` // "stats"
+	Peers    map[string]LinkStats `json:"peers"`
+	Test     *TestStats           `json:"test"`
+	Audio    any                  `json:"audio"`
+	Glitches Glitches             `json:"glitches"`
+}
+
+// Glitches is everything that can put a click in the audio on our side,
+// counted since the sound card opened, so a crackle can be traced to its cause.
+type Glitches struct {
+	// The driver's own flags: the mic's buffer overflowed before we read it,
+	// or the speakers ran dry because a block was late.
+	InputOverflows   int64 `json:"inputOverflows"`
+	OutputUnderflows int64 `json:"outputUnderflows"`
+	// Mic blocks lost because the sender hadn't caught up.
+	CaptureDropped int64 `json:"captureDropped"`
+	// Incoming frames thrown away because the audio thread was behind.
+	FramesDropped int64 `json:"framesDropped"`
+	// The longest the Go runtime stopped everything (garbage collection) since the last stats, ms.
+	GCPauseMaxMs float64 `json:"gcPauseMaxMs"`
 }
 
 func ptr[T any](v T) *T { return &v }
@@ -185,6 +203,7 @@ func (e *Engine) stats() Stats {
 		}
 	}
 	out.Test = e.testStatsLocked(inMs, outMs)
+	out.Glitches = e.glitchesLocked()
 	return out
 }
 
@@ -267,4 +286,39 @@ func route(pc *webrtc.PeerConnection, st *LinkStats) {
 			}
 		}
 	}
+}
+
+func (e *Engine) glitchesLocked() Glitches {
+	g := Glitches{CaptureDropped: e.capDropped.Load(), GCPauseMaxMs: e.gcPauses.maxSince()}
+	if e.stream != nil {
+		info := e.stream.Info()
+		g.InputOverflows, g.OutputUnderflows = info.InputOverflows, info.OutputUnderflows
+	}
+	for _, l := range e.links {
+		g.FramesDropped += l.src.dropped.Load()
+	}
+	return g
+}
+
+// gcPauses reads the runtime's histogram of stop-the-world pauses and says
+// how long the longest one since the last read was.
+type gcPauses struct {
+	last []uint64
+}
+
+func (p *gcPauses) maxSince() float64 {
+	s := []metrics.Sample{{Name: "/sched/pauses/total/gc:seconds"}}
+	metrics.Read(s)
+	if s[0].Value.Kind() != metrics.KindFloat64Histogram {
+		return 0
+	}
+	h := s[0].Value.Float64Histogram()
+	longest := 0.0
+	for i, c := range h.Counts {
+		if i < len(p.last) && c > p.last[i] && !math.IsInf(h.Buckets[i+1], 1) {
+			longest = h.Buckets[i+1] * 1000
+		}
+	}
+	p.last = append(p.last[:0], h.Counts...)
+	return longest
 }

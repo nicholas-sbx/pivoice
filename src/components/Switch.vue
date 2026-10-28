@@ -1,11 +1,11 @@
 <script setup lang="ts">
 /** Discord's toggle switch, with its label. */
-defineProps<{ label: string; modelValue: boolean; hint?: string }>()
+defineProps<{ label: string; modelValue: boolean; hint?: string; disabled?: boolean }>()
 defineEmits<{ 'update:modelValue': [value: boolean] }>()
 </script>
 
 <template>
-  <label class="switch-row">
+  <label class="switch-row" :class="{ disabled }">
     <span class="text">
       <span>{{ label }}</span>
       <small v-if="hint">{{ hint }}</small>
@@ -15,6 +15,7 @@ defineEmits<{ 'update:modelValue': [value: boolean] }>()
         type="checkbox"
         class="sr-only"
         :checked="modelValue"
+        :disabled="disabled"
         @change="$emit('update:modelValue', ($event.target as HTMLInputElement).checked)"
       />
       <span class="knob" />
@@ -33,6 +34,10 @@ defineEmits<{ 'update:modelValue': [value: boolean] }>()
   font-weight: 500;
   color: var(--header-primary);
   cursor: pointer;
+}
+.switch-row.disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 .text {
   display: flex;

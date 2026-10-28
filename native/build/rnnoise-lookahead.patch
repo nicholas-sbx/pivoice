@@ -1,0 +1,61 @@
+RNNoise 0.2 without its lookahead: rnnoise_set_lookahead(st, 0) applies each frame's
+gains to that frame instead of the one before, 10 ms sooner. Applied by deps.sh.
+
+--- a/src/denoise.c
++++ b/src/denoise.c
+@@ -84,7 +84,7 @@
+   kiss_fft_cpx delayed_P[FREQ_SIZE];
+   float delayed_Ex[NB_BANDS], delayed_Ep[NB_BANDS];
+   float delayed_Exp[NB_BANDS];
+-
++  int no_lookahead;
+ };
+ 
+ static void compute_band_energy(float *bandE, const kiss_fft_cpx *X) {
+@@ -454,8 +454,13 @@
+   }
+ }
+ 
++void rnnoise_set_lookahead(DenoiseState *st, int on) {
++  st->no_lookahead = !on;
++}
++
+ float rnnoise_process_frame(DenoiseState *st, float *out, const float *in) {
+   int i;
++  kiss_fft_cpx *Y;
+   kiss_fft_cpx X[FREQ_SIZE];
+   kiss_fft_cpx P[FREQ_SIZE];
+   float x[FRAME_SIZE];
+@@ -470,12 +475,15 @@
+   static const float b_hp[2] = {-2, 1};
+   rnn_biquad(x, st->mem_hp_x, in, b_hp, a_hp, FRAME_SIZE);
+   silence = rnn_compute_frame_features(st, X, P, Ex, Ep, Exp, features, x);
++  /* Without lookahead, the gains go on the frame they were computed from, not the one before. */
++  Y = st->no_lookahead ? X : st->delayed_X;
+ 
+   if (!silence) {
+ #if !TRAINING
+     compute_rnn(&st->model, &st->rnn, g, &vad_prob, features, st->arch);
+ #endif
+-    rnn_pitch_filter(st->delayed_X, st->delayed_P, st->delayed_Ex, st->delayed_Ep, st->delayed_Exp, g);
++    if (st->no_lookahead) rnn_pitch_filter(X, P, Ex, Ep, Exp, g);
++    else rnn_pitch_filter(st->delayed_X, st->delayed_P, st->delayed_Ex, st->delayed_Ep, st->delayed_Exp, g);
+     for (i=0;i<NB_BANDS;i++) {
+       float alpha = .6f;
+       g[i] = MAX16(g[i], alpha*st->lastg[i]);
+@@ -484,12 +492,12 @@
+     interp_band_gain(gf, g);
+ #if 1
+     for (i=0;i<FREQ_SIZE;i++) {
+-      st->delayed_X[i].r *= gf[i];
+-      st->delayed_X[i].i *= gf[i];
++      Y[i].r *= gf[i];
++      Y[i].i *= gf[i];
+     }
+ #endif
+   }
+-  frame_synthesis(st, out, st->delayed_X);
++  frame_synthesis(st, out, Y);
+ 
+   RNN_COPY(st->delayed_X, X, FREQ_SIZE);
+   RNN_COPY(st->delayed_P, P, FREQ_SIZE);

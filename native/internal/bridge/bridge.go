@@ -22,10 +22,12 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"log"
+	"net/url"
 	"runtime"
 	"sync"
 	"sync/atomic"
 
+	"github.com/nicholas-sbx/pivoice/native/internal/dsp"
 	"github.com/nicholas-sbx/pivoice/native/internal/engine"
 	"github.com/nicholas-sbx/pivoice/native/internal/proto"
 )
@@ -34,7 +36,9 @@ import (
 const maxMessage = 64 * 1024
 
 type Bridge struct {
-	Token   string
+	Token string
+	// OpenURL opens a link in the system's browser (set by main; nil: links do nothing).
+	OpenURL func(url string)
 	version string
 	engine  *engine.Engine
 
@@ -148,7 +152,7 @@ func (c *Conn) handle(m proto.In) {
 		// A fresh page: nothing from before carries over.
 		b.engine.SetEmitter(nil)
 		b.engine.Reset()
-		c.emit(proto.Hello{T: "hello", Version: b.version, Protocol: proto.Protocol, OS: runtime.GOOS, Arch: runtime.GOARCH})
+		c.emit(proto.Hello{T: "hello", Version: b.version, Protocol: proto.Protocol, OS: runtime.GOOS, Arch: runtime.GOARCH, Noise: dsp.NoiseAvailable})
 		c.compatible = m.Protocol == proto.Protocol
 		if c.compatible {
 			log.Printf("bridge: the page is here (site %s)", m.Site)
@@ -156,6 +160,11 @@ func (c *Conn) handle(m proto.In) {
 		} else {
 			// The page tells the person which of us to update.
 			log.Printf("bridge: the page (site %s) speaks bridge protocol %d and we speak %d", m.Site, m.Protocol, proto.Protocol)
+		}
+	case m.T == "open" && c.authed.Load():
+		// Only web links, never files or other schemes, and only from a page that has the token.
+		if u, err := url.Parse(m.URL); err == nil && u.Scheme == "https" && u.Host != "" && b.OpenURL != nil {
+			b.OpenURL(u.String())
 		}
 	case !c.authed.Load() || !c.compatible:
 		// Not a word until hello, and nothing at all from a page we can't understand.

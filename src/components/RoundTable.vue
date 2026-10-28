@@ -4,6 +4,7 @@ import { Table, seatOffset, tableRadius } from '../lib/seats'
 import { SEAT_SPRING, isSettled, settle, spring, stepSpring } from '../lib/spring'
 import type { Member } from '../net/protocol'
 import { pingLevel, routeLabel, type LinkStats } from '../net/stats'
+import { touchFirst } from '../lib/viewport'
 import Avatar from './Avatar.vue'
 import Icon from './Icon.vue'
 
@@ -45,16 +46,18 @@ const reducedMotion = typeof matchMedia === 'function' && matchMedia('(prefers-r
 
 const geometry = computed(() => {
   const { w, h } = size
+  // A phone: smaller seats, and the ring as wide as the screen allows (name tags may reach past it).
+  const small = w < 640
   // Even, so its centre lands on a whole pixel.
-  const avatar = 2 * Math.round(Math.max(56, Math.min(92, Math.min(w, h) * 0.1)) / 2)
+  const avatar = 2 * Math.round(Math.max(small ? 40 : 56, Math.min(92, Math.min(w, h) * 0.1)) / 2)
   // Name tag, plus the route card under it when that's on.
   const label = props.showRoute ? 160 : 34
   // Room for the floating call controls along the bottom.
   const bottom = 108
   const top = 20
   const ringV = (h - bottom - top - avatar - label) / 2
-  const ringH = w / 2 - avatar * 1.4 - 24
-  const ring = Math.max(110, Math.min(360, ringV, ringH))
+  const ringH = small ? w / 2 - avatar * 0.75 - 12 : w / 2 - avatar * 1.4 - 24
+  const ring = Math.max(small ? 90 : 110, Math.min(360, ringV, ringH))
   const block = 2 * ring + avatar + label
   const cx = w / 2
   const cy = top + Math.max(0, (h - bottom - top - block) / 2) + avatar / 2 + ring
@@ -272,6 +275,10 @@ function onMenu(id: string, e: MouseEvent) {
   e.preventDefault()
   emit('menu', id, e.clientX, e.clientY)
 }
+// On a touch screen there's no right-click (and iOS has no long-press menu): a tap does it.
+function onTap(id: string, e: MouseEvent) {
+  if (touchFirst) onMenu(id, e)
+}
 
 
 const count = computed(() => props.members.filter(m => !m.away).length || 1)
@@ -298,8 +305,10 @@ const count = computed(() => props.members.filter(m => !m.away).length || 1)
         silenced: silenced[id]
       }"
       :style="{ '--avatar': geometry.avatar + 'px' }"
+      :data-small="size.w < 640 ? '' : undefined"
       :data-member="id"
       @contextmenu="onMenu(id, $event)"
+      @click="onTap(id, $event)"
     >
       <div class="ring">
         <Avatar
@@ -466,6 +475,16 @@ const count = computed(() => props.members.filter(m => !m.away).length || 1)
 .name {
   overflow: hidden;
   text-overflow: ellipsis;
+}
+.seat[data-small] .tag {
+  max-width: 130px;
+  padding: 2px 6px;
+  font-size: 12px;
+  line-height: 16px;
+}
+.seat[data-small] .ping {
+  font-size: 11px;
+  padding: 0 4px;
 }
 .sub {
   color: var(--text-muted);

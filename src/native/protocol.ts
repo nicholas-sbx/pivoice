@@ -24,6 +24,21 @@ export interface AppConfig {
   dtx: boolean
   inputId: string
   outputId: string
+  /** Windows: WASAPI exclusive mode. */
+  exclusive: boolean
+  processing: ProcessingConfig
+}
+
+/** What the app does to your mic before it goes out (all off: nothing at all, at no cost). */
+export interface ProcessingConfig {
+  echo: boolean
+  noise: boolean
+  gain: boolean
+  /** Noise suppression's voice gate: 0 is off, up to 1. */
+  gateThreshold: number
+  gateGraceMs: number
+  /** RNNoise's own lookahead: 10 ms more delay, for cleaner starts of words. */
+  noiseLookahead: boolean
 }
 
 /** One of our signals' bodies, as the app sends it: the page adds `kind` and `link` for the room. */
@@ -42,12 +57,16 @@ export type ToApp =
   | { t: 'test'; path: '' | 'raw' | 'll' }
   | { t: 'stats' }
   | { t: 'devices' }
+  /** A link for the system's browser (the window opens none itself). Works on any protocol. */
+  | { t: 'open'; url: string }
 
 export interface AppInfo {
   version: string
   protocol: number
   os: string
   arch: string
+  /** Whether this build has noise suppression (RNNoise). */
+  noise?: boolean
 }
 
 /** The sound card, as the app has it open. */
@@ -59,6 +78,22 @@ export interface AudioInfo {
   outputLatencyMs: number
   /** Samples per callback. */
   block: number
+  /** Windows: how WASAPI was opened (exclusive, raw, shared). */
+  mode?: string
+}
+
+/** Everything on the app's side that can put a click in the audio, since the sound card opened. */
+export interface Glitches {
+  /** The mic's buffer filled before the app read it. */
+  inputOverflows: number
+  /** The speakers ran dry: a block was late. */
+  outputUnderflows: number
+  /** Mic blocks lost because the sender fell behind. */
+  captureDropped: number
+  /** Incoming audio thrown away because the audio thread fell behind. */
+  framesDropped: number
+  /** The longest the app's garbage collector stopped everything, lately. */
+  gcPauseMaxMs: number
 }
 
 export interface AppDevice {
@@ -73,6 +108,7 @@ export interface AppStats {
   peers: Record<string, LinkStats>
   test: { ms: number | null; measured: boolean; detail: string } | null
   audio: AudioInfo | null
+  glitches?: Glitches
 }
 
 export type FromApp =

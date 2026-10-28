@@ -55,6 +55,15 @@ onBeforeUnmount(() => {
   box-shadow: var(--elevation-high), var(--elevation-stroke);
   z-index: 20;
 }
+@media (max-width: 640px), (pointer: coarse) and (max-height: 520px) {
+  .panel {
+    position: fixed;
+    top: calc(60px + env(safe-area-inset-top));
+    left: calc(8px + env(safe-area-inset-left));
+    right: calc(8px + env(safe-area-inset-right));
+    width: auto;
+  }
+}
 .eyebrow {
   display: block;
   margin-bottom: 4px;

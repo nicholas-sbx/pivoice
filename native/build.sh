@@ -4,10 +4,12 @@
 # (CI passes the repo's VITE_PUBLIC_URL); without it, pass --url when you
 # run it.
 #
-# Needs Go, a C compiler and pkg-config, PortAudio and Opus (your system's,
-# or static ones from build/deps.sh with STATIC_AUDIO=1, which is how CI
-# makes a binary that runs anywhere), and on Linux WebKitGTK 4.1 and GTK 3.
-# NOWEBVIEW=1 builds without the window (--browser and --headless only).
+# Needs Go, a C compiler and pkg-config, PortAudio, Opus and SpeexDSP, and
+# RNNoise if you have it (your system's, or static ones from build/deps.sh
+# with STATIC_AUDIO=1, which is how CI makes a binary that runs anywhere),
+# and on Linux WebKitGTK 4.1 and GTK 3. Without RNNoise the app just
+# doesn't offer noise suppression. NOWEBVIEW=1 builds without the window
+# (--browser and --headless only).
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -19,9 +21,10 @@ export PKG_CONFIG_PATH="$PWD/build/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH
 export CGO_ENABLED=1
 
 tags=()
-[[ ${NOWEBVIEW:-} == 1 ]] && tags=(-tags nowebview)
+buildtags=()
+[[ ${NOWEBVIEW:-} == 1 ]] && buildtags+=(nowebview)
 ldflags="-s -w -X main.siteURL=${PIVOICE_URL:-}"
-# Link PortAudio and Opus statically (CI): the libraries build/deps.sh made,
+# Link the audio libraries statically (CI): the libraries build/deps.sh made,
 # which are the only copies on that pkg-config path, so the linker can't
 # pick shared ones. What they need from the system goes in by hand.
 if [[ ${STATIC_AUDIO:-} == 1 ]]; then
@@ -39,6 +42,13 @@ if [[ "$(go env GOOS)" == windows ]]; then
   ldflags+=" -H windowsgui"
   command -v cygpath >/dev/null && PKG_CONFIG_PATH=$(cygpath -wp "$PKG_CONFIG_PATH")
 fi
+if ! pkg-config --exists rnnoise; then
+  # A release always has it (deps.sh builds it).
+  [[ ${STATIC_AUDIO:-} == 1 ]] && { echo "STATIC_AUDIO=1 but no RNNoise in the deps" >&2; exit 1; }
+  echo "no RNNoise: building without noise suppression" >&2
+  buildtags+=(nornnoise)
+fi
+[[ ${#buildtags[@]} -gt 0 ]] && tags=(-tags "$(IFS=,; echo "${buildtags[*]}")")
 
 go build -trimpath ${tags[@]+"${tags[@]}"} -ldflags "$ldflags" -o "$out" .
 echo "built $out ($(du -h "$out" | cut -f1))"

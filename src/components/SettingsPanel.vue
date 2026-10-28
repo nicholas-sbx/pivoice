@@ -2,10 +2,11 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { AudioEngine, type SpatialMode } from '../audio/engine'
 import { applyMicPrefs, call, getEngine, getNative, llSupported, micLevel, setAppDevices, setDtx, setOutput, setSpatial, startMicTest, stopMicTest, type TestPath } from '../call'
-import { isNative } from '../native/bridge'
+import { isNative, native } from '../native/bridge'
 import Segmented from './Segmented.vue'
 import Icon from './Icon.vue'
 import LLSettings from './LLSettings.vue'
+import Slider from './Slider.vue'
 import Switch from './Switch.vue'
 
 /** Voice settings, popping up over the call controls. */
@@ -61,7 +62,13 @@ function label(d: MediaDeviceInfo, i: number, kind: string) {
 const modes: { value: SpatialMode; label: string; hint: string }[] = [
   { value: 'off', label: 'Off', hint: 'Straight to your ears. Lowest latency.' },
   { value: 'stereo', label: 'Stereo', hint: 'Panned left and right by where people sit.' },
-  { value: 'hrtf', label: 'HRTF', hint: 'Full 3D around your head, on headphones.' }
+  isNative
+    ? {
+        value: 'hrtf',
+        label: 'Stereo + ITD',
+        hint: 'Panned, and the ear further from them hears them a touch later (up to 0.66 ms, as a real head does), so they sound placed rather than just louder on one side. Only that ear waits.'
+      }
+    : { value: 'hrtf', label: 'HRTF', hint: 'Full 3D around your head, on headphones.' }
 ]
 const modeHint = computed(() => modes.find(m => m.value === call.prefs.spatial)?.hint)
 
@@ -88,6 +95,32 @@ const processing = [
   { key: 'noiseSuppression', label: 'Noise Suppression' },
   { key: 'autoGainControl', label: 'Automatic Gain Control' }
 ] as const
+
+// The app does its own processing, each with what it costs in delay.
+const appProcessing = computed(() => [
+  {
+    key: 'echoCancellation' as const,
+    label: 'Echo Cancellation',
+    hint: 'Takes what your speakers play back out of your mic (SpeexDSP). Adds at most one 2.7 ms block, none at all on most sound cards. Only if you’re not on headphones.',
+    off: false
+  },
+  {
+    key: 'noiseSuppression' as const,
+    label: 'Noise Suppression',
+    hint:
+      native.app?.noise === false
+        ? 'Not in this build of the app.'
+        : `RNNoise: a small neural network takes out fans, keyboards and hum. Adds 10 ms (its analysis window) plus up to 10 ms to fill a frame${call.prefs.noiseLookahead ? ', plus 10 ms of lookahead' : ''}.`,
+    off: native.app?.noise === false
+  },
+  {
+    key: 'autoGainControl' as const,
+    label: 'Automatic Gain Control',
+    hint: 'Evens out your level by changing the app’s own gain (never your system’s mic volume), from −6 to +24 dB. Adds no delay.',
+    off: false
+  }
+])
+const gatePct = computed(() => Math.round(call.prefs.noiseGate * 100))
 
 function meter() {
   level.value = micLevel()
@@ -203,7 +236,51 @@ onBeforeUnmount(() => {
 
     <div class="row">
       <span class="eyebrow">Voice Processing</span>
-      <p v-if="isNative" class="note first">The app always takes your microphone raw: no echo cancellation, noise suppression or gain control, which all add delay.</p>
+      <template v-if="isNative">
+        <Switch
+          v-for="p in appProcessing"
+          :key="p.key"
+          :label="p.label"
+          :hint="p.hint"
+          :disabled="p.off"
+          :model-value="call.prefs[p.key] && !p.off"
+          @update:model-value="v => applyMicPrefs({ [p.key]: v })"
+        />
+        <template v-if="call.prefs.noiseSuppression && native.app?.noise !== false">
+          <Switch
+            label="Lookahead"
+            hint="RNNoise as its authors run it: it hears the next 10 ms before deciding, so the first sound of each word comes through cleaner. Costs those 10 ms. Off, nothing is held back."
+            :model-value="call.prefs.noiseLookahead"
+            @update:model-value="v => setAppDevices({ noiseLookahead: v })"
+          />
+          <Slider
+            label="Voice gate"
+            unit="%"
+            :min="0"
+            :max="95"
+            :step="5"
+            :hint="
+              gatePct === 0
+                ? 'Off: noise is taken out, but you’re never faded to silence.'
+                : `Fades you out when RNNoise is less than ${gatePct}% sure you’re talking. Lower keeps more of quiet words; higher cuts more noise between them.`
+            "
+            :model-value="gatePct"
+            @update:model-value="v => setAppDevices({ noiseGate: v / 100 })"
+          />
+          <Slider
+            v-if="gatePct > 0"
+            label="Gate hold"
+            unit=" ms"
+            :min="100"
+            :max="1000"
+            :step="50"
+            hint="How long the gate stays open after you stop, so word endings and pauses mid-sentence aren’t cut. It opens again the moment you speak; nothing is held back to look ahead."
+            :model-value="call.prefs.noiseGraceMs"
+            @update:model-value="v => setAppDevices({ noiseGraceMs: v })"
+          />
+        </template>
+        <p class="note spaced">All off, the app doesn’t touch your mic at all, and none of it costs anything.</p>
+      </template>
       <template v-else>
       <Switch
         v-for="p in processing"
@@ -240,6 +317,24 @@ onBeforeUnmount(() => {
   box-shadow: var(--elevation-high), var(--elevation-stroke);
   text-align: left;
   cursor: default;
+}
+/* Small screens: a sheet across the screen, above the call controls. */
+@media (max-width: 640px), (pointer: coarse) and (max-height: 520px) {
+  .panel {
+    position: fixed;
+    left: calc(8px + env(safe-area-inset-left));
+    right: calc(8px + env(safe-area-inset-right));
+    bottom: calc(100px + env(safe-area-inset-bottom));
+    width: auto;
+    margin-left: 0;
+    max-height: calc(100dvh - 100px - 64px - env(safe-area-inset-bottom) - env(safe-area-inset-top));
+    padding: 14px;
+    overscroll-behavior: contain;
+  }
+  /* 16px or more, or iOS zooms the page in when one's opened. */
+  select {
+    font-size: 16px;
+  }
 }
 .tabs {
   display: flex;
@@ -430,5 +525,8 @@ select {
 }
 .note.bad {
   color: var(--red);
+}
+.note.spaced {
+  margin: 4px 0 12px;
 }
 </style>

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { MAX_VOLUME } from '../audio/engine'
 import { call, setSilenced, setVolume } from '../call'
 
 /** Right-click on someone: Discord's user context menu, cut down to what a voice call needs. */
@@ -11,9 +12,17 @@ const el = ref<HTMLElement>()
 const pos = ref({ left: props.x, top: props.y })
 const member = computed(() => call.members.find(m => m.id === props.id))
 const volume = computed(() => Math.round((call.volumes[props.id] ?? 1) * 100))
+const max = MAX_VOLUME * 100
+// 100% sits in the middle of the track, and the slider sticks to it on the way past.
+const SNAP = 6
 
 function onVolume(e: Event) {
-  setVolume(props.id, Number((e.target as HTMLInputElement).value) / 100)
+  let v = Number((e.target as HTMLInputElement).value)
+  if (Math.abs(v - 100) <= SNAP) v = 100
+  setVolume(props.id, v / 100)
+}
+function reset() {
+  setVolume(props.id, 1)
 }
 
 function onDown(e: PointerEvent) {
@@ -45,11 +54,29 @@ onBeforeUnmount(() => {
   <div ref="el" class="menu" role="menu" :style="{ left: pos.left + 'px', top: pos.top + 'px' }" @contextmenu.prevent>
     <div class="who">{{ member?.name ?? 'Left the call' }}</div>
     <div class="sep" />
-    <label class="item slider">
-      <span class="label">User Volume</span>
-      <input type="range" min="0" max="100" step="1" :value="volume" :style="{ '--fill': volume + '%' }" @input="onVolume" />
-      <span class="value">{{ volume }}%</span>
-    </label>
+    <div class="item slider">
+      <span class="top">
+        <label class="label" :for="`vol-${id}`">User Volume</label>
+        <button v-if="volume !== 100" type="button" class="reset" title="Back to 100%" @click="reset">Reset</button>
+      </span>
+      <div class="track">
+        <input
+          :id="`vol-${id}`"
+          type="range"
+          min="0"
+          :max="max"
+          step="1"
+          :value="volume"
+          :style="{ '--fill': (volume / max) * 100 + '%' }"
+          :aria-valuetext="`${volume}%`"
+          @input="onVolume"
+          @dblclick="reset"
+        />
+        <!-- Where 100% is: the snap point. -->
+        <span class="mark" aria-hidden="true" />
+      </div>
+      <span class="value" :class="{ loud: volume > 100 }">{{ volume }}%</span>
+    </div>
     <div class="sep" />
     <button type="button" class="item check" role="menuitemcheckbox" :aria-checked="!!call.silenced[id]" @click="setSilenced(id, !call.silenced[id])">
       <span>Mute</span>
@@ -64,7 +91,7 @@ onBeforeUnmount(() => {
 .menu {
   position: fixed;
   z-index: 60;
-  min-width: 220px;
+  min-width: 240px;
   padding: 6px 8px;
   border-radius: 4px;
   background: var(--bg-floating);
@@ -107,16 +134,57 @@ onBeforeUnmount(() => {
   cursor: default;
   gap: 6px;
 }
+.top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
 .label {
   color: var(--interactive-normal);
+}
+.reset {
+  border: 0;
+  padding: 0;
+  background: none;
+  font: inherit;
+  font-size: 12px;
+  color: var(--text-link);
+  cursor: pointer;
+}
+.reset:hover {
+  text-decoration: underline;
+}
+.track {
+  position: relative;
+  display: flex;
+  align-items: center;
+  height: 24px;
+}
+.mark {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 2px;
+  height: 14px;
+  margin: -7px 0 0 -1px;
+  border-radius: 1px;
+  background: var(--text-muted);
+  pointer-events: none;
+  opacity: 0.7;
 }
 .value {
   align-self: flex-end;
   font-size: 12px;
   color: var(--text-muted);
-  margin-top: -4px;
+  margin-top: -2px;
+  font-variant-numeric: tabular-nums;
+}
+.value.loud {
+  color: var(--yellow);
 }
 input[type='range'] {
+  position: relative;
+  z-index: 1;
   -webkit-appearance: none;
   appearance: none;
   width: 100%;

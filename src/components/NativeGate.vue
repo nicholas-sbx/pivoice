@@ -18,7 +18,7 @@ const verdict = computed(() => native.verdict)
 const latest = computed(() => (verdict.value && !verdict.value.ok && verdict.value.action === 'download' ? verdict.value.latest : ''))
 // Straight to the file for the platform this app runs on; the release's page otherwise.
 const file = computed(() => APP_DOWNLOADS.find(d => d.os === native.app?.os))
-const link = computed(() => (latest.value ? downloadUrl(latest.value, file.value?.file) : ''))
+const link = computed(() => (latest.value ? downloadUrl(latest.value, file.value?.file(latest.value)) : ''))
 const page = computed(() => (latest.value ? downloadUrl(latest.value) : ''))
 
 function reload() {

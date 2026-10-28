@@ -25,6 +25,9 @@ import { seatDirection } from '../lib/seats'
  * are there the low-latency one wins and the WebRTC element stays muted.
  */
 
+/** Per-person volume goes up to 200%, as Discord's does. */
+export const MAX_VOLUME = 2
+
 export type SpatialMode = 'off' | 'stereo' | 'hrtf'
 
 /**
@@ -218,7 +221,7 @@ export class AudioEngine {
 
   /** 0–1. */
   setVolume(id: string, volume: number) {
-    this.volumes.set(id, Math.max(0, Math.min(1, volume)))
+    this.volumes.set(id, Math.max(0, Math.min(MAX_VOLUME, volume)))
     const r = this.remotes.get(id)
     if (r) this.apply(id, r)
   }
@@ -342,10 +345,11 @@ export class AudioEngine {
     r.gain.disconnect()
     r.panner.disconnect()
     if (r.media) {
-      // The element plays only in the lowest-latency case: WebRTC audio, no panning.
-      const direct = !r.ll && this.mode === 'off'
+      // The element plays only in the lowest-latency case: WebRTC audio, no
+      // panning, and no louder than they are (an element can't go past 1).
+      const direct = !r.ll && this.mode === 'off' && volume <= 1
       r.media.el.muted = !direct || this.deafened
-      r.media.el.volume = volume
+      r.media.el.volume = Math.min(1, volume)
       if (direct) return
     }
     r.gain.gain.value = volume

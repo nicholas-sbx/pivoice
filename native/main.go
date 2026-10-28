@@ -16,6 +16,7 @@ import (
 	"os/signal"
 	"regexp"
 	"runtime"
+	"runtime/debug"
 	"strings"
 
 	"github.com/nicholas-sbx/pivoice/native/internal/audio"
@@ -50,6 +51,7 @@ func main() {
 		fmt.Printf("pivoice %s (bridge protocol %d, %s/%s)\n", version, proto.Protocol, runtime.GOOS, runtime.GOARCH)
 		return
 	}
+	tuneForAudio()
 	if *site == "" {
 		log.Fatal("this build doesn't know which site to open: pass --url")
 	}
@@ -73,6 +75,11 @@ func main() {
 	defer backend.Close()
 	e := engine.New(engine.Options{Backend: backend, Loopback: *loopback})
 	b := bridge.New(e, version)
+	b.OpenURL = func(u string) {
+		if err := openBrowser(u); err != nil {
+			log.Printf("couldn't open %s: %v", u, err)
+		}
+	}
 
 	if *browser || *headless {
 		port, err := b.Serve(origin)
@@ -99,6 +106,25 @@ func main() {
 		log.Fatal(err)
 	}
 	e.Reset()
+}
+
+// tuneForAudio sets the process up for the audio thread's sake, unless
+// you've set these yourself:
+//
+//   - Fewer garbage collections (GOGC 400): each one stops everything
+//     briefly, and memory is cheap next to a late block.
+//   - On Linux, ask PipeWire to run its graph in 128-sample steps
+//     (PIPEWIRE_LATENCY). With its usual 1024-sample quantum, a client
+//     gets its small blocks in bursts every 21 ms, and two clients on one
+//     machine burst out of step with each other: one app's packets then
+//     land just after the other has played past them.
+func tuneForAudio() {
+	if os.Getenv("GOGC") == "" {
+		debug.SetGCPercent(400)
+	}
+	if runtime.GOOS == "linux" && os.Getenv("PIPEWIRE_LATENCY") == "" {
+		_ = os.Setenv("PIPEWIRE_LATENCY", "128/48000")
+	}
 }
 
 // invite takes a room code from an invite link (…/#CODE) or a bare code.

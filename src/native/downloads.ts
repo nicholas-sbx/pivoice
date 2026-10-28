@@ -10,15 +10,18 @@ export interface AppDownload {
   /** As Go names it (the app reports runtime.GOOS). */
   os: AppOS
   label: string
-  file: string
+  /** The file's name in that version's release: pivoice-<version>-<platform>. */
+  file(version: string): string
 }
+
+const named = (platform: string) => (version: string) => `pivoice-${version}-${platform}`
 
 /** What each release has. Keep in step with the build matrix in release-native.yml. */
 export const APP_DOWNLOADS: AppDownload[] = [
-  { os: 'windows', label: 'Windows', file: 'pivoice-windows-amd64.exe' },
-  { os: 'linux', label: 'Linux', file: 'pivoice-linux-amd64.tar.gz' }
+  { os: 'windows', label: 'Windows', file: named('windows-amd64.exe') },
+  { os: 'linux', label: 'Linux', file: named('linux-amd64.tar.gz') }
   // macOS releases are switched off for now; when they're back:
-  // { os: 'darwin', label: 'macOS', file: 'pivoice-macos.tar.gz' }
+  // { os: 'darwin', label: 'macOS', file: named('macos.tar.gz') }
 ]
 
 const RELEASES = 'https://github.com/nicholas-sbx/pivoice/releases'

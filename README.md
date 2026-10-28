@@ -68,8 +68,25 @@ reconnecting. They're still pictures, not animations: animated blobatars
 restyle every face every frame on the main thread, which took a whole core
 with six at the table and showed up as wandering latency. A green ring shows who's talking, and mute and deafen show next to
 their names, along with your ping to each of them (green under 80 ms, yellow
-under 160, red above). Right-click someone for **User Volume** and **Mute**
-(for you only).
+under 160, red above). Right-click someone for **User Volume** (0–200%,
+sticking at 100% on the way past; **Reset** or a double-click puts it back)
+and **Mute**, for you only. Above 100% the website plays them through Web
+Audio rather than the plain `<audio>` element, which can't go louder.
+
+**On a phone.** A table is mostly empty felt on a small screen, and seats
+only matter for where people sound from. So on a phone (or any window
+under 640 px wide, or a short touch screen in landscape) everyone's a list
+of tiles while spatial audio is off, and the table comes back when you turn
+it on. The tiles are sized from the space and the head count
+([`src/lib/tiles.ts`](src/lib/tiles.ts)): every column count is tried and
+the one giving each tile the most usable room wins, so one or two people get
+big tiles, five to eight a grid of squares, and a full room a two-column
+list of rows, scrolling only if even rows that size won't fit. Talking
+lights the tile's edge green, as the ring does at the table. Tap someone for
+their menu (a phone has no right-click), and the settings open as sheets
+across the screen. The layout keeps clear of notches and the home bar, and
+nothing on the page is wider than the screen (a phone would zoom the whole
+page out to fit it).
 
 **Call controls.** A floating pill at the bottom: mute (`Ctrl+Shift+M`),
 deafen (`Ctrl+Shift+D`), spatial audio, voice settings, disconnect. Like
@@ -126,8 +143,9 @@ engine comes from its own pings over its data channel instead. The mouth-to-ear 
 an estimate (`≈`) where it can't. Hover the estimate for what each part means.
 
 **Voice settings.** Input and output device, an input level meter,
-spatial audio (**Off**, **Stereo**, **HRTF**), echo cancellation, noise
-suppression and automatic gain control (all **off** by default), and
+spatial audio (**Off**, **Stereo**, **HRTF**; in the app **Stereo + ITD**
+instead of HRTF), echo cancellation, noise suppression and automatic gain
+control (all **off** by default; in the app, its own: see below), and
 silence suppression (DTX, off). The **Low Latency** tab has the experimental
 engine and all its settings (below).
 
@@ -225,7 +243,9 @@ it's as good as your two clocks (NTP usually keeps desktops within a few ms).
 
 ### The low-latency engine (experimental)
 
-On by default, sending raw PCM, in **Voice Settings → Low Latency**. Pairs
+Off by default on the website, and on by default in the app (which always
+has it), sending raw PCM, in **Voice Settings → Low Latency**. Turning it on
+or off keeps the rest of its settings. Pairs
 of people who both have it on stop using WebRTC's audio for each other and
 use this instead. PCM is about 1.3 Mbit/s to each person you're talking to,
 so on a slow uplink switch the codec to Opus or turn the engine off:
@@ -410,6 +430,21 @@ becomes just the UI.
   stand-ins ([`src/native/link.ts`](src/native/link.ts)) that pass the
   signalling between the room and the app.
 
+- **Windows: the mic as it comes.** WASAPI is opened in raw mode, which
+  tells Windows to skip the effects it would otherwise put on the mic
+  (its own noise suppression, gain, "enhancements"), at pro-audio thread
+  priority. **Exclusive Mode** (Low Latency tab, Windows only) takes the
+  device for the app alone, for WASAPI's smallest buffers, at the cost of
+  nothing else being able to use it meanwhile. The sound card line there
+  says which one you got (exclusive, raw or shared).
+- **Stereo + ITD** instead of HRTF. The app pans equal-power and delays
+  only the far ear by the interaural time difference a real head would
+  give, from Woodworth's formula: (r/c)(θ + sin θ), with r = 8.75 cm and
+  c = 343 m/s, at most 0.66 ms (31.5 samples) for someone straight to one
+  side. The near ear is never delayed, so nobody arrives later than they
+  would with plain **Stereo**; the delay is fractional and glides when a
+  seat moves, so it never clicks.
+
 Measured on one machine, fake devices, website to app and back (`npm run
 e2e:native`):
 
@@ -418,6 +453,78 @@ e2e:native`):
 | Website → app, low-latency engine (PCM) | 9 ms |
 | App → website, low-latency engine (PCM) | 27 ms (the browser's receive side) |
 | The app's own loop (gate, packets, jitter buffer) | 10 ms |
+
+### Processing the mic, in the app
+
+The website asks the browser for echo cancellation, noise suppression and
+gain control. The app does its own, in Go and two small C libraries, on the
+sending side (never on the audio thread), and each is off until you turn it
+on in **Voice Settings**:
+
+| | What | Delay it adds | CPU (share of one core) |
+| --- | --- | --- | --- |
+| **Echo Cancellation** | [SpeexDSP](https://github.com/xiph/speexdsp)'s MDF adaptive filter (85 ms tail) and its residual echo suppressor, fed what the same duplex callback just played, so mic and reference are already lined up | up to one 2.7 ms block to fill its frame; none when the sound card works in 128-sample blocks, as it usually does | 51 µs per 2.7 ms frame: **1.9%** |
+| **Noise Suppression** | [RNNoise](https://github.com/xiph/rnnoise) 0.2, a small recurrent network, with a voice gate on top | 10 ms (its analysis window) + up to 10 ms to fill a frame; +10 ms with **Lookahead** | 61 µs per 10 ms frame: **0.6%** |
+| **Automatic Gain Control** | ours ([`native/internal/dsp/agc.go`](native/internal/dsp/agc.go)): tracks your speech level and the noise floor, brings speech to −20 dBFS between −6 and +24 dB, cuts fast (50 ms) and lifts slowly (2 s), only moves while you're talking, and rounds off peaks with a soft limiter. It changes its own gain, never your system's mic volume | none: no lookahead | 0.3 µs per block: **0.01%** |
+
+All three at once: 102 µs per 2.7 ms block, **3.8%** of one core. Measured
+by the **check** job's benchmarks on its Xeon Platinum 8370C (`go test
+-bench . ./internal/dsp/`, printed in the job's summary each run); RNNoise
+picks AVX2 or SSE4.1 when it starts, on x86-64.
+
+- **Nothing when it's off.** With all three off, the audio thread checks
+  one pointer and the sender checks one more; no chain is made, nothing is
+  copied, and the latency is what it was. Only echo cancellation makes the
+  audio thread hand the sender what played (a mono copy of the mix), and
+  only while it's on.
+- **No lookahead unless you ask.** RNNoise 0.2 decides each frame's gains
+  having heard the frame after it, which is 10 ms more delay (CI measures
+  the shift exactly: 480 samples without, 960 with). A small patch,
+  [`native/build/rnnoise-lookahead.patch`](native/build/rnnoise-lookahead.patch),
+  applied when it's built, makes that a switch, and the app leaves it off:
+  the gains go on the frame they came from. **Lookahead** in the settings
+  puts it back, for cleaner starts of words.
+- **A gate that doesn't eat words.** RNNoise also says how sure it is that
+  each 10 ms is voice. **Voice gate** (40% by default, 0 turns it off) fades
+  you out below that, but only once **Gate hold** (400 ms) has passed since
+  the last voice, so word endings and pauses mid-sentence get through, and
+  it opens again on the very frame that crosses it, with 5 ms fades. Low
+  and long by default: noise suppression already takes out steady noise,
+  and the gate is only for the room between sentences.
+- **Counted in mouth to ear.** What comes out of the chain is stamped with
+  the mic samples it came from, so the capture stamps (and everyone's
+  mouth-to-ear figure) include the processing, and the mic test shows what
+  it costs. In the app's own loop on the test's fake sound card: 10.3 ms
+  with nothing on, 10.9 ms with echo cancellation and gain control.
+- **Safe.** Fixed-size frames in Go-owned buffers, no allocation per block
+  (a test holds the whole chain to zero), and both libraries built from
+  pinned sources (a checksum for RNNoise's release, a commit for
+  SpeexDSP's tag) into the binary, as PortAudio and Opus are.
+
+### When it crackles
+
+The **Low Latency** tab in the app counts everything on the app's side
+that can put a click in the audio since the sound card opened: the
+driver's own overrun and underrun flags, mic blocks the sender wasn't
+ready for, incoming frames the audio thread was too far behind to take,
+and the longest the Go runtime stopped for garbage collection. Whatever
+counts up when you hear it is the cause; if none do, look at the route
+card's late and concealed figures, which are the network.
+
+The occasional crackle with two copies of the app on one Linux machine
+(each fine alone, in a loopback or the mic test) has two likely causes, both
+dealt with; if it still happens, the counters say which it was:
+
+- **Two clocks.** Two apps on one PipeWire graph wake on its quantum, and
+  if it's bigger than our block, each wakes with several blocks at once
+  and the other's packets land in bursts. The app asks PipeWire for a
+  quantum of 128 at 48 kHz (`PIPEWIRE_LATENCY=128/48000`, unless you've
+  set it yourself), the size of its own blocks.
+- **The garbage collector.** The audio thread allocated a little every
+  block (the old PortAudio binding and the jitter buffer), which drafts it
+  into the collector's work at the worst moment. It allocates nothing now
+  (tested), and the collector runs a quarter as often (`GOGC=400` unless
+  set; the app's heap is small).
 
 **Talking to the page.** The page and the app talk over a small bridge
 ([`native/internal/bridge`](native/internal/bridge),
@@ -467,9 +574,13 @@ tests `--headless --fake-audio --loopback-ice` (no sound card: a beeping
 mic and silent speakers, and it prints the UI's address instead of opening
 it).
 
-**Building it.** Go 1.24, a C compiler, pkg-config, and PortAudio, Opus and
-(Linux) WebKitGTK 4.1 headers (`apt install portaudio19-dev libopus-dev
-libwebkit2gtk-4.1-dev`):
+**Building it.** Go 1.24, a C compiler, pkg-config, and PortAudio, Opus,
+SpeexDSP and (Linux) WebKitGTK 4.1 headers (`apt install portaudio19-dev
+libopus-dev libspeexdsp-dev libwebkit2gtk-4.1-dev`). RNNoise too if you
+want noise suppression: few distributions package 0.2, so `build/deps.sh
+rnnoise` builds it (with the lookahead switch) and `PKG_CONFIG_PATH` finds it
+in `build/deps/lib/pkgconfig`. Without it, `build.sh` builds the app with no
+noise suppression (`-tags nornnoise`) and the settings say so:
 
 ```sh
 cd native
@@ -480,12 +591,12 @@ go test -race ./...              # set PKG_CONFIG_PATH=$PWD/build/pkgconfig firs
 
 `NOWEBVIEW=1 ./build.sh` builds without the window (`--browser` and
 `--headless` only). Releases link PortAudio (ALSA, CoreAudio, WASAPI/MME
-only; ALSA is loaded at start-up) and Opus statically, built from pinned
+only; ALSA is loaded at start-up), Opus, RNNoise and SpeexDSP statically, built from pinned
 sources by [`native/build/deps.sh`](native/build/deps.sh), so the binary
 needs nothing but the system's webview and sound server.
 
-**Not yet in the app:** HRTF (it pans equal-power, like **Stereo**); a
-measured mouth to ear on plain calls (no `abs-capture-time` from the app);
+**Not yet in the app:** a real HRTF (**Stereo + ITD** is panning and the
+time difference, without the head's filtering); a measured mouth to ear on plain calls (no `abs-capture-time` from the app);
 honouring a receiver's DTX request on calls; Linux on ARM; macOS releases
 (it builds, but CI has it switched off); signing (Windows warns before the
 first run).
@@ -631,10 +742,13 @@ The app releases the same way, keyed on `native/VERSION` and tagged
 `native-vX.Y.Z`: bump the file on main and push, push a tag yourself, or
 **Run workflow**. Three jobs start at once: **tag**, **check** (`gofmt`, `go
 vet`, `go test -race`, where the engine's tests run two engines on fake sound
-cards over real WebRTC) and **build** on Linux (Ubuntu 22.04, so glibc
+cards over real WebRTC, against RNNoise and SpeexDSP built as the release
+builds them, then the processing benchmarks) and **build** on Linux (Ubuntu 22.04, so glibc
 2.35+) and Windows. **release** waits for all of them, so nothing ships
 unless the tests passed too, and publishes a GitHub release with the files
-and how to run each. macOS is switched off for now (its runners can queue
+and how to run each. Each file has the version in its name
+(`pivoice-0.2.0-linux-amd64.tar.gz`, `pivoice-0.2.0-windows-amd64.exe`),
+which the site's download buttons build from `native/VERSION`. macOS is switched off for now (its runners can queue
 for a long time): uncomment its entry in the build matrix to bring it back,
 as one universal binary. It needs no secrets, only
 `VITE_PUBLIC_URL`, the site it opens: without it, a main push builds but
@@ -669,7 +783,8 @@ checks for them and has no environment:
 
 ```
 src/
-  lib/          seats (planning + the animated Table), spring, room codes, prefs
+  lib/          seats (planning + the animated Table), tiles (the phone layout), spring,
+                room codes, prefs, viewport
   net/          protocol (+ validation, shared with the Worker), roomSocket (the
                 WebSocket to the room), peer (one peer connection), session
                 (joining, the call mesh), sdp, ICE config
@@ -685,6 +800,7 @@ worker/         the Cloudflare Worker: static assets, the rooms (a Durable Objec
 scripts/        dev (app + Worker), e2e runs (website, and the app with the website)
 tests/          unit tests
 native/         the app (Go): main and the window, and in internal/: audio (the PortAudio
-                duplex stream, a fake one), engine (mixer, sending, pion links, stats), ll
-                (packets and jitter buffer, ported), opus, bridge, proto (the bridge's messages)
+                duplex stream, a fake one), engine (mixer, sending, pion links, stats), dsp
+                (echo cancellation, noise suppression, gain), ll (packets and jitter buffer,
+                ported), opus, bridge, proto (the bridge's messages)
 ```

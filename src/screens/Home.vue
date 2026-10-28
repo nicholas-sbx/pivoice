@@ -29,7 +29,7 @@ const downloads = [...APP_DOWNLOADS].sort((a, b) => Number(b.os === mine) - Numb
 // In the app, when a newer one's out: the file for the platform it runs on.
 const newerUrl = computed(() => {
   const v = native.verdict?.ok ? native.verdict.newer : null
-  return v ? downloadUrl(v, APP_DOWNLOADS.find(d => d.os === native.app?.os)?.file) : ''
+  return v ? downloadUrl(v, APP_DOWNLOADS.find(d => d.os === native.app?.os)?.file(v)) : ''
 })
 
 function checkName(): string | null {
@@ -174,8 +174,8 @@ onMounted(() => {
             :key="d.os"
             class="get-app-button"
             :class="{ mine: d.os === mine }"
-            :href="downloadUrl(appVersion, d.file)"
-            :download="d.file"
+            :href="downloadUrl(appVersion, d.file(appVersion))"
+            :download="d.file(appVersion)"
             rel="noopener"
           >
             {{ d.label }}
@@ -192,43 +192,51 @@ onMounted(() => {
 </template>
 
 <style scoped>
+/* Dark and flat like the rest of the app: the brand colour is for the buttons, not the whole screen. */
 .home {
   position: relative;
   height: 100%;
   display: grid;
   place-items: center;
-  overflow: hidden;
-  background: var(--brand);
+  overflow-y: auto;
+  padding: 40px 16px;
+  background: var(--bg-tertiary);
 }
 
 .card {
   position: relative;
-  width: 480px;
-  max-width: calc(100vw - 32px);
-  padding: 32px;
+  width: 520px;
+  max-width: 100%;
+  padding: 40px;
   border-radius: 8px;
   background: var(--bg-primary);
+  box-shadow: var(--elevation-high);
   text-align: center;
+}
+@media (max-width: 480px) {
+  .card {
+    padding: 28px 20px;
+  }
 }
 .brand {
   display: flex;
   justify-content: center;
-  margin-bottom: 16px;
+  margin-bottom: 20px;
 }
 h1 {
-  margin: 0 0 8px;
+  margin: 0 0 10px;
   font-size: 24px;
   line-height: 30px;
   font-weight: 600;
   color: var(--header-primary);
 }
 .sub {
-  margin: 0 0 20px;
+  margin: 0 0 32px;
   font-size: 16px;
   color: var(--header-secondary);
 }
 .banner {
-  margin: 0 0 16px;
+  margin: 0 0 24px;
   padding: 10px 12px;
   border-radius: 4px;
   border: 1px solid var(--red);
@@ -247,7 +255,7 @@ h1 {
 .field {
   display: block;
   text-align: left;
-  margin-bottom: 20px;
+  margin-bottom: 28px;
 }
 .eyebrow {
   display: block;
@@ -280,8 +288,8 @@ h1 {
 }
 input {
   width: 100%;
-  height: 40px;
-  padding: 10px;
+  height: 44px;
+  padding: 10px 12px;
   border: 0;
   border-radius: 3px;
   background: var(--input-bg);
@@ -309,9 +317,9 @@ input.code::placeholder {
   width: 100%;
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 12px 16px 12px 12px;
-  border: 1px solid var(--bg-accent);
+  gap: 16px;
+  padding: 16px 18px 16px 16px;
+  border: 1px solid var(--border-strong);
   border-radius: 8px;
   background: var(--bg-primary);
   color: var(--header-primary);
@@ -320,6 +328,7 @@ input.code::placeholder {
   transition: background-color 0.12s ease;
 }
 .option:hover:not(:disabled) {
+  border-color: var(--bg-accent);
   background: var(--bg-modifier-hover);
 }
 .option:disabled {
@@ -339,6 +348,7 @@ input.code::placeholder {
   flex: 1;
   display: flex;
   flex-direction: column;
+  gap: 2px;
 }
 .option-text strong {
   font-size: 16px;
@@ -353,9 +363,9 @@ input.code::placeholder {
 }
 
 .join {
-  margin-top: 24px;
-  padding-top: 20px;
-  border-top: 1px solid var(--bg-modifier-hover);
+  margin-top: 32px;
+  padding-top: 28px;
+  border-top: 1px solid var(--border-strong);
 }
 .join.invite {
   margin-top: 0;
@@ -363,7 +373,7 @@ input.code::placeholder {
   border-top: 0;
 }
 h3 {
-  margin: 0 0 12px;
+  margin: 0 0 16px;
   font-size: 18px;
   font-weight: 600;
   color: var(--header-primary);
@@ -373,12 +383,12 @@ h3 {
 }
 .join-row {
   display: flex;
-  gap: 8px;
+  gap: 10px;
 }
 .btn {
   flex: none;
   min-width: 120px;
-  height: 40px;
+  height: 44px;
   padding: 0 16px;
   border: 0;
   border-radius: 3px;
@@ -424,9 +434,9 @@ h3 {
   align-items: center;
   justify-content: space-between;
   gap: 8px 12px;
-  margin-top: 24px;
-  padding-top: 16px;
-  border-top: 1px solid var(--border-subtle);
+  margin-top: 32px;
+  padding-top: 24px;
+  border-top: 1px solid var(--border-strong);
   font-size: 13px;
   color: var(--header-secondary);
   text-align: left;
@@ -439,7 +449,7 @@ h3 {
   gap: 8px;
 }
 .get-app-button {
-  padding: 6px 12px;
+  padding: 7px 14px;
   border: 1px solid var(--border-strong);
   border-radius: 4px;
   color: var(--interactive-normal);
@@ -462,8 +472,10 @@ h3 {
 }
 footer {
   display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
   justify-content: space-between;
-  margin-top: 28px;
+  margin-top: 32px;
   font-size: 12px;
   color: var(--text-muted);
 }

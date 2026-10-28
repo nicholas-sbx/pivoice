@@ -4,7 +4,6 @@ go 1.24.7
 
 require (
 	github.com/coder/websocket v1.8.15
-	github.com/gordonklaus/portaudio v0.0.0-20260203164431-765aa7dfa631
 	github.com/pion/webrtc/v4 v4.2.25
 	github.com/webview/webview_go v0.0.0-20240831120633-6173450d4dd6
 )
