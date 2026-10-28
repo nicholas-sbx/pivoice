@@ -480,8 +480,9 @@ needs nothing but the system's webview and sound server.
 
 **Not yet in the app:** HRTF (it pans equal-power, like **Stereo**); a
 measured mouth to ear on plain calls (no `abs-capture-time` from the app);
-honouring a receiver's DTX request on calls; Linux on ARM; signing and
-notarizing (macOS and Windows warn before the first run).
+honouring a receiver's DTX request on calls; Linux on ARM; macOS releases
+(it builds, but CI has it switched off); signing (Windows warns before the
+first run).
 
 ## Rooms: a Durable Object each
 
@@ -588,8 +589,8 @@ neither runs for the other's changes:
   yourself before pushing.
 - [`.github/workflows/release-native.yml`](.github/workflows/release-native.yml):
   the app. Only runs for changes under `native/`. On a branch it vets, tests
-  and builds all three platforms, and releases nothing, since the macOS and
-  Windows builds can't be tried locally. On main it releases when
+  and builds every platform, and releases nothing, since the Windows build
+  can't be tried locally. On main it releases when
   `native/VERSION` gets a version that isn't tagged yet.
 
 The site works like gasmoney's:
@@ -625,9 +626,11 @@ The app releases the same way, keyed on `native/VERSION` and tagged
 **Run workflow**. Three jobs start at once: **tag**, **check** (`gofmt`, `go
 vet`, `go test -race`, where the engine's tests run two engines on fake sound
 cards over real WebRTC) and **build** on Linux (Ubuntu 22.04, so glibc
-2.35+), macOS (one universal binary) and Windows. **release** waits for all
-of them, so nothing ships unless the tests passed too, and publishes a
-GitHub release with the three files and how to run each. It needs no secrets, only
+2.35+) and Windows. **release** waits for all of them, so nothing ships
+unless the tests passed too, and publishes a GitHub release with the files
+and how to run each. macOS is switched off for now (its runners can queue
+for a long time): uncomment its entry in the build matrix to bring it back,
+as one universal binary. It needs no secrets, only
 `VITE_PUBLIC_URL`, the site it opens: without it, a main push builds but
 doesn't tag or release.
 
