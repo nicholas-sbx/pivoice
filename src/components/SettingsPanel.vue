@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { AudioEngine, type SpatialMode } from '../audio/engine'
-import { applyMicPrefs, call, getEngine, llSupported, setDtx, setOutput, setSpatial, startMicTest, stopMicTest, type TestPath } from '../call'
+import { applyMicPrefs, call, getEngine, getNative, llSupported, micLevel, setAppDevices, setDtx, setOutput, setSpatial, startMicTest, stopMicTest, type TestPath } from '../call'
+import { isNative } from '../native/bridge'
 import Segmented from './Segmented.vue'
 import Icon from './Icon.vue'
 import LLSettings from './LLSettings.vue'
@@ -16,10 +17,21 @@ const tab = ref<'voice' | 'll'>('voice')
 const inputs = ref<MediaDeviceInfo[]>([])
 const outputs = ref<MediaDeviceInfo[]>([])
 const level = ref(0)
-const canPickOutput = AudioEngine.canPickOutput()
+const canPickOutput = isNative || AudioEngine.canPickOutput()
 let raf = 0
 
 async function loadDevices() {
+  const app = getNative()
+  if (app) {
+    // The app's own devices, the sound card's names for them.
+    const all = await app.devices()
+    const info = (d: (typeof all)[number], kind: MediaDeviceKind) => ({ deviceId: d.id, label: d.name + (d.default ? ' (default)' : ''), kind }) as MediaDeviceInfo
+    // "default" follows whatever the system's default is, as the browser's does.
+    const def = (kind: MediaDeviceKind) => ({ deviceId: 'default', label: 'System default', kind }) as MediaDeviceInfo
+    inputs.value = [def('audioinput'), ...all.filter(d => d.input).map(d => info(d, 'audioinput'))]
+    outputs.value = [def('audiooutput'), ...all.filter(d => d.output).map(d => info(d, 'audiooutput'))]
+    return
+  }
   try {
     const all = await navigator.mediaDevices.enumerateDevices()
     inputs.value = all.filter(d => d.kind === 'audioinput' && d.deviceId !== 'communications')
@@ -30,7 +42,17 @@ async function loadDevices() {
   }
 }
 
-const currentInput = computed(() => call.prefs.inputId || getEngine()?.micDeviceId || 'default')
+const currentInput = computed(() => (isNative ? call.prefs.appInputId : call.prefs.inputId || getEngine()?.micDeviceId) || 'default')
+const currentOutput = computed(() => (isNative ? call.prefs.appOutputId : call.prefs.outputId) || 'default')
+
+function pickInput(id: string) {
+  if (isNative) setAppDevices({ appInputId: id === 'default' ? '' : id })
+  else void applyMicPrefs({ inputId: id })
+}
+function pickOutput(id: string) {
+  if (isNative) setAppDevices({ appOutputId: id === 'default' ? '' : id })
+  else void setOutput(id)
+}
 
 function label(d: MediaDeviceInfo, i: number, kind: string) {
   return d.label || `${kind} ${i + 1}`
@@ -45,7 +67,8 @@ const modeHint = computed(() => modes.find(m => m.value === call.prefs.spatial)?
 
 const testPaths = computed<{ value: TestPath; label: string }[]>(() => [
   { value: 'raw', label: 'Raw' },
-  { value: 'webrtc', label: 'WebRTC audio' },
+  // The app has no WebRTC audio stack of its own to test.
+  ...(isNative ? [] : [{ value: 'webrtc' as const, label: 'WebRTC audio' }]),
   ...(llSupported ? [{ value: 'll' as const, label: 'Low latency' }] : [])
 ])
 function pickPath(v: TestPath) {
@@ -53,7 +76,9 @@ function pickPath(v: TestPath) {
   else call.test.path = v
 }
 const testHints: Record<TestPath, string> = {
-  raw: 'Mic straight to your ears: your devices and the browser’s buffers. The floor every path sits on.',
+  raw: isNative
+    ? 'Mic straight to your ears inside the sound card’s own callback, like pw-loopback. The floor every path sits on.'
+    : 'Mic straight to your ears: your devices and the browser’s buffers. The floor every path sits on.',
   webrtc: 'Through WebRTC’s encoder, jitter buffer and playout, exactly as a call, minus the network.',
   ll: 'Through the low-latency engine: its silence gate, encoder, packets, decoder and jitter buffer, minus the network.'
 }
@@ -65,7 +90,7 @@ const processing = [
 ] as const
 
 function meter() {
-  level.value = getEngine()?.micLevel() ?? 0
+  level.value = micLevel()
   raf = requestAnimationFrame(meter)
 }
 
@@ -111,14 +136,14 @@ onBeforeUnmount(() => {
     <div class="row two">
       <label class="field">
         <span class="eyebrow">Input Device</span>
-        <select :value="currentInput" @change="applyMicPrefs({ inputId: ($event.target as HTMLSelectElement).value })">
+        <select :value="currentInput" @change="pickInput(($event.target as HTMLSelectElement).value)">
           <option v-for="(d, i) in inputs" :key="d.deviceId" :value="d.deviceId">{{ label(d, i, 'Microphone') }}</option>
           <option v-if="!inputs.length" value="default">Default</option>
         </select>
       </label>
       <label v-if="canPickOutput" class="field">
         <span class="eyebrow">Output Device</span>
-        <select :value="call.prefs.outputId || 'default'" @change="setOutput(($event.target as HTMLSelectElement).value)">
+        <select :value="currentOutput" @change="pickOutput(($event.target as HTMLSelectElement).value)">
           <option v-for="(d, i) in outputs" :key="d.deviceId" :value="d.deviceId">{{ label(d, i, 'Speaker') }}</option>
           <option v-if="!outputs.length" value="default">Default</option>
         </select>
@@ -178,6 +203,8 @@ onBeforeUnmount(() => {
 
     <div class="row">
       <span class="eyebrow">Voice Processing</span>
+      <p v-if="isNative" class="note first">The app always takes your microphone raw: no echo cancellation, noise suppression or gain control, which all add delay.</p>
+      <template v-else>
       <Switch
         v-for="p in processing"
         :key="p.key"
@@ -186,6 +213,7 @@ onBeforeUnmount(() => {
         @update:model-value="v => applyMicPrefs({ [p.key]: v })"
       />
       <p class="note">Off for the lowest latency. Turn them on if you're not on headphones.</p>
+      </template>
       <Switch
         label="Silence Suppression (DTX)"
         hint="People stop sending you audio while they're quiet. Saves bandwidth, adds ~9 ms of buffering. Changing it reconnects you for a moment."

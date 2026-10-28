@@ -1,8 +1,8 @@
 import { isRoomCode } from '../lib/roomCode'
 import { randomId } from '../lib/rng'
 import { apiUrl, roomSocketUrl } from './config'
-import { PeerLink } from './peer'
-import { PROTOCOL_VERSION, newMemberKey, type ClientMsg, type Member, type Signal } from './protocol'
+import { PeerLink, type Link } from './peer'
+import { PROTOCOL_VERSION, newMemberKey, type ClientMsg, type LinkKind, type Member, type Signal } from './protocol'
 import { RoomSocket } from './roomSocket'
 import { tuneOpusSdp } from './sdp'
 
@@ -34,12 +34,29 @@ export interface SessionEvents {
   llPacket(memberId: string, data: ArrayBuffer): void
 }
 
+/**
+ * Who makes the connections when it isn't the page: the app, when the
+ * page is its UI (see native/link.ts). The session still decides who
+ * calls whom and when; the links it gets just carry no media the page
+ * can see.
+ */
+export interface ExternalLinks {
+  make(peer: string, kind: LinkKind, id: string, offerer: boolean, iceServers: RTCIceServer[], signal: (s: Signal) => void): ExternalLink
+}
+
+export interface ExternalLink extends Link {
+  /** The call is through (voice links). */
+  onConnected: (() => void) | null
+  /** The low-latency channel opened or closed (ll links). */
+  onChannel: ((up: boolean) => void) | null
+}
+
 export interface SessionOptions {
   name: string
   muted: boolean
   deafened: boolean
-  /** What we send to everyone. Its track can be swapped later with replaceTrack. */
-  stream: MediaStream
+  /** What we send to everyone. Its track can be swapped later with replaceTrack. None when the app does the sending. */
+  stream: MediaStream | null
   iceServers: RTCIceServer[]
   /** Ask the people talking to us to pause while they're silent (see sdp.ts). */
   dtx: boolean
@@ -50,10 +67,13 @@ export interface SessionOptions {
    * still has us, marked reconnecting, so we keep our seat and place.
    */
   rejoin?: { key: string; joinedAt: number }
+  /** Someone else makes the connections (the app); the page's own WebRTC otherwise. */
+  links?: ExternalLinks
 }
 
 interface Voice {
-  link: PeerLink
+  link: Link
+  connected: boolean
   /** Ours to put the mic on; the answerer gets it once the offer's in. */
   transceiver: RTCRtpTransceiver | null
   remote: MediaStream | null
@@ -61,7 +81,7 @@ interface Voice {
 }
 
 interface LLLink {
-  link: PeerLink
+  link: Link
   /** Only when we kept the channel (relay mode); normally the engine's worker holds it. */
   channel: RTCDataChannel | null
   up: boolean
@@ -97,8 +117,9 @@ export class Session {
   private llRetry = new Map<string, ReturnType<typeof setTimeout>>()
   /** Set by the app: takes a new low-latency channel (to its worker) and returns true, or leaves it with us. */
   adoptLL: ((id: string, ch: RTCDataChannel) => boolean) | null = null
-  private stream: MediaStream
+  private stream: MediaStream | null
   private iceServers: RTCIceServer[]
+  private external: ExternalLinks | null
   private sdpTransform: (sdp: string) => string
   private ended = false
   private downAt = 0
@@ -113,6 +134,7 @@ export class Session {
     this.self = { name: opts.name, muted: opts.muted, deafened: opts.deafened, ll: opts.ll }
     this.stream = opts.stream
     this.iceServers = opts.iceServers
+    this.external = opts.links ?? null
     const tuning = { dtx: opts.dtx }
     this.sdpTransform = sdp => tuneOpusSdp(sdp, tuning)
   }
@@ -125,7 +147,7 @@ export class Session {
   /** Make a new room. The Worker picks the code. */
   async create(): Promise<void> {
     this.events.status('connecting')
-    if (!supported()) return this.fail('unsupported')
+    if (!this.supported()) return this.fail('unsupported')
     let code = ''
     try {
       const res = await fetch(apiUrl('rooms'), { method: 'POST', signal: AbortSignal.timeout(CREATE_TIMEOUT_MS) })
@@ -143,7 +165,7 @@ export class Session {
   /** Join the room with this code. */
   async join(code: string): Promise<void> {
     this.events.status('connecting')
-    if (!supported()) return this.fail('unsupported')
+    if (!this.supported()) return this.fail('unsupported')
     this.connect(code)
   }
 
@@ -186,7 +208,12 @@ export class Session {
     this.room?.send({ t: 'signal', to, signal })
   }
 
-  private newLink(peer: string, kind: 'voice' | 'll', id: string, offerer: boolean): PeerLink {
+  private supported(): boolean {
+    return this.external ? typeof WebSocket !== 'undefined' : supported()
+  }
+
+  private newLink(peer: string, kind: LinkKind, id: string, offerer: boolean): Link {
+    if (this.external) return this.external.make(peer, kind, id, offerer, this.iceServers, s => this.signalTo(peer, s))
     return new PeerLink(peer, kind, id, offerer, {
       iceServers: this.iceServers,
       sdpTransform: kind === 'voice' ? this.sdpTransform : undefined,
@@ -250,7 +277,7 @@ export class Session {
   private placeCall(id: string) {
     if (this.ended || !this.room?.isUp) return this.retryCall(id)
     const link = this.newLink(id, 'voice', randomId(8), true)
-    const transceiver = link.pc.addTransceiver('audio', { direction: 'sendrecv', streams: [this.stream] })
+    const transceiver = link instanceof PeerLink ? link.pc.addTransceiver('audio', { direction: 'sendrecv', streams: this.stream ? [this.stream] : [] }) : null
     this.wireCall(id, link, transceiver)
     void link.offer()
   }
@@ -258,26 +285,37 @@ export class Session {
   private acceptCall(id: string, linkId: string, sdp: string) {
     const link = this.newLink(id, 'voice', linkId, false)
     const v = this.wireCall(id, link, null)
+    if (!(link instanceof PeerLink)) return void link.answer(sdp)
     void link.answer(sdp, () => {
       const t = link.pc.getTransceivers().find(t => t.receiver.track.kind === 'audio')
       if (!t) return
       t.direction = 'sendrecv'
-      t.sender.setStreams?.(this.stream)
+      if (this.stream) t.sender.setStreams?.(this.stream)
       v.transceiver = t
       this.updateSenders()
     })
   }
 
-  private wireCall(id: string, link: PeerLink, transceiver: RTCRtpTransceiver | null): Voice {
+  private wireCall(id: string, link: Link, transceiver: RTCRtpTransceiver | null): Voice {
     const v: Voice = {
       link,
+      connected: false,
       transceiver,
       remote: null,
       timer: setTimeout(() => {
-        if (link.pc.connectionState !== 'connected') link.close()
+        if (!v.connected) link.close()
       }, CALL_SETUP_TIMEOUT_MS)
     }
     this.voice.set(id, v)
+    link.onClose = () => this.onCallEnded(id, v)
+    if (!(link instanceof PeerLink)) {
+      // The app plays their voice itself; all we need to know is that it got through.
+      ;(link as ExternalLink).onConnected = () => {
+        v.connected = true
+        clearTimeout(v.timer)
+      }
+      return v
+    }
     link.pc.ontrack = e => {
       if (this.voice.get(id) !== v || e.track.kind !== 'audio') return
       v.remote = e.streams[0] ?? new MediaStream([e.track])
@@ -285,10 +323,10 @@ export class Session {
     }
     link.pc.addEventListener('connectionstatechange', () => {
       if (link.pc.connectionState !== 'connected' || this.voice.get(id) !== v) return
+      v.connected = true
       clearTimeout(v.timer)
       prioritiseAudio(link.pc)
     })
-    link.onClose = () => this.onCallEnded(id, v)
     this.updateSenders()
     return v
   }
@@ -325,6 +363,7 @@ export class Session {
 
   /** A new microphone: swap it into every call without renegotiating. */
   replaceTrack(track: MediaStreamTrack) {
+    if (!this.stream) return
     for (const old of this.stream.getAudioTracks()) if (old !== track) this.stream.removeTrack(old)
     if (!this.stream.getAudioTracks().includes(track)) this.stream.addTrack(track)
     this.updateSenders()
@@ -338,7 +377,7 @@ export class Session {
    * renegotiation. Quiet stretches while talking are Opus DTX's job (sdp.ts).
    */
   private updateSenders() {
-    const track = this.stream.getAudioTracks()[0] ?? null
+    const track = this.stream?.getAudioTracks()[0] ?? null
     for (const [id, v] of this.voice) {
       const sender = v.transceiver?.sender
       if (!sender || v.link.closed) continue
@@ -382,7 +421,7 @@ export class Session {
     void link.answer(sdp)
   }
 
-  private wireLL(id: string, link: PeerLink) {
+  private wireLL(id: string, link: Link) {
     const entry: LLLink = {
       link,
       channel: null,
@@ -393,6 +432,11 @@ export class Session {
     }
     this.llLinks.set(id, entry)
     link.onClose = () => this.onLLClosed(id, entry)
+    if (!(link instanceof PeerLink)) {
+      // The app holds the channel; it tells us when it opens and closes.
+      ;(link as ExternalLink).onChannel = up => this.llState(id, up)
+      return
+    }
     // Made before the offer, so it's in it; negotiated, so both ends make the same one.
     const ch = link.pc.createDataChannel('pv-audio', { negotiated: true, id: LL_CHANNEL_ID, ordered: false, maxRetransmits: 0 })
     // Straight to the engine's worker if it'll take it (it then tells us
@@ -476,7 +520,7 @@ export class Session {
     const out = new Map<string, RTCStatsReport>()
     await Promise.all(
       [...this.llLinks].map(async ([id, entry]) => {
-        if (!entry.up) return
+        if (!entry.up || !(entry.link instanceof PeerLink)) return
         try {
           out.set(id, await entry.link.pc.getStats())
         } catch {
@@ -502,7 +546,7 @@ export class Session {
     const out = new Map<string, RTCStatsReport>()
     await Promise.all(
       [...this.voice].map(async ([id, v]) => {
-        if (!v.remote || v.link.closed || !want(id)) return
+        if (!v.remote || v.link.closed || !want(id) || !(v.link instanceof PeerLink)) return
         try {
           out.set(id, await v.link.pc.getStats())
         } catch {

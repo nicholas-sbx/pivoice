@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { LL_DEFAULTS, LL_RANGES, type FrameMs, type LLConfig, type OpusApplication, captureFrame, sendDelayMs, type LLCodec } from '../audio/ll/config'
-import { call, getEngine, llSupported, setOutputBuffer, updateLL } from '../call'
+import { call, getEngine, getNative, llSupported, micLevel, setOutputBuffer, updateLL } from '../call'
+import { isNative } from '../native/bridge'
 import Segmented from './Segmented.vue'
 import Slider from './Slider.vue'
 import Switch from './Switch.vue'
@@ -42,7 +43,7 @@ const micDb = ref('…')
 let micTimer: ReturnType<typeof setInterval> | null = null
 onMounted(() => {
   micTimer = setInterval(() => {
-    const level = getEngine()?.micLevel() ?? 0
+    const level = micLevel()
     // micLevel() is RMS × 4, clamped; back to dBFS.
     micDb.value = level > 0 ? `${Math.round(20 * Math.log10(level / 4))} dBFS` : 'silent'
   }, 250)
@@ -71,6 +72,8 @@ const transport = typeof SharedArrayBuffer !== 'undefined' && globalThis.crossOr
 // What the device actually gave us (it rounds the request to what it supports).
 const buffer = computed(() => {
   void call.status
+  const info = getNative()?.info
+  if (info) return `${info.block}-sample blocks (${((info.block * 1000) / 48_000).toFixed(1)} ms) · in ${info.inputLatencyMs.toFixed(1)} ms, out ${info.outputLatencyMs.toFixed(1)} ms · ${info.api}`
   const ctx = getEngine()?.ctx
   if (!ctx) return ''
   return `${(ctx.baseLatency * 1000).toFixed(1)} ms Web Audio + ${((ctx.outputLatency || 0) * 1000).toFixed(1)} ms device`
@@ -93,9 +96,19 @@ const buffer = computed(() => {
     <div class="cost">
       Fixed delay <strong>{{ fixedMs }} ms</strong> ({{ c.codec === 'pcm' ? 'one block' : 'frame + lookahead' }}) ·
       {{ packetsPerSecond.toFixed(0) }} packets/s · ≈ {{ wireKbps.toFixed(0) }} kbps per listener ·
-      {{ transport === 'shared' ? 'shared memory' : 'messages' }} between audio thread and worker
+      <template v-if="isNative">straight from the sound card’s callback</template>
+      <template v-else>{{ transport === 'shared' ? 'shared memory' : 'messages' }} between audio thread and worker</template>
     </div>
 
+    <template v-if="isNative">
+      <span class="eyebrow">Sound card</span>
+      <p class="note">
+        The app runs the microphone and the speakers in one callback, with the smallest buffer your device offers, and plays
+        everyone through it: there’s no browser audio in the way.
+        <template v-if="buffer"><br />Now: {{ buffer }}</template>
+      </p>
+    </template>
+    <template v-else>
     <span class="eyebrow">Both engines</span>
     <Segmented
       label="Audio output buffer"
@@ -113,6 +126,7 @@ const buffer = computed(() => {
       reconnects you for a moment.
       <template v-if="buffer"><br />Now: {{ buffer }}</template>
     </p>
+    </template>
 
     <span class="eyebrow">Sending</span>
     <Segmented label="Codec" :options="codecs" :model-value="c.codec" @update:model-value="v => set('codec', v)" />
