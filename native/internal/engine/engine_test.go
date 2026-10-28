@@ -155,6 +155,21 @@ func TestMicTestLoop(t *testing.T) {
 	t.Logf("mic test, low latency: %.1f ms (%s)", *p.e.stats().Test.Ms, p.e.stats().Test.Detail)
 }
 
+// With the mic's processing on (no gate: a beep isn't a voice), the other
+// side still hears us, and the mic test's mouth to ear counts the processing.
+func TestProcessedMic(t *testing.T) {
+	a, b := call(t, "ll")
+	cfg := proto.Config{LL: proto.DefaultLL, Spatial: "off", Processing: proto.Processing{Echo: true, Noise: true, Gain: true}}
+	a.e.Handle(proto.In{T: "config", Config: &cfg})
+	waitFor(t, "b to hear a", func() bool { return b.loudest("a") > 0.02 })
+	a.e.Handle(proto.In{T: "test", Path: "ll"})
+	waitFor(t, "the loop to measure itself", func() bool {
+		ts := a.e.stats().Test
+		return ts != nil && ts.Measured && ts.Ms != nil
+	})
+	t.Logf("mic test with processing: %.1f ms", *a.e.stats().Test.Ms)
+}
+
 func deref[T any](p *T) any {
 	if p == nil {
 		return nil
@@ -190,6 +205,20 @@ func TestMixerDoesNotAllocate(t *testing.T) {
 	}
 	if a := testing.AllocsPerRun(2000, block); a > 0 {
 		t.Fatalf("%.2f allocations per block on the audio thread", a)
+	}
+	// And handing the mic over, with what played for echo cancellation.
+	go func() {
+		for b := range e.capture {
+			e.capFree <- b.pcm
+		}
+	}()
+	e.echoRef.Store(true)
+	e.capturing.Store(true)
+	for range 200 {
+		block()
+	}
+	if a := testing.AllocsPerRun(2000, block); a > 0 {
+		t.Fatalf("%.2f allocations per block handing over the mic", a)
 	}
 }
 

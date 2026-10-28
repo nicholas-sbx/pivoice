@@ -14,6 +14,7 @@ import (
 The audio thread: one duplex callback per block, mic in and speakers out.
 
 	mic block ──copy──▶ capture channel ──▶ sender goroutine (send.go)
+	  (with what played, for echo cancellation, only when that's on)
 	each person: inbox ──▶ jitter buffer ──▶ volume, pan ──▶ speakers
 
 Decoded frames reach each person's jitter buffer through a buffered
@@ -165,6 +166,8 @@ type capBlock struct {
 	ts   int64
 	inMs float64
 	pcm  []float32
+	// What played over the same block, mono (only for echo cancellation).
+	ref []float32
 }
 
 type jitterCfg struct {
@@ -196,22 +199,17 @@ func (m *mixer) process(in, out []float32, t audio.Times) {
 	n := len(in)
 	clock := float64(m.clock)
 
-	// The mic: its level always (the meter, the gate's threshold), the samples to the sender when it wants them.
-	raiseLevel(&e.selfLevel, rms(in))
-	if e.capturing.Load() {
-		// A buffer the sender has handed back (or a block dropped, if it's that far behind).
-		select {
-		case buf := <-e.capFree:
-			if cap(buf) < n {
-				buf = make([]float32, n)
-			}
-			buf = buf[:n]
-			copy(buf, in)
-			e.capture <- capBlock{ts: m.clock, inMs: t.InputMs, pcm: buf}
-		default:
-			// The sender's that far behind: this block of the mic is lost.
-			e.capDropped.Add(1)
-		}
+	// The mic: its level (the meter, the gate's threshold; the sender
+	// measures it after processing instead, when there is any), and the
+	// samples to the sender when it wants them: straight away, unless echo
+	// cancellation wants what this block plays alongside.
+	if e.processing.Load() == nil {
+		raiseLevel(&e.selfLevel, rms(in))
+	}
+	echoRef := e.echoRef.Load()
+	capturing := e.capturing.Load()
+	if capturing && !echoRef {
+		m.handoff(in, nil, t)
 	}
 
 	clear(out)
@@ -252,6 +250,9 @@ func (m *mixer) process(in, out []float32, t audio.Times) {
 			out[2*i+1] += v * rr
 		}
 	}
+	if capturing && echoRef {
+		m.handoff(in, out, t)
+	}
 	if e.rawLoop.Load() {
 		for i, v := range in {
 			out[2*i] += v
@@ -259,6 +260,34 @@ func (m *mixer) process(in, out []float32, t audio.Times) {
 		}
 	}
 	m.clock += int64(n)
+}
+
+// handoff a mic block to the sender in a buffer it handed back (and with
+// it, mixed to mono, what's playing: out, if it's wanted), or count it lost
+// if the sender's that far behind.
+func (m *mixer) handoff(in, out []float32, t audio.Times) {
+	n := len(in)
+	select {
+	case buf := <-m.e.capFree:
+		need := n
+		if out != nil {
+			need = 2 * n
+		}
+		if cap(buf) < need {
+			buf = make([]float32, need)
+		}
+		b := capBlock{ts: m.clock, inMs: t.InputMs, pcm: buf[:n]}
+		copy(b.pcm, in)
+		if out != nil {
+			b.ref = buf[n:need]
+			for i := range b.ref {
+				b.ref[i] = 0.5 * (out[2*i] + out[2*i+1])
+			}
+		}
+		m.e.capture <- b
+	default:
+		m.e.capDropped.Add(1)
+	}
 }
 
 // pull one block of this source into mix (added).

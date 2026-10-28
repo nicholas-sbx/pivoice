@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/nicholas-sbx/pivoice/native/internal/audio"
+	"github.com/nicholas-sbx/pivoice/native/internal/dsp"
 	"github.com/nicholas-sbx/pivoice/native/internal/ll"
 	"github.com/nicholas-sbx/pivoice/native/internal/proto"
 )
@@ -66,6 +67,11 @@ type Engine struct {
 	llConfig  atomic.Pointer[proto.LLConfig]
 	targets   atomic.Pointer[targets]
 	selfLevel atomic.Uint32
+	// The mic's processing: nil while it's all off, and then the sender
+	// doesn't so much as look at it. echoRef: the audio thread hands the
+	// sender what played too (echo cancellation's reference).
+	processing atomic.Pointer[dsp.Settings]
+	echoRef    atomic.Bool
 	// Mic blocks the sender wasn't ready for (since the sound card opened).
 	capDropped atomic.Int64
 	gcPauses   gcPauses
@@ -206,6 +212,7 @@ func (e *Engine) setLL(c proto.LLConfig) {
 
 func (e *Engine) configure(c proto.Config) {
 	e.setLL(c.LL)
+	e.setProcessing(c.Processing)
 	// Applies to links made from now on: it's in the SDP (the page reconnects you when it changes).
 	e.dtx.Store(c.DTX)
 	e.mu.Lock()
@@ -223,6 +230,19 @@ func (e *Engine) configure(c proto.Config) {
 		e.closeAudioLocked()
 		e.openAudioLocked()
 	}
+}
+
+func (e *Engine) setProcessing(p proto.Processing) {
+	s := dsp.Settings{Echo: p.Echo, Noise: p.Noise, Gain: p.Gain, GateThreshold: float32(p.GateThreshold), GateGraceMs: float32(p.GateGraceMs)}
+	if !s.Active() {
+		e.processing.Store(nil)
+		e.echoRef.Store(false)
+		return
+	}
+	if old := e.processing.Load(); old == nil || *old != s {
+		e.processing.Store(&s)
+	}
+	e.echoRef.Store(s.Echo)
 }
 
 func (e *Engine) peer(m proto.In) {

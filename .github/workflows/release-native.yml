@@ -72,22 +72,27 @@ jobs:
     defaults:
       run:
         working-directory: native
+    env:
+      PKG_CONFIG_PATH: ${{ github.workspace }}/native/build/deps/lib/pkgconfig:${{ github.workspace }}/native/build/pkgconfig
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-go@v6
         with:
           go-version-file: native/go.mod
           cache-dependency-path: native/go.sum
-      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev libgtk-3-dev portaudio19-dev libopus-dev pkg-config
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev libgtk-3-dev portaudio19-dev libopus-dev cmake pkg-config
+      # The system's PortAudio and Opus are fine for the tests; the processing libraries are built the release's way.
+      - run: build/deps.sh rnnoise speexdsp
       - name: gofmt
         run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
       - run: go vet ./...
-        env:
-          PKG_CONFIG_PATH: ${{ github.workspace }}/native/build/pkgconfig
       # The engine's tests run two engines on fake sound cards, talking over real WebRTC.
       - run: go test -race ./...
-        env:
-          PKG_CONFIG_PATH: ${{ github.workspace }}/native/build/pkgconfig
+      # What the mic's processing costs (the README's table comes from here).
+      - name: Benchmarks
+        run: |
+          go test -run '^$' -bench . -benchtime 2s ./internal/dsp/ | tee bench.txt
+          { echo '### Processing benchmarks'; echo '```'; cat bench.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
 
   # In parallel with check: a release waits for both, so nothing ships unless the tests pass too.
   build:
@@ -121,10 +126,10 @@ jobs:
           sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev libgtk-3-dev libasound2-dev cmake pkg-config
           native/build/deps.sh
           STATIC_AUDIO=1 native/build.sh "$PWD/dist/pivoice"
-          # PortAudio and Opus are in the binary; ALSA is loaded when it starts. (Its own
+          # PortAudio, Opus, RNNoise and SpeexDSP are in the binary; ALSA is loaded when it starts. (Its own
           # NEEDED entries only: ldd would list WebKitGTK's dependencies too.)
           readelf -d dist/pivoice | grep NEEDED
-          if readelf -d dist/pivoice | grep NEEDED | grep -E 'portaudio|opus|asound'; then echo "::error::linked against a shared audio library"; exit 1; fi
+          if readelf -d dist/pivoice | grep NEEDED | grep -E 'portaudio|opus|asound|rnnoise|speex'; then echo "::error::linked against a shared audio library"; exit 1; fi
           tar -czf "${{ matrix.asset }}" -C dist pivoice
 
       - name: Build (macOS)
@@ -142,7 +147,7 @@ jobs:
           # Ad hoc: Apple silicon won't run an unsigned binary at all. (Not notarized: see the release notes.)
           codesign --force --sign - dist/pivoice
           lipo -info dist/pivoice
-          if otool -L dist/pivoice | grep -E 'portaudio|opus'; then echo "::error::linked against a shared audio library"; exit 1; fi
+          if otool -L dist/pivoice | grep -E 'portaudio|opus|rnnoise|speex'; then echo "::error::linked against a shared audio library"; exit 1; fi
           tar -czf "${{ matrix.asset }}" -C dist pivoice
 
       - uses: msys2/setup-msys2@v2
@@ -164,7 +169,7 @@ jobs:
         run: |
           native/build/deps.sh
           STATIC_AUDIO=1 native/build.sh "$PWD/dist/pivoice.exe"
-          if ldd dist/pivoice.exe | grep -iE 'portaudio|opus|libstdc|libgcc|libwinpthread'; then echo "::error::needs a DLL that won't be there"; exit 1; fi
+          if ldd dist/pivoice.exe | grep -iE 'portaudio|opus|rnnoise|speex|libstdc|libgcc|libwinpthread'; then echo "::error::needs a DLL that won't be there"; exit 1; fi
           cp dist/pivoice.exe "${{ matrix.asset }}"
 
       - uses: actions/upload-artifact@v5

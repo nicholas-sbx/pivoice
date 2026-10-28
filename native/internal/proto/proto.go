@@ -84,6 +84,18 @@ type Config struct {
 	OutputID string `json:"outputId"`
 	// Windows: WASAPI exclusive mode, the device to ourselves for its smallest buffers.
 	Exclusive bool `json:"exclusive"`
+	// What the app does to the mic before it goes out (all off: nothing at all).
+	Processing Processing `json:"processing"`
+}
+
+// Processing is ProcessingConfig in src/native/protocol.ts.
+type Processing struct {
+	Echo  bool `json:"echo"`
+	Noise bool `json:"noise"`
+	Gain  bool `json:"gain"`
+	// Noise suppression's voice gate: 0–1 (0 is off), and how long it stays open after the last voice.
+	GateThreshold float64 `json:"gateThreshold"`
+	GateGraceMs   float64 `json:"gateGraceMs"`
 }
 
 type LLConfig struct {
@@ -122,6 +134,8 @@ type Hello struct {
 	Protocol int    `json:"protocol"`
 	OS       string `json:"os"`
 	Arch     string `json:"arch"`
+	// Whether this build can do noise suppression (it's built without RNNoise where that won't link).
+	Noise bool `json:"noise"`
 }
 
 // SignalOut: our side of setting up a link, for the page to pass to the room.

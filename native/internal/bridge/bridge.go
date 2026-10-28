@@ -27,6 +27,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/nicholas-sbx/pivoice/native/internal/dsp"
 	"github.com/nicholas-sbx/pivoice/native/internal/engine"
 	"github.com/nicholas-sbx/pivoice/native/internal/proto"
 )
@@ -151,7 +152,7 @@ func (c *Conn) handle(m proto.In) {
 		// A fresh page: nothing from before carries over.
 		b.engine.SetEmitter(nil)
 		b.engine.Reset()
-		c.emit(proto.Hello{T: "hello", Version: b.version, Protocol: proto.Protocol, OS: runtime.GOOS, Arch: runtime.GOARCH})
+		c.emit(proto.Hello{T: "hello", Version: b.version, Protocol: proto.Protocol, OS: runtime.GOOS, Arch: runtime.GOARCH, Noise: dsp.NoiseAvailable})
 		c.compatible = m.Protocol == proto.Protocol
 		if c.compatible {
 			log.Printf("bridge: the page is here (site %s)", m.Site)
