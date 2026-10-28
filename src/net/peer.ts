@@ -7,6 +7,29 @@ import type { IceCandidate, LinkKind, Signal } from './protocol'
  * the other side's description wait for it.
  */
 
+/**
+ * What a session needs from one connection, whoever makes it: a PeerLink
+ * here in the page, or the app (native/link.ts) when it's doing the audio.
+ */
+export interface Link {
+  readonly peer: string
+  readonly kind: LinkKind
+  /** Picked by the offerer; ties every signal to this one connection. */
+  readonly id: string
+  readonly offerer: boolean
+  readonly closed: boolean
+  /** Called once, however it ended. */
+  onClose: (() => void) | null
+  /** Offerer: once whatever this link carries has been added. */
+  offer(): Promise<void> | void
+  /** Answerer: their offer. `prepare` runs after it's set and before we answer, to attach what we send. */
+  answer(sdp: string, prepare?: () => void): Promise<void> | void
+  /** The rest of the conversation: their answer, their candidates, their goodbye. */
+  onSignal(signal: Signal): Promise<void> | void
+  /** `sayBye`: tell the other end, so they don't wait to notice. */
+  close(sayBye?: boolean): void
+}
+
 export interface PeerLinkOptions {
   iceServers: RTCIceServer[]
   /** Applied to our own descriptions before they're set and sent (see sdp.ts). */
@@ -19,7 +42,7 @@ type SignalBody = { sdp: { type: 'offer' | 'answer'; sdp: string } } | { ice: Ic
 
 const MAX_PENDING_CANDIDATES = 64
 
-export class PeerLink {
+export class PeerLink implements Link {
   readonly pc: RTCPeerConnection
   private pending: IceCandidate[] = []
   closed = false

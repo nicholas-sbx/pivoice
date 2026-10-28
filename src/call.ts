@@ -5,6 +5,10 @@ import { WebRTCLoopback } from './audio/loopback'
 import { LowLatencyEngine } from './audio/ll/engine'
 import { copyText } from './lib/copyText'
 import { loadPrefs, savePrefs, type Prefs } from './lib/prefs'
+import { NativeBridge, isNative } from './native/bridge'
+import { NativeLinks } from './native/link'
+import type { AppConfig } from './native/protocol'
+import { NativeVoice } from './native/voice'
 import { fetchIceServers, publicUrl } from './net/config'
 import type { Member } from './net/protocol'
 import { Session, type SessionFailure, type SessionStatus } from './net/session'
@@ -13,6 +17,12 @@ import { captureToSpeakerMs, summarise, type LinkStats, type Snapshot } from './
 /**
  * The one call this tab can be in, as reactive state for the UI, plus
  * everything the UI can do to it.
+ *
+ * Two ways to do the audio. In a browser, the page does it all (AudioEngine,
+ * the low-latency engine, WebRTC). In the app (native/), the page is only
+ * the UI and the app does the audio: NativeVoice stands in for the engines
+ * and NativeLinks for the peer connections, and the session above them is
+ * the same either way.
  */
 
 export type Phase = 'home' | 'joining' | 'room'
@@ -65,8 +75,36 @@ let ll: LowLatencyEngine | null = null
 /** Recent measured mouth-to-ear samples on the WebRTC path, per person. */
 const measured = new Map<string, number[]>()
 
-export const llSupported = LowLatencyEngine.supported()
+/** The app always has the low-latency engine. */
+export const llSupported = isNative || LowLatencyEngine.supported()
 let session: Session | null = null
+
+// ---- the app ---------------------------------------------------------------------
+
+let bridge: NativeBridge | null = null
+let nativeLinks: NativeLinks | null = null
+/** The audio, when the app is doing it. */
+let nv: NativeVoice | null = null
+
+/** In the app: connected to it, and on versions that work together. */
+export const nativeReady: Promise<boolean> = isNative ? connectApp() : Promise.resolve(false)
+
+function connectApp(): Promise<boolean> {
+  const b = new NativeBridge(__APP_VERSION__, __NATIVE_VERSION__)
+  bridge = b
+  nativeLinks = new NativeLinks(b)
+  return b.connect()
+}
+
+export function getNative(): NativeVoice | null {
+  return nv
+}
+
+/** Your settings, as the app needs them. */
+function appConfig(): AppConfig {
+  const p = call.prefs
+  return { ll: { ...p.ll }, spatial: p.spatial, dtx: p.dtx, inputId: p.appInputId, outputId: p.appOutputId }
+}
 let speakingTimer: ReturnType<typeof setInterval> | null = null
 let statsTimer: ReturnType<typeof setInterval> | null = null
 const snapshots = new Map<string, Snapshot>()
@@ -106,6 +144,7 @@ function effectiveMuted(): boolean {
 }
 
 function pushSelfState() {
+  nv?.setSelf(effectiveMuted(), call.deafened)
   engine?.setMicEnabled(!effectiveMuted())
   engine?.setDeafened(call.deafened)
   session?.setSelf({ muted: effectiveMuted(), deafened: call.deafened })
@@ -169,6 +208,7 @@ export async function rejoinCall() {
 async function connect(kind: 'create' | 'join', name: string, code: string, rejoin?: { key: string; joinedAt: number }) {
   snapshots.clear()
   call.links = {}
+  if (isNative) return connectNative(kind, name, code, rejoin)
 
   const eng = new AudioEngine(call.prefs.outputBuffer)
   engine = eng
@@ -259,6 +299,62 @@ async function connect(kind: 'create' | 'join', name: string, code: string, rejo
   else await s.join(code)
 }
 
+/** The app does the audio and makes the connections; the page runs the call. */
+async function connectNative(kind: 'create' | 'join', name: string, code: string, rejoin?: { key: string; joinedAt: number }) {
+  if (!(await nativeReady) || !bridge || !nativeLinks) {
+    // The app screen says what's wrong (see NativeGate).
+    rejoining = false
+    cleanup()
+    return
+  }
+  const v = new NativeVoice(bridge)
+  nv = v
+  const icePromise = fetchIceServers()
+  await v.start(appConfig())
+  if (nv !== v) return
+  call.micProblem = v.micProblem
+  if (!rejoin && v.micProblem) toast("Couldn't open a microphone. You can listen, but nobody can hear you.", 'error', 7000)
+  v.setSelf(effectiveMuted(), call.deafened)
+  for (const [id, volume] of Object.entries(call.volumes)) v.setVolume(id, volume)
+  for (const [id, on] of Object.entries(call.silenced)) if (on) v.setSilenced(id, true)
+  measured.clear()
+
+  const iceServers = await icePromise
+  if (nv !== v) return
+  const s = new Session(
+    {
+      name,
+      muted: effectiveMuted(),
+      deafened: call.deafened,
+      stream: null,
+      iceServers,
+      dtx: call.prefs.dtx,
+      ll: llOn(),
+      rejoin,
+      links: nativeLinks
+    },
+    {
+      status: (status, failure) => {
+        if (session === s) onStatus(status, failure)
+      },
+      roster: members => {
+        if (session !== s) return
+        call.selfId = s.selfId
+        call.members = members
+        v.setMembers(members)
+      },
+      // The app plays everyone itself.
+      stream: () => {},
+      streamEnd: () => {},
+      llLink: () => {},
+      llPacket: () => {}
+    }
+  )
+  session = s
+  if (kind === 'create') await s.create()
+  else await s.join(code)
+}
+
 function onStatus(status: SessionStatus, failure?: SessionFailure) {
   const wasInRoom = call.phase === 'room'
   call.status = status
@@ -291,6 +387,8 @@ function onStatus(status: SessionStatus, failure?: SessionFailure) {
 function cleanup() {
   stopMicTest()
   session = null
+  nv?.close()
+  nv = null
   ll?.close()
   ll = null
   engine?.close()
@@ -323,8 +421,9 @@ export function toggleShowCode() {
 function startSpeakingPoll() {
   if (speakingTimer) clearInterval(speakingTimer)
   speakingTimer = setInterval(() => {
-    if (!engine) return
-    const now = engine.speaking(call.selfId)
+    const src = nv ?? engine
+    if (!src) return
+    const now = src.speaking(call.selfId)
     const prev = call.speaking
     if (now.size === prev.size && [...now].every(id => prev.has(id))) return
     call.speaking = now
@@ -339,6 +438,12 @@ function startStatsPoll() {
     if (!s || busy) return
     busy = true
     try {
+      if (nv) {
+        // The app measures its own links, the way the route card wants them.
+        const st = await nv.stats()
+        if (session === s && st) call.links = st.peers
+        return
+      }
       ll?.refresh()
       // getStats() stalls Chrome's network thread, which is where the
       // low-latency engine's packets come in, and its jitter buffer grows
@@ -449,6 +554,7 @@ let testDeafened = false
  * jitter buffer). You're deafened while it runs, so you only hear yourself.
  */
 export async function startMicTest(path: TestPath) {
+  if (nv) return startNativeMicTest(path)
   const eng = engine
   if (!eng || call.phase !== 'room') return
   stopMicTest()
@@ -495,9 +601,36 @@ export async function startMicTest(path: TestPath) {
   testTimer = setInterval(() => void tick(), 1000)
 }
 
+/**
+ * In the app: raw is the mic straight to the speakers inside the sound
+ * card's own callback (like pw-loopback), and low latency is the app's
+ * whole engine looped back. There's no WebRTC audio stack to test.
+ */
+function startNativeMicTest(path: TestPath) {
+  const v = nv
+  if (!v || call.phase !== 'room') return
+  stopMicTest()
+  const p = path === 'webrtc' ? 'll' : path
+  Object.assign(call.test, { on: true, path: p, ms: null, measured: false, detail: '' })
+  if (!call.deafened) {
+    testDeafened = true
+    call.deafened = true
+    pushSelfState()
+  }
+  v.test(p)
+  const tick = async () => {
+    const st = await v.stats()
+    if (!call.test.on || nv !== v || !st?.test) return
+    Object.assign(call.test, { ms: st.test.ms, measured: st.test.measured, detail: st.test.detail })
+  }
+  void tick()
+  testTimer = setInterval(() => void tick(), 1000)
+}
+
 export function stopMicTest() {
   if (testTimer) clearInterval(testTimer)
   testTimer = null
+  nv?.test('')
   testLoop?.stop()
   testLoop = null
   engine?.setRawLoopback(false)
@@ -523,7 +656,8 @@ export function updateLL(patch: Partial<LLConfig>) {
   const toggled = next.enabled !== call.prefs.ll.enabled
   updatePrefs({ ll: next })
   ll?.configure(next)
-  if (toggled) session?.setSelf({ ll: llOn() && !!ll })
+  nv?.configure(appConfig())
+  if (toggled) session?.setSelf({ ll: llOn() && (!!ll || !!nv) })
   updateLLActive()
 }
 
@@ -550,6 +684,7 @@ export function toggleDeafen() {
 export function setSpatial(mode: SpatialMode) {
   updatePrefs(mode === 'off' ? { spatial: mode } : { spatial: mode, lastSpatial: mode })
   engine?.setSpatial(mode)
+  nv?.configure(appConfig())
 }
 
 export function toggleSpatial() {
@@ -583,14 +718,33 @@ export async function setOutput(deviceId: string) {
   await engine?.setOutputDevice(deviceId)
 }
 
+/** In the app: its own devices (it reopens the sound card on the spot). */
+export function setAppDevices(patch: Partial<Pick<Prefs, 'appInputId' | 'appOutputId'>>) {
+  updatePrefs(patch)
+  nv?.configure(appConfig())
+}
+
 export function setVolume(id: string, volume: number) {
   call.volumes[id] = volume
   engine?.setVolume(id, volume)
+  nv?.setVolume(id, volume)
 }
 
 export function setSilenced(id: string, on: boolean) {
   call.silenced[id] = on
   engine?.setSilenced(id, on)
+  nv?.setSilenced(id, on)
+}
+
+/** Where someone sits, for spatial audio. Cheap to call every frame. */
+export function setSeatAngle(id: string, angle: number) {
+  engine?.setAngle(id, angle)
+  nv?.setAngle(id, angle)
+}
+
+/** Your microphone level, 0–1, for the meters. */
+export function micLevel(): number {
+  return (nv ?? engine)?.micLevel() ?? 0
 }
 
 export function inviteLink(): string {
@@ -610,5 +764,5 @@ window.addEventListener('pagehide', () => session?.leave())
 
 // Dev builds only: a handle for poking at a live call from the console or the e2e run.
 if (import.meta.env.DEV) {
-  ;(window as unknown as { __pv: unknown }).__pv = { call, session: () => session, ll: () => ll, engine: () => engine }
+  ;(window as unknown as { __pv: unknown }).__pv = { call, session: () => session, ll: () => ll, engine: () => engine, native: () => nv }
 }

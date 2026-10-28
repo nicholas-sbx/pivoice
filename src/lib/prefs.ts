@@ -10,6 +10,9 @@ export interface Prefs {
   lastSpatial: Exclude<SpatialMode, 'off'>
   inputId: string
   outputId: string
+  /** The same, in the app (its devices aren't the browser's). */
+  appInputId: string
+  appOutputId: string
   // All off by default: they each add latency, and everyone's on headphones.
   echoCancellation: boolean
   noiseSuppression: boolean
@@ -49,6 +52,8 @@ export const DEFAULT_PREFS: Prefs = {
   lastSpatial: 'hrtf',
   inputId: '',
   outputId: '',
+  appInputId: '',
+  appOutputId: '',
   echoCancellation: false,
   noiseSuppression: false,
   autoGainControl: false,
@@ -70,6 +75,8 @@ export function loadPrefs(): Prefs {
     if (typeof raw.inputId === 'string') p.inputId = raw.inputId
     if (raw.outputBuffer === 'min' || raw.outputBuffer === 'small' || raw.outputBuffer === 'interactive') p.outputBuffer = raw.outputBuffer
     if (typeof raw.outputId === 'string') p.outputId = raw.outputId
+    if (typeof raw.appInputId === 'string') p.appInputId = raw.appInputId
+    if (typeof raw.appOutputId === 'string') p.appOutputId = raw.appOutputId
     for (const k of ['echoCancellation', 'noiseSuppression', 'autoGainControl', 'showCode', 'showPing', 'showRoute'] as const) {
       if (typeof raw[k] === 'boolean') p[k] = raw[k]
     }

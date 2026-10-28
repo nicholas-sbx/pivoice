@@ -15,7 +15,8 @@
     "typecheck:worker": "tsc --noEmit -p worker",
     "test": "vitest run",
     "test:watch": "vitest",
-    "e2e": "node scripts/e2e.mjs"
+    "e2e": "node scripts/e2e.mjs",
+    "e2e:native": "node scripts/e2e-native.mjs"
   },
   "engines": {
     "node": ">=22.12"

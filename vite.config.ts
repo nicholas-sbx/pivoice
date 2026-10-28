@@ -6,11 +6,13 @@ import vue from '@vitejs/plugin-vue'
 
 // Shown on the start screen; each release bumps it in package.json.
 const { version } = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')) as { version: string }
+// The newest app (native/), released on its own: the page tells people on an older one where to get it.
+const nativeVersion = readFileSync(new URL('./native/VERSION', import.meta.url), 'utf8').trim()
 
 export default defineConfig({
   base: './',
   plugins: [vue()],
-  define: { __APP_VERSION__: JSON.stringify(version) },
+  define: { __APP_VERSION__: JSON.stringify(version), __NATIVE_VERSION__: JSON.stringify(nativeVersion) },
   resolve: {
     alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) }
   },

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { call, startCall } from '../call'
+import { downloadUrl, native } from '../native/bridge'
 import Icon from '../components/Icon.vue'
 import { codeFromHash, CODE_LENGTH, isRoomCode, normalizeRoomCode } from '../lib/roomCode'
 import { cleanName } from '../net/protocol'
@@ -87,6 +88,10 @@ onMounted(() => {
       </p>
 
       <div v-if="call.error" class="banner" role="alert">{{ call.error }}</div>
+      <div v-if="native.verdict?.ok && native.verdict.newer" class="banner info">
+        Pivoice app {{ native.verdict.newer }} is out (you have {{ native.app?.version }}):
+        <a :href="downloadUrl(native.verdict.newer)" target="_blank" rel="noopener">download it</a> when you get a moment.
+      </div>
 
       <label class="field">
         <span class="eyebrow" :class="{ bad: nameError }">
@@ -153,7 +158,7 @@ onMounted(() => {
 
       <footer>
         <span><Icon name="headphones" :size="16" /> Best with headphones</span>
-        <span>v{{ version }}</span>
+        <span>v{{ version }}<template v-if="native.app"> · app {{ native.app.version }}</template></span>
       </footer>
     </section>
   </main>
@@ -204,6 +209,13 @@ h1 {
   color: var(--text-normal);
   font-size: 14px;
   text-align: left;
+}
+.banner.info {
+  border-color: var(--brand);
+  background: rgba(88, 101, 242, 0.1);
+}
+.banner a {
+  color: var(--text-link);
 }
 .field {
   display: block;

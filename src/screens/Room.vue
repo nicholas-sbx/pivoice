@@ -4,8 +4,8 @@ import {
   call,
   copyCode,
   copyInvite,
-  getEngine,
   leaveCall,
+  setSeatAngle,
   toggleDeafen,
   toggleMute,
   toggleShowCode,
@@ -35,7 +35,7 @@ const isMac = /Mac|iPhone|iPad/.test(navigator.platform)
 const mod = isMac ? '⌘⇧' : 'Ctrl+Shift+'
 
 function onAngle(id: string, angle: number) {
-  getEngine()?.setAngle(id, angle)
+  setSeatAngle(id, angle)
 }
 
 function onKey(e: KeyboardEvent) {

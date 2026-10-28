@@ -55,9 +55,9 @@ interface Remote {
 }
 
 /** RMS above this counts as talking (about −40 dBFS). */
-const SPEAKING_RMS = 0.01
+export const SPEAKING_RMS = 0.01
 /** Keep the ring lit this long after the last loud bit, so it doesn't flicker between words. */
-const SPEAKING_HOLD_MS = 300
+export const SPEAKING_HOLD_MS = 300
 
 export class AudioEngine {
   readonly ctx: AudioContext
