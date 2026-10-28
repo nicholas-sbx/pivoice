@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { LL_DEFAULTS, frameSamples, sanitizeLL } from '../src/audio/ll/config'
+import { LL_DEFAULTS, frameSamples, llDefaults, sanitizeLL } from '../src/audio/ll/config'
 import { JitterBuffer, type JitterConfig } from '../src/audio/ll/jitter'
 import { PING, PONG, Unwrapper, bytesToPcm, decodePacket, decodePing, encodePacket, encodePing, pcmToBytes } from '../src/audio/ll/packet'
 
@@ -54,13 +54,21 @@ describe('packets', () => {
 
 describe('config', () => {
   it('fills in defaults and clamps', () => {
-    expect(sanitizeLL(null)).toEqual(LL_DEFAULTS)
-    // Settings saved before the current defaults reset to them, keeping only whether it's on.
-    expect(sanitizeLL({ enabled: true, frameMs: 2.5, dtxThresholdDb: -55 })).toEqual({ ...LL_DEFAULTS, enabled: true })
-    // On by default since rev 3: an "off" saved before then was just the old default.
-    expect(sanitizeLL({ rev: 2, enabled: false }).enabled).toBe(true)
-    expect(sanitizeLL({ rev: LL_DEFAULTS.rev, enabled: false }).enabled).toBe(false)
-    const c = sanitizeLL({ rev: LL_DEFAULTS.rev, frameMs: 2.5, bitrateKbps: 9999, minBufferMs: 50, maxBufferMs: 20, redundancy: 7, application: 'nope' })
+    expect(sanitizeLL(null, true)).toEqual(LL_DEFAULTS)
+    // Off in a browser, on in the app.
+    expect(sanitizeLL(null, false)).toEqual({ ...LL_DEFAULTS, enabled: false })
+    expect(llDefaults(true).enabled).toBe(true)
+    // Settings saved before rev 3 reset to the defaults.
+    expect(sanitizeLL({ enabled: true, frameMs: 2.5, dtxThresholdDb: -55 }, true)).toEqual(LL_DEFAULTS)
+    // In the app, on by default since rev 3: an "off" saved before then was just the old default.
+    expect(sanitizeLL({ rev: 2, enabled: false }, true).enabled).toBe(true)
+    expect(sanitizeLL({ rev: 3, enabled: false }, true).enabled).toBe(false)
+    // In a browser, off by default since rev 4: an "on" saved at rev 3 was the old default, but its tuning stays.
+    const web3 = sanitizeLL({ rev: 3, enabled: true, frameMs: 10 }, false)
+    expect(web3.enabled).toBe(false)
+    expect(web3.frameMs).toBe(10)
+    expect(sanitizeLL({ rev: LL_DEFAULTS.rev, enabled: true }, false).enabled).toBe(true)
+    const c = sanitizeLL({ rev: LL_DEFAULTS.rev, frameMs: 2.5, bitrateKbps: 9999, minBufferMs: 50, maxBufferMs: 20, redundancy: 7, application: 'nope' }, true)
     expect(c.frameMs).toBe(2.5)
     expect(c.bitrateKbps).toBe(256)
     expect(c.maxBufferMs).toBe(50)

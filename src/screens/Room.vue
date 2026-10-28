@@ -17,6 +17,7 @@ import Icon from '../components/Icon.vue'
 import RoundTable from '../components/RoundTable.vue'
 import SettingsPanel from '../components/SettingsPanel.vue'
 import UserMenu from '../components/UserMenu.vue'
+import { isNative } from '../native/bridge'
 
 const settingsOpen = ref(false)
 const displayOpen = ref(false)
@@ -28,7 +29,7 @@ const spatialLabel = computed(() =>
   call.prefs.spatial === 'off'
     ? 'Spatial Audio: Off'
     : call.prefs.spatial === 'hrtf'
-      ? 'Spatial Audio: HRTF'
+      ? `Spatial Audio: ${isNative ? 'Stereo + ITD' : 'HRTF'}`
       : 'Spatial Audio: Stereo'
 )
 const isMac = /Mac|iPhone|iPad/.test(navigator.platform)

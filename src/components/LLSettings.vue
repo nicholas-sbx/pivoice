@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { LL_DEFAULTS, LL_RANGES, type FrameMs, type LLConfig, type OpusApplication, captureFrame, sendDelayMs, type LLCodec } from '../audio/ll/config'
-import { call, getEngine, getNative, llSupported, micLevel, setOutputBuffer, updateLL } from '../call'
-import { isNative } from '../native/bridge'
+import { call, getEngine, getNative, llSupported, micLevel, setAppDevices, setOutputBuffer, updateLL } from '../call'
+import { isNative, native } from '../native/bridge'
+import type { AudioInfo, Glitches } from '../native/protocol'
 import Segmented from './Segmented.vue'
 import Slider from './Slider.vue'
 import Switch from './Switch.vue'
@@ -41,15 +42,41 @@ const redundancy: { value: 0 | 1 | 2; label: string }[] = [
 // Your mic's level now, to set the silence threshold against.
 const micDb = ref('…')
 let micTimer: ReturnType<typeof setInterval> | null = null
+// In the app: the sound card as it is now, and everything that could have put a click in the audio.
+const appAudio = ref<AudioInfo | null>(null)
+const glitches = ref<Glitches | null>(null)
+let glitchTimer: ReturnType<typeof setInterval> | null = null
+async function readGlitches() {
+  const st = await getNative()?.stats()
+  if (!st) return
+  appAudio.value = st.audio
+  glitches.value = st.glitches ?? null
+}
 onMounted(() => {
   micTimer = setInterval(() => {
     const level = micLevel()
     // micLevel() is RMS × 4, clamped; back to dBFS.
     micDb.value = level > 0 ? `${Math.round(20 * Math.log10(level / 4))} dBFS` : 'silent'
   }, 250)
+  if (isNative) {
+    void readGlitches()
+    glitchTimer = setInterval(() => void readGlitches(), 1000)
+  }
 })
 onBeforeUnmount(() => {
   if (micTimer) clearInterval(micTimer)
+  if (glitchTimer) clearInterval(glitchTimer)
+})
+const onWindows = computed(() => native.app?.os === 'windows')
+const glitchRows = computed(() => {
+  const g = glitches.value
+  if (!g) return []
+  return [
+    { n: g.inputOverflows, label: 'mic overruns', hint: 'the sound card’s mic buffer filled before the app read it' },
+    { n: g.outputUnderflows, label: 'speaker underruns', hint: 'a block reached the speakers late' },
+    { n: g.captureDropped, label: 'mic blocks dropped', hint: 'the sender fell behind' },
+    { n: g.framesDropped, label: 'incoming frames dropped', hint: 'the audio thread fell behind' }
+  ]
 })
 
 // What these choices cost: fixed delay, and bandwidth per listener.
@@ -72,8 +99,8 @@ const transport = typeof SharedArrayBuffer !== 'undefined' && globalThis.crossOr
 // What the device actually gave us (it rounds the request to what it supports).
 const buffer = computed(() => {
   void call.status
-  const info = getNative()?.info
-  if (info) return `${info.block}-sample blocks (${((info.block * 1000) / 48_000).toFixed(1)} ms) · in ${info.inputLatencyMs.toFixed(1)} ms, out ${info.outputLatencyMs.toFixed(1)} ms · ${info.api}`
+  const info = appAudio.value ?? getNative()?.info
+  if (info) return `${info.block}-sample blocks (${((info.block * 1000) / 48_000).toFixed(1)} ms) · in ${info.inputLatencyMs.toFixed(1)} ms, out ${info.outputLatencyMs.toFixed(1)} ms · ${info.api}${info.mode ? ` (${info.mode})` : ''}`
   const ctx = getEngine()?.ctx
   if (!ctx) return ''
   return `${(ctx.baseLatency * 1000).toFixed(1)} ms Web Audio + ${((ctx.outputLatency || 0) * 1000).toFixed(1)} ms device`
@@ -107,6 +134,28 @@ const buffer = computed(() => {
         everyone through it: there’s no browser audio in the way.
         <template v-if="buffer"><br />Now: {{ buffer }}</template>
       </p>
+      <Switch
+        v-if="onWindows"
+        label="Exclusive Mode"
+        hint="Takes the sound card for the app alone, for WASAPI’s smallest buffers: less delay, but nothing else can play or record on it while you’re in a call. Without it, the app still asks Windows for the mic raw (no effects)."
+        :model-value="call.prefs.appExclusive"
+        @update:model-value="v => setAppDevices({ appExclusive: v })"
+      />
+      <template v-if="glitches">
+        <span class="eyebrow">Glitches since the sound card opened</span>
+        <ul class="glitches">
+          <li v-for="g in glitchRows" :key="g.label" :class="{ bad: g.n > 0 }" :title="g.hint">
+            <strong>{{ g.n }}</strong> {{ g.label }}
+          </li>
+          <li :class="{ bad: glitches.gcPauseMaxMs > 1 }" title="the longest the app stopped for garbage collection lately">
+            <strong>{{ glitches.gcPauseMaxMs.toFixed(2) }} ms</strong> longest pause
+          </li>
+        </ul>
+        <p class="note">
+          Hear a crackle? Whatever counted up just then is why. Underruns or overruns: the sound card wants a bigger buffer, or
+          something else on the machine is hogging it. Late frames in someone’s route card: the network.
+        </p>
+      </template>
     </template>
     <template v-else>
     <span class="eyebrow">Both engines</span>
@@ -258,6 +307,25 @@ const buffer = computed(() => {
 }
 .cost strong {
   color: var(--header-primary);
+}
+.glitches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin: 0 0 6px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--bg-tertiary);
+  list-style: none;
+  font-size: 13px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.glitches strong {
+  color: var(--header-primary);
+}
+.glitches .bad strong {
+  color: var(--red);
 }
 .reset {
   margin-top: 12px;

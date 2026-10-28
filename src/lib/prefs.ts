@@ -1,5 +1,6 @@
 import type { OutputBuffer, SpatialMode } from '../audio/engine'
-import { LL_DEFAULTS, sanitizeLL, type LLConfig } from '../audio/ll/config'
+import { llDefaults, sanitizeLL, type LLConfig } from '../audio/ll/config'
+import { isNative } from '../native/bridge'
 
 export interface Prefs {
   /** See PREFS_REV. */
@@ -13,10 +14,19 @@ export interface Prefs {
   /** The same, in the app (its devices aren't the browser's). */
   appInputId: string
   appOutputId: string
+  /** The app on Windows: WASAPI exclusive mode (smallest buffers; nothing else can play meanwhile). */
+  appExclusive: boolean
   // All off by default: they each add latency, and everyone's on headphones.
   echoCancellation: boolean
   noiseSuppression: boolean
   autoGainControl: boolean
+  /**
+   * The app's noise suppression gate: RNNoise's voice probability below
+   * which you're faded out (0 is no gate), once noiseGraceMs has passed
+   * since the last voice. Set low and long, so words aren't clipped.
+   */
+  noiseGate: number
+  noiseGraceMs: number
   /** The room code is hidden until you ask to see it (screen sharing, streaming). */
   showCode: boolean
   /** Ping beside everyone's name. */
@@ -54,21 +64,24 @@ export const DEFAULT_PREFS: Prefs = {
   outputId: '',
   appInputId: '',
   appOutputId: '',
+  appExclusive: false,
   echoCancellation: false,
   noiseSuppression: false,
   autoGainControl: false,
+  noiseGate: 0.4,
+  noiseGraceMs: 400,
   showCode: false,
   showPing: true,
   showRoute: false,
   dtx: false,
   outputBuffer: 'min',
-  ll: LL_DEFAULTS
+  ll: llDefaults(isNative)
 }
 
 export function loadPrefs(): Prefs {
   try {
     const raw = JSON.parse(localStorage.getItem(KEY) ?? '{}') as Partial<Prefs>
-    const p = { ...DEFAULT_PREFS, ll: sanitizeLL(raw.ll) }
+    const p = { ...DEFAULT_PREFS, ll: sanitizeLL(raw.ll, isNative) }
     if (typeof raw.name === 'string') p.name = raw.name
     if (raw.spatial === 'off' || raw.spatial === 'stereo' || raw.spatial === 'hrtf') p.spatial = raw.spatial
     if (raw.lastSpatial === 'stereo' || raw.lastSpatial === 'hrtf') p.lastSpatial = raw.lastSpatial
@@ -77,13 +90,15 @@ export function loadPrefs(): Prefs {
     if (typeof raw.outputId === 'string') p.outputId = raw.outputId
     if (typeof raw.appInputId === 'string') p.appInputId = raw.appInputId
     if (typeof raw.appOutputId === 'string') p.appOutputId = raw.appOutputId
-    for (const k of ['echoCancellation', 'noiseSuppression', 'autoGainControl', 'showCode', 'showPing', 'showRoute'] as const) {
+    if (typeof raw.noiseGate === 'number' && raw.noiseGate >= 0 && raw.noiseGate <= 1) p.noiseGate = raw.noiseGate
+    if (typeof raw.noiseGraceMs === 'number' && raw.noiseGraceMs >= 0 && raw.noiseGraceMs <= 2000) p.noiseGraceMs = raw.noiseGraceMs
+    for (const k of ['echoCancellation', 'noiseSuppression', 'autoGainControl', 'appExclusive', 'showCode', 'showPing', 'showRoute'] as const) {
       if (typeof raw[k] === 'boolean') p[k] = raw[k]
     }
     if (typeof raw.dtx === 'boolean' && raw.rev === PREFS_REV) p.dtx = raw.dtx
     return p
   } catch {
-    return { ...DEFAULT_PREFS, ll: { ...LL_DEFAULTS } }
+    return { ...DEFAULT_PREFS, ll: llDefaults(isNative) }
   }
 }
 

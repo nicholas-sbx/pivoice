@@ -20,19 +20,21 @@ export const PCM_FRAME = 128
 
 /**
  * Bumped when the defaults change for a reason that should reach people
- * who already have settings saved: their tuning resets to the new defaults
- * once (whether the engine is on is kept). 2: the silence gate stopped
- * chopping quiet speech (−70 dBFS, 400 ms hangover) and the jitter target
- * moved to the 99th percentile. 3: raw PCM became the default codec, and
- * the engine is on by default (see ENABLED_SINCE).
+ * who already have settings saved. 2: the silence gate stopped chopping
+ * quiet speech (−70 dBFS, 400 ms hangover) and the jitter target moved to
+ * the 99th percentile. 3: raw PCM became the default codec, and the engine
+ * is on by default. 4: in a browser it's off by default again (the app
+ * keeps it on); tuning carried over.
  */
-export const LL_REV = 3
+export const LL_REV = 4
+/** Saved tuning from before this resets to the defaults, once. */
+const TUNING_SINCE = 3
 /**
- * Whether the engine is on survives a revision, except across this one:
- * it used to be off by default and saved as such for everyone, so a saved
- * `enabled` from before it doesn't count.
+ * Whether the engine is on survives a revision, except across these: it
+ * was saved for everyone as whatever the default was, so a saved `enabled`
+ * from before the default changed was never anyone's choice.
  */
-const ENABLED_SINCE = 3
+const ENABLED_SINCE = { app: 3, web: 4 }
 
 export interface LLConfig {
   rev: number
@@ -71,6 +73,7 @@ export interface LLConfig {
 export const FRAME_OPTIONS: FrameMs[] = [2.5, 5, 10, 20]
 export const APPLICATIONS: OpusApplication[] = ['lowdelay', 'voip', 'audio']
 
+/** The app's defaults (see llDefaults). */
 export const LL_DEFAULTS: LLConfig = {
   rev: LL_REV,
   enabled: true,
@@ -109,12 +112,22 @@ export const LL_RANGES = {
   concealMs: [0, 60, 1]
 } as const satisfies Partial<Record<keyof LLConfig, readonly [number, number, number]>>
 
-export function sanitizeLL(raw: unknown): LLConfig {
-  const c: LLConfig = { ...LL_DEFAULTS }
+/**
+ * The defaults: the same everywhere but for whether the engine is on. The
+ * app always has it and it's the point of the app; a browser has to decode
+ * in a worklet, which is touchier, so there it's for those who ask.
+ */
+export function llDefaults(app: boolean): LLConfig {
+  return { ...LL_DEFAULTS, enabled: app }
+}
+
+export function sanitizeLL(raw: unknown, app: boolean): LLConfig {
+  const c = llDefaults(app)
   if (!raw || typeof raw !== 'object') return c
   const r = raw as Record<string, unknown>
-  if (typeof r.enabled === 'boolean' && typeof r.rev === 'number' && r.rev >= ENABLED_SINCE) c.enabled = r.enabled
-  if (r.rev !== LL_REV) return c
+  const rev = typeof r.rev === 'number' ? r.rev : 0
+  if (typeof r.enabled === 'boolean' && rev >= ENABLED_SINCE[app ? 'app' : 'web']) c.enabled = r.enabled
+  if (rev < TUNING_SINCE || rev > LL_REV) return c
   if (typeof r.dtx === 'boolean') c.dtx = r.dtx
   if (FRAME_OPTIONS.includes(r.frameMs as FrameMs)) c.frameMs = r.frameMs as FrameMs
   if (APPLICATIONS.includes(r.application as OpusApplication)) c.application = r.application as OpusApplication

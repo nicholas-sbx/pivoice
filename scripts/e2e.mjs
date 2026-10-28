@@ -237,7 +237,8 @@ try {
   await expectSeats(dan, 5, 'Dan after Finn left')
   ok('Finn left, five remain')
 
-  // The low-latency engine is on by default, so everyone's on it; Eve turns it
+  // In a browser the low-latency engine is off by default (the app has it on),
+  // so everyone's on WebRTC audio; then they all turn it on, Eve turns it back
   // off, and only the pairs with her go back to WebRTC audio.
   const eve = extra[0]
   const toggleLL = async p => {
@@ -261,8 +262,13 @@ try {
       [name, re.source],
       { timeout: 20_000 }
     )
+  await engineOf(dan, 'Eve', /webrtc audio/).catch(() => {
+    throw new Error('in a browser, the low-latency engine should be off by default')
+  })
+  ok('low-latency engine off by default in a browser')
+  for (const p of [bob, cara, dan, eve, extra[2]]) await toggleLL(p)
   await engineOf(dan, 'Eve', /low-latency engine/).catch(() => {
-    throw new Error('the low-latency engine should carry everyone by default')
+    throw new Error('everyone turned the low-latency engine on but it never took over')
   })
   await dan.waitForTimeout(3000)
   const llCard = await cardFor(dan, 'Eve')

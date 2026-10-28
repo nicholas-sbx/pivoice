@@ -103,7 +103,21 @@ export function getNative(): NativeVoice | null {
 /** Your settings, as the app needs them. */
 function appConfig(): AppConfig {
   const p = call.prefs
-  return { ll: { ...p.ll }, spatial: p.spatial, dtx: p.dtx, inputId: p.appInputId, outputId: p.appOutputId }
+  return {
+    ll: { ...p.ll },
+    spatial: p.spatial,
+    dtx: p.dtx,
+    inputId: p.appInputId,
+    outputId: p.appOutputId,
+    exclusive: p.appExclusive,
+    processing: {
+      echo: p.echoCancellation,
+      noise: p.noiseSuppression,
+      gain: p.autoGainControl,
+      gateThreshold: p.noiseGate,
+      gateGraceMs: p.noiseGraceMs
+    }
+  }
 }
 let speakingTimer: ReturnType<typeof setInterval> | null = null
 let statsTimer: ReturnType<typeof setInterval> | null = null
@@ -652,7 +666,7 @@ export function setDtx(on: boolean) {
 
 /** Change low-latency engine settings; everything applies live. */
 export function updateLL(patch: Partial<LLConfig>) {
-  const next = sanitizeLL({ ...call.prefs.ll, ...patch })
+  const next = sanitizeLL({ ...call.prefs.ll, ...patch }, isNative)
   const toggled = next.enabled !== call.prefs.ll.enabled
   updatePrefs({ ll: next })
   ll?.configure(next)
@@ -704,6 +718,7 @@ function micSettings() {
 /** Reopen the microphone with new settings and swap it into every call. */
 export async function applyMicPrefs(patch: Partial<Pick<Prefs, 'inputId' | 'echoCancellation' | 'noiseSuppression' | 'autoGainControl'>>) {
   updatePrefs(patch)
+  nv?.configure(appConfig())
   const eng = engine
   if (!eng) return
   const track = await eng.openMic(micSettings())
@@ -718,8 +733,8 @@ export async function setOutput(deviceId: string) {
   await engine?.setOutputDevice(deviceId)
 }
 
-/** In the app: its own devices (it reopens the sound card on the spot). */
-export function setAppDevices(patch: Partial<Pick<Prefs, 'appInputId' | 'appOutputId'>>) {
+/** In the app: its own devices and how it opens them (it reopens the sound card on the spot), and its processing. */
+export function setAppDevices(patch: Partial<Pick<Prefs, 'appInputId' | 'appOutputId' | 'appExclusive' | 'noiseGate' | 'noiseGraceMs'>>) {
   updatePrefs(patch)
   nv?.configure(appConfig())
 }

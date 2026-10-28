@@ -29,7 +29,7 @@ const downloads = [...APP_DOWNLOADS].sort((a, b) => Number(b.os === mine) - Numb
 // In the app, when a newer one's out: the file for the platform it runs on.
 const newerUrl = computed(() => {
   const v = native.verdict?.ok ? native.verdict.newer : null
-  return v ? downloadUrl(v, APP_DOWNLOADS.find(d => d.os === native.app?.os)?.file) : ''
+  return v ? downloadUrl(v, APP_DOWNLOADS.find(d => d.os === native.app?.os)?.file(v)) : ''
 })
 
 function checkName(): string | null {
@@ -174,7 +174,7 @@ onMounted(() => {
             :key="d.os"
             class="get-app-button"
             :class="{ mine: d.os === mine }"
-            :href="downloadUrl(appVersion, d.file)"
+            :href="downloadUrl(appVersion, d.file(appVersion))"
             :download="d.file"
             rel="noopener"
           >
