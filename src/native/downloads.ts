@@ -38,12 +38,21 @@ export function downloadUrl(version: string, file?: string): string {
   return template.replaceAll('{version}', version).replaceAll('{file}', file ?? '')
 }
 
+type Nav = Navigator & { userAgentData?: { platform?: string; mobile?: boolean } }
+
+/** A phone or tablet: there's no app for those, so the site doesn't offer one. */
+export function onMobileDevice(): boolean {
+  const nav = navigator as Nav
+  if (nav.userAgentData?.mobile) return true
+  // iPads say they're Macs; a touch screen gives them away.
+  return /android|iphone|ipad|ipod/i.test(nav.userAgent) || (/macintosh/i.test(nav.userAgent) && nav.maxTouchPoints > 1)
+}
+
 /** The visitor's own platform, as far as the browser says, if there's an app for it. */
 export function visitorOS(): AppOS | null {
-  const nav = navigator as Navigator & { userAgentData?: { platform?: string; mobile?: boolean } }
-  if (nav.userAgentData?.mobile) return null
+  const nav = navigator as Nav
+  if (onMobileDevice()) return null
   const p = (nav.userAgentData?.platform || nav.platform || nav.userAgent).toLowerCase()
-  if (/android|iphone|ipad/.test(nav.userAgent.toLowerCase())) return null
   if (p.includes('win')) return 'windows'
   if (p.includes('linux')) return 'linux'
   if (p.includes('mac')) return 'darwin'

@@ -2,7 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { call, startCall } from '../call'
 import { isNative, native } from '../native/bridge'
-import { APP_DOWNLOADS, downloadUrl, visitorOS } from '../native/downloads'
+import { APP_DOWNLOADS, downloadUrl, onMobileDevice, visitorOS } from '../native/downloads'
 import Icon from '../components/Icon.vue'
 import { codeFromHash, CODE_LENGTH, isRoomCode, normalizeRoomCode } from '../lib/roomCode'
 import { cleanName } from '../net/protocol'
@@ -25,7 +25,8 @@ const version = __APP_VERSION__
 // On the website: the app for each platform, yours first and highlighted.
 const appVersion = __NATIVE_VERSION__
 const mine = visitorOS()
-const downloads = [...APP_DOWNLOADS].sort((a, b) => Number(b.os === mine) - Number(a.os === mine))
+// Not on a phone or tablet: there's no app for those.
+const downloads = onMobileDevice() ? [] : [...APP_DOWNLOADS].sort((a, b) => Number(b.os === mine) - Number(a.os === mine))
 // In the app, when a newer one's out: the file for the platform it runs on.
 const newerUrl = computed(() => {
   const v = native.verdict?.ok ? native.verdict.newer : null
@@ -197,16 +198,18 @@ onMounted(() => {
   position: relative;
   height: 100%;
   display: grid;
+  /* One column the width of the screen (not of the card: an auto column would grow to 520px and push it off a phone). */
+  grid-template-columns: minmax(0, 1fr);
   place-items: center;
   overflow-y: auto;
-  padding: 40px 16px;
+  padding: calc(40px + env(safe-area-inset-top)) calc(16px + env(safe-area-inset-right)) calc(40px + env(safe-area-inset-bottom))
+    calc(16px + env(safe-area-inset-left));
   background: var(--bg-tertiary);
 }
 
 .card {
   position: relative;
-  width: 520px;
-  max-width: 100%;
+  width: min(520px, 100%);
   padding: 40px;
   border-radius: 8px;
   background: var(--bg-primary);
