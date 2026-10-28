@@ -419,6 +419,8 @@ func (e *Engine) pinger() {
 
 func (e *Engine) openAudioLocked() {
 	if e.stream != nil {
+		// Already open: say so anyway, since the page waits for an answer.
+		e.emitAudioLocked()
 		return
 	}
 	s, err := e.opts.Backend.Open(e.cfg.InputID, e.cfg.OutputID, e.mixer.process)
@@ -434,6 +436,13 @@ func (e *Engine) openAudioLocked() {
 	go e.levels(e.stopTick)
 	e.rebuildLocked()
 	e.emitAudioLocked()
+}
+
+// AudioOn: whether the sound card is open.
+func (e *Engine) AudioOn() bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.stream != nil
 }
 
 func (e *Engine) closeAudioLocked() {

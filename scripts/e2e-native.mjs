@@ -154,6 +154,17 @@ try {
   await bob.waitForTimeout(3000)
   ok('over a plain call too: ' + one(await cardFor(ada, 'Bob')))
 
+  // A setting that needs a fresh connection: Ada drops and comes straight back, the app's sound card closed and reopened.
+  await ada.click('button[aria-label="Voice Settings"]')
+  await ada.click('text=Silence Suppression (DTX)')
+  await ada.click('button[aria-label="Voice Settings"]')
+  await ada.waitForSelector('.status:has-text("Reconnecting")', { timeout: 5_000 }).catch(() => {})
+  await ada.waitForSelector('.status:has-text("Voice Connected")', { timeout: 20_000 })
+  if (await ada.$('text=nobody can hear you')) throw new Error('reconnecting lost the microphone')
+  await hears(ada, 'Bob', 'Ada (app) after reconnecting')
+  await hears(bob, 'Ada', 'Bob (website) after Ada reconnected')
+  ok('Ada reconnected to apply a setting: same seat, mic and all')
+
   // Ada mutes: the app stops sending (Bob sees her bitrate go to 0).
   await ada.click('button[aria-label="Mute"]')
   await bob
