@@ -125,10 +125,26 @@ defineEmits<{ click: [MouseEvent] }>()
   border: 5px solid transparent;
   border-top-color: var(--bg-floating);
 }
-.ctl:hover .tip,
+/* Only with a mouse: on a touch screen a tap would leave it stuck up. */
+@media (hover: hover) {
+  .ctl:hover .tip {
+    opacity: 1;
+    transform: none;
+  }
+}
 .ctl:focus-visible .tip {
   opacity: 1;
   transform: none;
+}
+/* The narrowest phones: five buttons still fit across. */
+@media (max-width: 380px) {
+  .ctl {
+    width: 46px;
+    height: 46px;
+  }
+  .ctl.danger {
+    width: 58px;
+  }
 }
 kbd {
   font-family: var(--font);

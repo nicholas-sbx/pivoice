@@ -322,6 +322,44 @@ try {
   await expectSeats(bob, before, 'Bob while Dan reconnected')
   ok('changing the output buffer reconnected Dan on the spot; same seat, still hearing everyone')
 
+  // On a phone: a list of tiles while spatial audio is off, the table when it's on, a tap for someone's menu.
+  {
+    const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, permissions: ['microphone'] })
+    const phone = await ctx.newPage()
+    phone.on('pageerror', e => console.error('[Pia] page error:', e.message))
+    await phone.goto(APP + '#' + code)
+    await phone.fill('input[autocomplete="nickname"]', 'Pia')
+    await phone.tap('button:has-text("Join Room")')
+    await phone.waitForSelector('.pill', { timeout: 20_000 })
+    pages.push({ name: 'Pia', page: phone, ctx })
+    const n = before + 1
+    await phone.waitForFunction(n => document.querySelectorAll('.tile').length === n, n, { timeout: 20_000 }).catch(async () => {
+      throw new Error(`phone: expected ${n} tiles, saw ${await phone.$$eval('.tile', e => e.length)}`)
+    })
+    if (await phone.$('.table')) throw new Error('phone: the table showed with spatial audio off')
+    const wide = await phone.evaluate(() => document.documentElement.scrollWidth > innerWidth)
+    if (wide) throw new Error('phone: the page is wider than the screen')
+    await expectHearsSomeone(phone, 'Pia (phone)')
+    await phone.tap('.tile:not(.self)')
+    await phone.waitForSelector('.menu', { timeout: 5_000 }).catch(() => {
+      throw new Error("phone: tapping someone didn't open their menu")
+    })
+    await phone.tap('.bar')
+    await phone.tap('button[aria-label^="Spatial Audio"]')
+    await phone.waitForSelector('.table', { timeout: 5_000 }).catch(() => {
+      throw new Error('phone: spatial audio on but no table')
+    })
+    if (await phone.$('.tile')) throw new Error('phone: tiles still showing with spatial audio on')
+    ok(`phone: ${n} tiles with spatial audio off, the table with it on, a tap opens someone's menu`)
+    if (SHOTS) {
+      await phone.waitForTimeout(800)
+      await phone.screenshot({ path: `${SHOTS}/phone-table.png` })
+      await phone.tap('button[aria-label^="Spatial Audio"]')
+      await phone.waitForTimeout(500)
+      await phone.screenshot({ path: `${SHOTS}/phone.png` })
+    }
+  }
+
   if (SHOTS) {
     const home = await browser.newPage({ viewport: { width: 1440, height: 900 } })
     await home.goto(APP)

@@ -73,6 +73,21 @@ sticking at 100% on the way past; **Reset** or a double-click puts it back)
 and **Mute**, for you only. Above 100% the website plays them through Web
 Audio rather than the plain `<audio>` element, which can't go louder.
 
+**On a phone.** A table is mostly empty felt on a small screen, and seats
+only matter for where people sound from. So on a phone (or any window
+under 640 px wide, or a short touch screen in landscape) everyone's a list
+of tiles while spatial audio is off, and the table comes back when you turn
+it on. The tiles are sized from the space and the head count
+([`src/lib/tiles.ts`](src/lib/tiles.ts)): every column count is tried and
+the one giving each tile the most usable room wins, so one or two people get
+big tiles, five to eight a grid of squares, and a full room a two-column
+list of rows, scrolling only if even rows that size won't fit. Talking
+lights the tile's edge green, as the ring does at the table. Tap someone for
+their menu (a phone has no right-click), and the settings open as sheets
+across the screen. The layout keeps clear of notches and the home bar, and
+nothing on the page is wider than the screen (a phone would zoom the whole
+page out to fit it).
+
 **Call controls.** A floating pill at the bottom: mute (`Ctrl+Shift+M`),
 deafen (`Ctrl+Shift+D`), spatial audio, voice settings, disconnect. Like
 Discord, deafening mutes you too and unmuting undeafens you.
@@ -768,7 +783,8 @@ checks for them and has no environment:
 
 ```
 src/
-  lib/          seats (planning + the animated Table), spring, room codes, prefs
+  lib/          seats (planning + the animated Table), tiles (the phone layout), spring,
+                room codes, prefs, viewport
   net/          protocol (+ validation, shared with the Worker), roomSocket (the
                 WebSocket to the room), peer (one peer connection), session
                 (joining, the call mesh), sdp, ICE config

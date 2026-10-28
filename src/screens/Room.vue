@@ -14,14 +14,20 @@ import {
 import ControlButton from '../components/ControlButton.vue'
 import DisplayPanel from '../components/DisplayPanel.vue'
 import Icon from '../components/Icon.vue'
+import PeopleGrid from '../components/PeopleGrid.vue'
 import RoundTable from '../components/RoundTable.vue'
 import SettingsPanel from '../components/SettingsPanel.vue'
 import UserMenu from '../components/UserMenu.vue'
 import { isNative } from '../native/bridge'
+import { useCompact } from '../lib/viewport'
 
 const settingsOpen = ref(false)
 const displayOpen = ref(false)
 const menu = ref<{ id: string; x: number; y: number } | null>(null)
+
+// On a phone, the table only while seats mean something (spatial audio); otherwise a list of tiles.
+const compact = useCompact()
+const asList = computed(() => compact.value && call.prefs.spatial === 'off')
 
 const selfMuted = computed(() => call.muted || call.deafened || !!call.micProblem)
 const present = computed(() => call.members.filter(m => !m.away).length || 1)
@@ -111,7 +117,21 @@ onBeforeUnmount(() => removeEventListener('keydown', onKey))
     </header>
 
     <main class="stage">
+      <PeopleGrid
+        v-if="asList"
+        :members="call.members"
+        :self-id="call.selfId"
+        :speaking="call.speaking"
+        :self-muted="selfMuted"
+        :self-deafened="call.deafened"
+        :silenced="call.silenced"
+        :links="call.links"
+        :show-ping="call.prefs.showPing"
+        :show-route="call.prefs.showRoute"
+        @menu="(id, x, y) => (menu = { id, x, y })"
+      />
       <RoundTable
+        v-else
         :members="call.members"
         :self-id="call.selfId"
         :speaking="call.speaking"
@@ -170,8 +190,8 @@ onBeforeUnmount(() => removeEventListener('keydown', onKey))
 }
 .bar {
   flex: none;
-  height: 52px;
-  padding: 0 12px 0 20px;
+  height: calc(52px + env(safe-area-inset-top));
+  padding: env(safe-area-inset-top) calc(12px + env(safe-area-inset-right)) 0 calc(20px + env(safe-area-inset-left));
   gap: 16px;
   display: flex;
   align-items: center;
@@ -322,7 +342,7 @@ h1 {
     display: none;
   }
   .bar {
-    padding-left: 12px;
+    padding-left: calc(12px + env(safe-area-inset-left));
   }
 }
 @media (max-width: 600px) {
@@ -356,7 +376,7 @@ h1 {
   right: 0;
   margin: 0 auto;
   width: max-content;
-  bottom: 24px;
+  bottom: calc(24px + env(safe-area-inset-bottom));
   display: flex;
   align-items: center;
   gap: 8px;
@@ -368,6 +388,12 @@ h1 {
 }
 .settings-anchor {
   position: relative;
+}
+@media (max-width: 380px) {
+  .pill {
+    gap: 6px;
+    padding: 6px;
+  }
 }
 .sep {
   width: 1px;

@@ -318,6 +318,24 @@ onBeforeUnmount(() => {
   text-align: left;
   cursor: default;
 }
+/* Small screens: a sheet across the screen, above the call controls. */
+@media (max-width: 640px), (pointer: coarse) and (max-height: 520px) {
+  .panel {
+    position: fixed;
+    left: calc(8px + env(safe-area-inset-left));
+    right: calc(8px + env(safe-area-inset-right));
+    bottom: calc(100px + env(safe-area-inset-bottom));
+    width: auto;
+    margin-left: 0;
+    max-height: calc(100dvh - 100px - 64px - env(safe-area-inset-bottom) - env(safe-area-inset-top));
+    padding: 14px;
+    overscroll-behavior: contain;
+  }
+  /* 16px or more, or iOS zooms the page in when one's opened. */
+  select {
+    font-size: 16px;
+  }
+}
 .tabs {
   display: flex;
   gap: 16px;
