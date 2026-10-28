@@ -670,9 +670,11 @@ Both can be on at once. The Worker's servers come first.
 
 ## Deploying
 
-The app is one Cloudflare Worker named `voice` (from `wrangler.toml`), so it lives at `voice.<your-subdomain>.workers.dev`. It serves
-the static build in `dist/`, adds the cross-origin isolation headers the
-low-latency engine's shared memory needs, runs the rooms, and answers
+The app is one Cloudflare Worker named `voice` (from `wrangler.toml`), so it lives at `voice.<your-subdomain>.workers.dev`. The
+static build in `dist/` is served as static assets, without invoking the
+Worker (so it doesn't count against the Worker request limits), with the
+cross-origin isolation headers the low-latency engine's shared memory needs
+coming from `public/_headers`. The Worker runs the rooms and answers
 `/api/ice`. The rooms are SQLite-backed Durable Objects, which the Workers
 Free plan includes; the first deploy creates them from the `[[migrations]]`
 in `wrangler.toml`.

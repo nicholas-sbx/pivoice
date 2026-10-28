@@ -32,11 +32,9 @@ const UPGRADE = { Upgrade: 'websocket' }
 afterEach(() => vi.unstubAllGlobals())
 
 describe('worker', () => {
-  it('hands everything else to the static assets, cross-origin isolated', async () => {
+  it('hands anything else to the static assets', async () => {
     const res = await worker.fetch(get('/'), env())
     expect(await res.text()).toBe('<!doctype html>')
-    expect(res.headers.get('Cross-Origin-Opener-Policy')).toBe('same-origin')
-    expect(res.headers.get('Cross-Origin-Embedder-Policy')).toBe('require-corp')
     expect(res.headers.get('content-type')).toBe('text/html')
   })
 
