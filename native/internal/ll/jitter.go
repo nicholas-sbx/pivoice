@@ -62,8 +62,9 @@ type arrivalRec struct{ at, off float64 }
 const idleAfterMs = 80
 
 type JitterBuffer struct {
-	cfg         JitterConfig
-	frames      []*stored
+	cfg JitterConfig
+	// By value, in a slice that's reused: Push and Pull allocate nothing once it's warm.
+	frames      []stored
 	arrivals    []arrivalRec
 	scratch     []float64
 	hasBase     bool
@@ -73,8 +74,10 @@ type JitterBuffer struct {
 	// Sender-clock position being played, or idle.
 	playing     bool
 	pos         float64
-	cursor      *stored
-	lastGood    *stored
+	cursor      stored
+	hasCursor   bool
+	lastGood    stored
+	hasLastGood bool
 	lastGoodEnd float64
 	emptySince  float64
 	empty       bool
@@ -115,10 +118,9 @@ func (j *JitterBuffer) Push(ts float64, pcm []float32, arrival float64) {
 	if i > 0 && j.frames[i-1].start == ts {
 		return
 	}
-	f := &stored{start: ts, pcm: pcm, arrival: arrival}
-	j.frames = append(j.frames, nil)
+	j.frames = append(j.frames, stored{})
 	copy(j.frames[i+1:], j.frames[i:])
-	j.frames[i] = f
+	j.frames[i] = stored{start: ts, pcm: pcm, arrival: arrival}
 }
 
 func (j *JitterBuffer) estimate(now float64) {
@@ -177,7 +179,7 @@ func (j *JitterBuffer) Pull(out []float32, now float64) {
 		first, last := j.frames[0], j.frames[len(j.frames)-1]
 		j.pos = math.Min(math.Max(first.start, desired), last.start)
 		j.playing = true
-		j.cursor = nil
+		j.hasCursor = false
 		j.empty = false
 	}
 
@@ -214,30 +216,31 @@ func (j *JitterBuffer) Pull(out []float32, now float64) {
 	}
 }
 
-func (j *JitterBuffer) find(ip float64) *stored {
-	if c := j.cursor; c != nil && ip >= c.start && ip < c.start+float64(len(c.pcm)) {
-		return c
+func (j *JitterBuffer) find(ip float64) (stored, bool) {
+	if c := j.cursor; j.hasCursor && ip >= c.start && ip < c.start+float64(len(c.pcm)) {
+		return c, true
 	}
 	// Usually the very next frame.
 	for _, f := range j.frames {
 		if ip >= f.start && ip < f.start+float64(len(f.pcm)) {
-			return f
+			return f, true
 		}
 		if f.start > ip {
 			break
 		}
 	}
-	return nil
+	return stored{}, false
 }
 
 func (j *JitterBuffer) sample(ip, now float64) float32 {
-	if f := j.find(ip); f != nil {
-		if f != j.cursor {
-			j.cursor = f
+	if f, ok := j.find(ip); ok {
+		// Frames are told apart by where they start (Push keeps one per start).
+		if !j.hasCursor || f.start != j.cursor.start {
+			j.cursor, j.hasCursor = f, true
 			j.waitSum += now - f.arrival
 			j.waitCount++
 		}
-		j.lastGood = f
+		j.lastGood, j.hasLastGood = f, true
 		j.lastGoodEnd = f.start + float64(len(f.pcm))
 		j.empty = false
 		j.played++
@@ -250,7 +253,7 @@ func (j *JitterBuffer) sample(ip, now float64) float32 {
 	conceal := j.samples(j.cfg.ConcealMs)
 	var v float32
 	ahead := len(j.frames) > 0 && j.frames[len(j.frames)-1].start > ip
-	if g := j.lastGood; g != nil && since >= 0 && since < conceal {
+	if g := j.lastGood; j.hasLastGood && since >= 0 && since < conceal {
 		n := len(g.pcm)
 		idx := ((int(ip-g.start) % n) + n) % n
 		v = g.pcm[idx] * float32(1-since/conceal)
@@ -267,7 +270,7 @@ func (j *JitterBuffer) sample(ip, now float64) float32 {
 			j.underruns++
 		} else if now-j.emptySince > j.samples(idleAfterMs) {
 			j.playing = false
-			j.cursor = nil
+			j.hasCursor = false
 		}
 	}
 	return v

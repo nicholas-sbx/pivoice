@@ -160,3 +160,34 @@ func deref[T any](p *T) any {
 	}
 	return *p
 }
+
+// The audio thread's block (drain, jitter buffer, mix) with someone talking
+// shouldn't allocate: an allocating audio thread gets drafted into the
+// garbage collector's work, which is exactly when it can't afford to be late.
+func TestMixerDoesNotAllocate(t *testing.T) {
+	e := New(Options{Backend: audio.Fake{}})
+	r := newRemote("someone")
+	src := newSource()
+	r.ll.Store(src)
+	e.people["someone"] = r
+	e.publishLocked()
+	in := make([]float32, 128)
+	out := make([]float32, 256)
+	frames := make([][]float32, 4096)
+	for i := range frames {
+		frames[i] = make([]float32, 128)
+	}
+	k := 0
+	block := func() {
+		// What the network side does: a frame a block, straight on time.
+		src.deliver(float64(k*128), frames[k%len(frames)])
+		k++
+		e.mixer.process(in, out, audio.Times{})
+	}
+	for range 2000 {
+		block()
+	}
+	if a := testing.AllocsPerRun(2000, block); a > 0 {
+		t.Fatalf("%.2f allocations per block on the audio thread", a)
+	}
+}
