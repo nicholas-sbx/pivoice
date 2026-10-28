@@ -23,9 +23,9 @@ export const PCM_FRAME = 128
  * who already have settings saved: their tuning resets to the new defaults
  * once (whether the engine is on is kept). 2: the silence gate stopped
  * chopping quiet speech (−70 dBFS, 400 ms hangover) and the jitter target
- * moved to the 99th percentile.
+ * moved to the 99th percentile. 3: raw PCM became the default codec.
  */
-export const LL_REV = 2
+export const LL_REV = 3
 
 export interface LLConfig {
   rev: number
@@ -67,7 +67,7 @@ export const APPLICATIONS: OpusApplication[] = ['lowdelay', 'voip', 'audio']
 export const LL_DEFAULTS: LLConfig = {
   rev: LL_REV,
   enabled: false,
-  codec: 'opus',
+  codec: 'pcm',
   frameMs: 5,
   application: 'lowdelay',
   bitrateKbps: 64,
