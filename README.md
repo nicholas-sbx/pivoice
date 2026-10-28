@@ -343,6 +343,41 @@ hundred kbps per person you're talking to.
 Mixing engines in one room is fine: each pair decides for itself, and anyone
 without the engine on hears and is heard over WebRTC audio as before.
 
+**Bigger rooms.** Raw PCM is about 1.3 Mbit/s up to each person you're
+talking to: ~6.5 Mbit/s in a room of six, ~14 Mbit/s at the 12-person
+limit. Fine on a LAN, a lot for some home uplinks. Measured in headless
+Chromium with every participant's browser on one 4-core machine, all on
+the defaults, read from one seat:
+
+| People | Low-latency engine (PCM) | WebRTC audio |
+| --- | --- | --- |
+| 2 | 21 ms | 60 ms |
+| 4 | 29 ms | 60 ms |
+| 6 | 76 ms | 84 ms |
+
+At six both engines degrade because that machine is overloaded (load ~8 on
+4 cores, running all six browsers), so the last row says more about the
+test than about real calls, where everyone has a machine of their own.
+Switching to Opus on its own above a few listeners is the obvious next step
+if uplinks turn out to be the limit; it isn't built.
+
+**Tried, and left as they are:**
+
+- **Safety margin 0 instead of 3 ms.** About 2 ms less (median 18.1 against
+  ~20 ms, two people on two cores), but late packets went from 0–2 to 3–18
+  a minute, and that's over loopback. On Wi-Fi that would be audible gaps,
+  so the default stays at 3 ms. On a wired LAN, lower it in the tab.
+- **Dropping the jitter buffer's extra block.** It aims a block (2.7 ms)
+  further back than the buffer target, in case the block it's about to play
+  straddles two frames. With PCM, frames and blocks are the same size, so it
+  looks like it could go. It can't: whenever playback is sped up or slowed
+  down to steer toward the target (most of the time), the read position
+  drifts off the frame edges and the block does straddle two. It would save
+  ~1.3 ms on average and click at frame edges.
+- **A steadier target** (rise fast, fall slowly): a single late packet still
+  lifts the target from ~6 to ~14 ms for about 4 s. Holding it would stop the
+  swings at the cost of a few ms more on average. Not done.
+
 ## Rooms: a Durable Object each
 
 Each room is a [Durable Object](https://developers.cloudflare.com/durable-objects/)
