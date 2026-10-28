@@ -31,6 +31,7 @@ You need Node 22.12 or newer (CI uses 24, see `.nvmrc`).
 npm install
 npm run dev          # the app on :5173 and the Worker (rooms included) on :8787
 npm run e2e          # optional, in another terminal: headless Chromium tabs with fake mics, end to end
+npm run e2e:native   # optional: the app, headless on a fake sound card, with people on the website (build it first, see The app)
 ```
 
 Open it in two browsers (or two profiles), make a room in one and join with
@@ -378,6 +379,110 @@ if uplinks turn out to be the limit; it isn't built.
   lifts the target from ~6 to ~14 ms for about 4 s. Holding it would stop the
   swings at the cost of a few ms more on average. Not done.
 
+## The app
+
+Everything above is a website, and the browser's audio is where most of
+the delay is: buffers on the way in and out that a page can't touch. The
+app ([`native/`](native)) is one Go binary that opens the same site in
+your system's own webview (WebKitGTK, WKWebView or WebView2: nothing
+bundled, so it's about 11 MB) and does all the audio itself. The page
+becomes just the UI.
+
+- **One duplex callback.** The microphone and the speakers are a single
+  PortAudio stream with the device's lowest suggested latency, so each
+  block of mic audio and each block for the speakers go through the same
+  callback on the same clock, with nothing queued between them. That's
+  what a `pw-loopback`-style round trip is made of. The mic test's
+  **Raw** path in the app is exactly that: mic to speakers inside the
+  callback.
+- **WebRTC from Go** ([pion](https://github.com/pion/webrtc)). The app
+  makes the peer connections itself. Its low-latency engine is a port of
+  the browser's (same packets, same jitter buffer, tested against the same
+  cases), and its calls are Opus over RTP with the same SDP asks, so app
+  users and website users talk to each other in any mix. Received audio
+  goes from the network into each person's jitter buffer and out of the
+  same callback the mic comes in on.
+- **The page still runs the call.** It keeps the room's WebSocket and all
+  of [`session.ts`](src/net/session.ts) (who calls whom, link ids,
+  retries), so there's one copy of those rules. Its links are just
+  stand-ins ([`src/native/link.ts`](src/native/link.ts)) that pass the
+  signalling between the room and the app.
+
+Measured on one machine, fake devices, website to app and back (`npm run
+e2e:native`):
+
+| | Mouth to ear (measured) |
+| --- | --- |
+| Website → app, low-latency engine (PCM) | 9 ms |
+| App → website, low-latency engine (PCM) | 27 ms (the browser's receive side) |
+| The app's own loop (gate, packets, jitter buffer) | 10 ms |
+
+**Talking to the page.** The page and the app talk over a small bridge
+([`native/internal/bridge`](native/internal/bridge),
+[`src/native/bridge.ts`](src/native/bridge.ts)), JSON messages either way:
+
+- In the app's window, it's functions bound into the webview: no socket
+  or port at all, so there's nothing for other programs (or other sites
+  in your browser) to find.
+- Nothing gets through until the page says hello with a key the app made
+  up when it started (32 random bytes). A script the app adds runs at the
+  start of *every* page in its window, before the page's own code: it shuts
+  the bridge (whatever the last page was doing stops) and hands out the key
+  only if the page is on the site's origin. If the window ever ended up on
+  another site, that site couldn't reach your microphone.
+- `--browser` opens the UI in your ordinary browser instead, over a
+  WebSocket on 127.0.0.1 (a port the system picks). The address and key
+  ride in the `#fragment`, which never leaves your machine and is taken out
+  of the address bar straight away; the socket only accepts the site's own
+  `Origin`, and still wants the key. This is also how development and the
+  end-to-end test work.
+
+**Two versions.** The site is `package.json`'s version, the app is
+[`native/VERSION`](native/VERSION), and they release separately. What
+decides whether they work together is the bridge's protocol number (in
+[`native/internal/proto`](native/internal/proto/proto.go) and
+[`src/native/protocol.ts`](src/native/protocol.ts), bumped together when
+they stop understanding each other). The app tells the page its version
+and protocol; the site knows the newest app from `native/VERSION` when it's
+built. Then:
+
+- **The app is older** (lower protocol): a screen says to download the new
+  one, with the link.
+- **The app is newer** (the page is the stale one: cached, or the site's
+  release hasn't gone out): it says to restart the app, which loads the
+  current site.
+- **Same protocol, newer app out**: a note on the start screen, and you
+  carry on.
+
+**Running it.** `pivoice` opens the window; `pivoice ABC234` or `pivoice
+https://…/#ABC234` goes straight to that room. Flags: `--browser`, `--url`
+(another site, e.g. your dev server), `--devtools`, `--version`, and for
+tests `--headless --fake-audio --loopback-ice` (no sound card: a beeping
+mic and silent speakers, and it prints the UI's address instead of opening
+it).
+
+**Building it.** Go 1.24, a C compiler, pkg-config, and PortAudio, Opus and
+(Linux) WebKitGTK 4.1 headers (`apt install portaudio19-dev libopus-dev
+libwebkit2gtk-4.1-dev`):
+
+```sh
+cd native
+./build.sh                       # ./pivoice, against your system's libraries
+go test -race ./...              # set PKG_CONFIG_PATH=$PWD/build/pkgconfig first (see build.sh)
+./pivoice --url http://localhost:5173/   # with npm run dev in another terminal
+```
+
+`NOWEBVIEW=1 ./build.sh` builds without the window (`--browser` and
+`--headless` only). Releases link PortAudio (ALSA, CoreAudio, WASAPI/MME
+only; ALSA is loaded at start-up) and Opus statically, built from pinned
+sources by [`native/build/deps.sh`](native/build/deps.sh), so the binary
+needs nothing but the system's webview and sound server.
+
+**Not yet in the app:** HRTF (it pans equal-power, like **Stereo**); a
+measured mouth to ear on plain calls (no `abs-capture-time` from the app);
+honouring a receiver's DTX request on calls; Linux on ARM; signing and
+notarizing (macOS and Windows warn before the first run).
+
 ## Rooms: a Durable Object each
 
 Each room is a [Durable Object](https://developers.cloudflare.com/durable-objects/)
@@ -474,10 +579,20 @@ come from the repo's Actions variables and secrets):
 
 ### CI: releasing
 
-Releases work like gasmoney's: there's one workflow,
-[`.github/workflows/release.yml`](.github/workflows/release.yml), and it only
-runs when you release. Ordinary pushes and pull requests don't trigger
-anything, so run `npm test` and `npm run typecheck` yourself before pushing.
+The site and the app release separately, each with its own workflow, and
+neither runs for the other's changes:
+
+- [`.github/workflows/release-web.yml`](.github/workflows/release-web.yml):
+  the site. Only runs when you release it (below); ordinary pushes and pull
+  requests don't trigger anything, so run `npm test` and `npm run typecheck`
+  yourself before pushing.
+- [`.github/workflows/release-native.yml`](.github/workflows/release-native.yml):
+  the app. Only runs for changes under `native/`. On a branch it vets, tests
+  and builds all three platforms, and releases nothing, since the macOS and
+  Windows builds can't be tried locally. On main it releases when
+  `native/VERSION` gets a version that isn't tagged yet.
+
+The site works like gasmoney's:
 
 A release starts in one of three ways:
 
@@ -497,11 +612,27 @@ The release then runs three jobs in order:
    the only job allowed to write to the repo.
 2. **check**: `npm ci`, both typechecks and `npm test`. A failure here
    ships nothing.
-3. **deploy**: builds the app first (so a broken build ships nothing), then
-   `wrangler deploy`, then copies the Cloudflare TURN secrets to the Worker if
-   you've set them. It runs in the `production` environment. Add required
-   reviewers there (Settings → Environments) if you want an approval click
-   before anything goes live.
+3. **deploy**: builds the site first (so a broken build ships nothing), waits
+   for the app release it points people to (`native-v` + `native/VERSION`,
+   for when both were bumped in one push), then `wrangler deploy`, then
+   copies the Cloudflare TURN secrets to the Worker if you've set them. It
+   runs in the `production` environment. Add required reviewers there
+   (Settings → Environments) if you want an approval click before anything
+   goes live.
+
+The app releases the same way, keyed on `native/VERSION` and tagged
+`native-vX.Y.Z`: bump the file on main and push, push a tag yourself, or
+**Run workflow**. Its jobs: **tag**, **check** (`gofmt`, `go vet`, `go test
+-race`, where the engine's tests run two engines on fake sound cards over
+real WebRTC), **build** on Linux (Ubuntu 22.04, so glibc 2.35+), macOS (one
+universal binary) and Windows, and **release**, which publishes a GitHub
+release with the three files and how to run each. It needs no secrets, only
+`VITE_PUBLIC_URL`, the site it opens: without it, a main push builds but
+doesn't tag or release.
+
+When the bridge's protocol changes, release the app first (or bump both in
+one push: the site's deploy waits for the app's release). People on the old
+app then get told to download the new one.
 
 What the repo needs set up in GitHub (Settings → Secrets and variables →
 Actions). Make the Cloudflare ones **repository** secrets, since the tag job
@@ -511,7 +642,8 @@ checks for them and has no environment:
 | --- | --- | --- | --- |
 | `CLOUDFLARE_API_TOKEN` | secret | yes | `wrangler deploy`. Only given to the wrangler steps, never to `npm ci` or the build, where dependencies' own scripts run. A token from the "Edit Cloudflare Workers" template is enough. |
 | `CLOUDFLARE_ACCOUNT_ID` | secret | yes | The same steps. |
-| `VITE_PUBLIC_URL` | variable | no | Baked into the build. |
+| `VITE_PUBLIC_URL` | variable | for the app | Baked into the site's build, and the site the app opens. |
+| `VITE_NATIVE_DOWNLOAD_URL` | variable | no | Where the site sends people for a newer app; `{version}` is filled in. Defaults to the GitHub release. The repo's private, so its releases are only reachable by people who can see it: point this somewhere public (or make the releases public) before sharing the app. |
 | `VITE_TURN_URLS` | variable | no | Your TURN server(s), baked into the build. |
 | `VITE_TURN_USERNAME` | variable or secret | no | Its username. |
 | `VITE_TURN_CREDENTIAL` | secret | no | Its credential. A secret keeps it out of the repo and the logs, but it still ends up readable in the shipped JavaScript. |
@@ -536,8 +668,13 @@ src/
                 (encode, decode, network), jitter buffer, shared-memory ring, packet format, settings
   components/   round table, call control buttons, settings, user menu, icons
   screens/      Home (make or join) and Room
+  native/       the page's side of the app: finding it, the bridge, and the links and
+                voice that stand in for the page's own when the app does the audio
   call.ts       the call as reactive state, and everything the UI can do to it
 worker/         the Cloudflare Worker: static assets, the rooms (a Durable Object each), /api/ice
-scripts/        dev (app + Worker), e2e run
+scripts/        dev (app + Worker), e2e runs (website, and the app with the website)
 tests/          unit tests
+native/         the app (Go): main and the window, and in internal/: audio (the PortAudio
+                duplex stream, a fake one), engine (mixer, sending, pion links, stats), ll
+                (packets and jitter buffer, ported), opus, bridge, proto (the bridge's messages)
 ```
