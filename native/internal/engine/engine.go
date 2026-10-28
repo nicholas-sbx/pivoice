@@ -234,7 +234,8 @@ func (e *Engine) peer(m proto.In) {
 		e.prefs[m.ID] = p
 	}
 	if m.Volume != nil {
-		p.volume = max(0, min(1, *m.Volume))
+		// Up to 200%, for someone who's quiet.
+		p.volume = max(0, min(2, *m.Volume))
 	}
 	if m.Silenced != nil {
 		p.silenced = *m.Silenced
@@ -247,10 +248,22 @@ func (e *Engine) peer(m proto.In) {
 	}
 }
 
+// Head radius and the speed of sound, for Woodworth's ITD.
+const (
+	headRadiusM = 0.0875
+	soundMps    = 343.0
+)
+
 // applyPrefsLocked sets someone's gain and pan for the audio thread.
 // Panning is equal-power, from the direction of their seat (seatDirection
 // in src/lib/seats.ts), the same law as Web Audio's "equalpower" panner.
-// HRTF isn't done natively yet, so it pans the same way.
+//
+// "hrtf" (shown as Stereo + ITD in the app) adds the time difference
+// between the ears on top: the far ear hears them a little later, by
+// Woodworth's formula, (a/c)(θ + sin θ) for a head of radius a and a
+// source θ off the midline, so at most 0.66 ms (32 samples) for someone
+// straight to one side. Only the far ear is delayed: what you hear first
+// is as early as it ever was.
 func (e *Engine) applyPrefsLocked(id string, r *remote) {
 	p := e.prefs[id]
 	if p == nil {
@@ -264,6 +277,7 @@ func (e *Engine) applyPrefsLocked(id string, r *remote) {
 	if e.spatial == "off" || r.test {
 		storeF(&r.panL, 1)
 		storeF(&r.panR, 1)
+		storeF(&r.itd, 0)
 		return
 	}
 	x := -math.Sin(p.angle)
@@ -276,6 +290,25 @@ func (e *Engine) applyPrefsLocked(id string, r *remote) {
 	pos := (math.Asin(max(-1, min(1, x)))/(math.Pi/2) + 1) / 2
 	storeF(&r.panL, float32(math.Cos(pos*math.Pi/2)))
 	storeF(&r.panR, float32(math.Sin(pos*math.Pi/2)))
+	itd := 0.0
+	if e.spatial == "hrtf" {
+		itd = woodworth(x)
+	}
+	storeF(&r.itd, float32(itd))
+}
+
+// woodworth is the interaural delay, samples, for a source whose direction
+// has sideways component x (-1 left .. 1 right): > 0 delays the right ear,
+// < 0 the left. θ is the angle off the midline; behind folds onto in front,
+// as the panning does.
+func woodworth(x float64) float64 {
+	theta := math.Asin(min(1, math.Abs(x)))
+	d := headRadiusM / soundMps * (theta + math.Sin(theta)) * audio.SampleRate
+	if x > 0 {
+		// On your right: it's the left ear that's further away.
+		return -d
+	}
+	return d
 }
 
 // ---- the people we hear ---------------------------------------------------------

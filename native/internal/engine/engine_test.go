@@ -2,6 +2,7 @@ package engine
 
 import (
 	"encoding/json"
+	"math"
 	"sync"
 	"testing"
 	"time"
@@ -189,5 +190,43 @@ func TestMixerDoesNotAllocate(t *testing.T) {
 	}
 	if a := testing.AllocsPerRun(2000, block); a > 0 {
 		t.Fatalf("%.2f allocations per block on the audio thread", a)
+	}
+}
+
+func TestWoodworth(t *testing.T) {
+	if d := woodworth(0); d != 0 {
+		t.Fatalf("straight ahead: %v samples", d)
+	}
+	// Straight to one side: 0.0875/343 × (π/2 + 1) s = 0.656 ms = 31.5 samples, on the far ear.
+	if d := woodworth(-1); math.Abs(d-31.5) > 0.1 {
+		t.Fatalf("hard left: %v samples", d)
+	}
+	if d := woodworth(1); math.Abs(d+31.5) > 0.1 {
+		t.Fatalf("hard right: %v samples", d)
+	}
+}
+
+// Someone on your right: the right ear hears a click when it happens, the left exactly the ITD later.
+func TestITDDelaysOnlyTheFarEar(t *testing.T) {
+	r := newRemote("x")
+	const itd = -20.5 // on the right: the left ear is late
+	r.itdNow = itd
+	mix := make([]float32, 128)
+	mix[0] = 1
+	out := make([]float32, 256)
+	r.mixITD(mix, out, 1, 1, itd)
+	if out[1] != 1 {
+		t.Fatalf("near (right) ear: %v at 0, want the click on time", out[1])
+	}
+	if out[2*20] != 0.5 || out[2*21] != 0.5 {
+		t.Fatalf("far (left) ear: %v, %v at 20, 21, want the click split between them", out[2*20], out[2*21])
+	}
+	for i := range 128 {
+		if i != 20 && i != 21 && out[2*i] != 0 {
+			t.Fatalf("far ear has %v at %d", out[2*i], i)
+		}
+	}
+	if a := testing.AllocsPerRun(100, func() { r.mixITD(mix, out, 1, 1, itd) }); a > 0 {
+		t.Fatalf("%v allocations", a)
 	}
 }

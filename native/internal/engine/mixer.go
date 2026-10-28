@@ -92,6 +92,12 @@ type remote struct {
 	// float32 bits: volume (0 while silenced), and left/right gains from where they sit.
 	gain       atomic.Uint32
 	panL, panR atomic.Uint32
+	// Interaural delay, samples, float32 bits: > 0 delays the right ear, < 0 the left.
+	itd atomic.Uint32
+	// Audio thread only: the last samples heard, for the far ear's delay, and the delay it's gliding from.
+	hist    [itdHistory]float32
+	histPos int
+	itdNow  float32
 	// Loudest block (RMS) since the levels were last read, float32 bits.
 	level atomic.Uint32
 }
@@ -115,6 +121,44 @@ func raiseLevel(a *atomic.Uint32, v float32) {
 			return
 		}
 	}
+}
+
+// Room for the longest interaural delay (32 samples) and then some.
+const itdHistory = 64
+
+// mixITD mixes one person in with the far ear delayed: a fractional
+// delay read from a short history of what they just said, gliding to the
+// new delay over the block when their seat moves, so it never clicks.
+func (r *remote) mixITD(mix, out []float32, l, rr, target float32) {
+	from := r.itdNow
+	n := float32(len(mix))
+	for i, v := range mix {
+		r.hist[r.histPos] = v
+		d := from + (target-from)*float32(i+1)/n
+		late := r.delayed(d)
+		if d > 0 {
+			out[2*i] += v * l
+			out[2*i+1] += late * rr
+		} else {
+			out[2*i] += late * l
+			out[2*i+1] += v * rr
+		}
+		r.histPos = (r.histPos + 1) % itdHistory
+	}
+	r.itdNow = target
+}
+
+// delayed is the sample d (fractional, either sign) before the newest one in the history.
+func (r *remote) delayed(d float32) float32 {
+	if d < 0 {
+		d = -d
+	}
+	d = min(d, itdHistory-2)
+	k := int(d)
+	frac := d - float32(k)
+	a := r.hist[(r.histPos-k+itdHistory)%itdHistory]
+	b := r.hist[(r.histPos-k-1+itdHistory)%itdHistory]
+	return a + (b-a)*frac
 }
 
 type capBlock struct {
@@ -197,6 +241,10 @@ func (m *mixer) process(in, out []float32, t audio.Times) {
 		g := loadF(&r.gain)
 		l, rr := g*loadF(&r.panL), g*loadF(&r.panR)
 		if g == 0 {
+			continue
+		}
+		if itd := loadF(&r.itd); itd != 0 || r.itdNow != 0 {
+			r.mixITD(mix, out, l, rr, itd)
 			continue
 		}
 		for i, v := range mix {
