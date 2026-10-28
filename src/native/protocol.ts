@@ -42,6 +42,8 @@ export type ToApp =
   | { t: 'test'; path: '' | 'raw' | 'll' }
   | { t: 'stats' }
   | { t: 'devices' }
+  /** A link for the system's browser (the window opens none itself). Works on any protocol. */
+  | { t: 'open'; url: string }
 
 export interface AppInfo {
   version: string

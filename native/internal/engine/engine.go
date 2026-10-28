@@ -66,9 +66,12 @@ type Engine struct {
 	llConfig  atomic.Pointer[proto.LLConfig]
 	targets   atomic.Pointer[targets]
 	selfLevel atomic.Uint32
-	capture   chan capBlock
-	capFree   chan []float32
-	mixer     *mixer
+	// Mic blocks the sender wasn't ready for (since the sound card opened).
+	capDropped atomic.Int64
+	gcPauses   gcPauses
+	capture    chan capBlock
+	capFree    chan []float32
+	mixer      *mixer
 }
 
 func New(opts Options) *Engine {
@@ -208,6 +211,9 @@ func (e *Engine) configure(c proto.Config) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	devicesChanged := c.InputID != e.cfg.InputID || c.OutputID != e.cfg.OutputID
+	if x, ok := e.opts.Backend.(interface{ SetExclusive(bool) bool }); ok && x.SetExclusive(c.Exclusive) {
+		devicesChanged = true
+	}
 	e.cfg = c
 	e.spatial = c.Spatial
 	for id, r := range e.people {
@@ -432,6 +438,7 @@ func (e *Engine) openAudioLocked() {
 	}
 	e.stream = s
 	e.audioErr = ""
+	e.capDropped.Store(0)
 	e.stopTick = make(chan struct{})
 	go e.levels(e.stopTick)
 	e.rebuildLocked()

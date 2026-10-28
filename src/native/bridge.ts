@@ -123,6 +123,8 @@ export class NativeBridge {
       const api = window.__pivoiceNative!
       api.onmessage = msg => this.dispatch(msg)
       this.transport = { send: s => api.send(s), close: () => (api.onmessage = null) }
+      // The window doesn't open new windows or leave the site: links out go to the system's browser.
+      document.addEventListener('click', e => this.openOutside(e), true)
       hello(api.token)
       return
     }
@@ -139,6 +141,20 @@ export class NativeBridge {
     }
     // The app quit (or was never there).
     ws.onclose = () => lost()
+  }
+
+  private openOutside(e: MouseEvent) {
+    const a = (e.target as Element | null)?.closest?.('a[href]') as HTMLAnchorElement | null
+    if (!a || e.defaultPrevented) return
+    let url: URL
+    try {
+      url = new URL(a.href, location.href)
+    } catch {
+      return
+    }
+    if (url.origin === location.origin && a.target !== '_blank') return
+    e.preventDefault()
+    this.send({ t: 'open', url: url.href })
   }
 
   private dispatch(msg: unknown) {

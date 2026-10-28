@@ -57,9 +57,11 @@ type source struct {
 	lastDecoded int64
 	dec         *opus.Decoder
 	stamp       atomic.Pointer[stamp]
-	pcm         atomic.Bool
-	gotCodec    atomic.Bool
-	bytes       atomic.Int64
+	// Frames thrown away because the audio thread hadn't taken the last 64 yet.
+	dropped  atomic.Int64
+	pcm      atomic.Bool
+	gotCodec atomic.Bool
+	bytes    atomic.Int64
 }
 
 type sourceStats struct {
@@ -76,6 +78,7 @@ func (s *source) deliver(ts float64, pcm []float32) {
 	select {
 	case s.inbox <- frame{ts, pcm}:
 	default:
+		s.dropped.Add(1)
 	}
 }
 
@@ -162,6 +165,8 @@ func (m *mixer) process(in, out []float32, t audio.Times) {
 			copy(buf, in)
 			e.capture <- capBlock{ts: m.clock, inMs: t.InputMs, pcm: buf}
 		default:
+			// The sender's that far behind: this block of the mic is lost.
+			e.capDropped.Add(1)
 		}
 	}
 

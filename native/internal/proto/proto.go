@@ -55,6 +55,11 @@ type In struct {
 
 	// test: the mic test's path, or "" to stop.
 	Path string `json:"path,omitempty"`
+
+	// open: a link to open in the system's browser (the window doesn't
+	// open new ones). Understood whatever the protocol, so a page can always
+	// send people to download a newer app.
+	URL string `json:"url,omitempty"`
 }
 
 type Member struct {
@@ -77,6 +82,8 @@ type Config struct {
 	DTX      bool   `json:"dtx"`
 	InputID  string `json:"inputId"`
 	OutputID string `json:"outputId"`
+	// Windows: WASAPI exclusive mode, the device to ourselves for its smallest buffers.
+	Exclusive bool `json:"exclusive"`
 }
 
 type LLConfig struct {

@@ -22,6 +22,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"log"
+	"net/url"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -34,7 +35,9 @@ import (
 const maxMessage = 64 * 1024
 
 type Bridge struct {
-	Token   string
+	Token string
+	// OpenURL opens a link in the system's browser (set by main; nil: links do nothing).
+	OpenURL func(url string)
 	version string
 	engine  *engine.Engine
 
@@ -156,6 +159,11 @@ func (c *Conn) handle(m proto.In) {
 		} else {
 			// The page tells the person which of us to update.
 			log.Printf("bridge: the page (site %s) speaks bridge protocol %d and we speak %d", m.Site, m.Protocol, proto.Protocol)
+		}
+	case m.T == "open" && c.authed.Load():
+		// Only web links, never files or other schemes, and only from a page that has the token.
+		if u, err := url.Parse(m.URL); err == nil && u.Scheme == "https" && u.Host != "" && b.OpenURL != nil {
+			b.OpenURL(u.String())
 		}
 	case !c.authed.Load() || !c.compatible:
 		// Not a word until hello, and nothing at all from a page we can't understand.

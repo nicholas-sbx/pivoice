@@ -84,6 +84,9 @@ type PortAudio struct {
 	Exclusive atomic.Bool
 }
 
+// SetExclusive says whether to ask for exclusive mode from the next open, and whether that's a change.
+func (p *PortAudio) SetExclusive(on bool) bool { return p.Exclusive.Swap(on) != on }
+
 func NewPortAudio() (*PortAudio, error) {
 	if err := paErr(C.Pa_Initialize()); err != nil {
 		return nil, err
