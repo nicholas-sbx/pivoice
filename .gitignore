@@ -13,3 +13,8 @@ coverage
 test-results
 .wrangler
 .dev.vars
+
+# The app's builds
+native/pivoice
+native/pivoice.exe
+native/dist
