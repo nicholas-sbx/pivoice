@@ -1,6 +1,7 @@
 package dsp
 
 import (
+	"fmt"
 	"math"
 	"math/rand"
 	"testing"
@@ -81,13 +82,19 @@ func TestAGCLevels(t *testing.T) {
 	}
 }
 
-// RNNoise delays its output by exactly NoiseDelay on top of filling its frame:
-// a click at sample k comes out NoiseDelay later. (The chain's Delay counts on it.)
+// RNNoise delays its output by exactly NoiseDelay on top of filling its
+// frame, with its lookahead and without. (The chain's Delay counts on it.)
 func TestNoiseDelay(t *testing.T) {
 	if !NoiseAvailable {
 		t.Skip("built without RNNoise")
 	}
-	d, err := NewDenoise()
+	for _, lookahead := range []bool{false, true} {
+		t.Run(fmt.Sprintf("lookahead=%v", lookahead), func(t *testing.T) { testNoiseDelay(t, lookahead) })
+	}
+}
+
+func testNoiseDelay(t *testing.T, lookahead bool) {
+	d, err := NewDenoise(lookahead)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,8 +116,8 @@ func TestNoiseDelay(t *testing.T) {
 		}
 	}
 	t.Logf("RNNoise delays its output by %d samples (%.1f ms) beyond filling its %d-sample frame", bestLag, float64(bestLag)/48, NoiseFrame)
-	if bestLag != NoiseDelay {
-		t.Fatalf("delay %d, the chain assumes %d", bestLag, NoiseDelay)
+	if bestLag != NoiseDelay(lookahead) {
+		t.Fatalf("delay %d, the chain assumes %d", bestLag, NoiseDelay(lookahead))
 	}
 }
 
@@ -151,7 +158,7 @@ func BenchmarkNoise(b *testing.B) {
 	if !NoiseAvailable {
 		b.Skip("built without RNNoise")
 	}
-	d, _ := NewDenoise()
+	d, _ := NewDenoise(false)
 	defer d.Close()
 	f := talker(1, NoiseFrame, 0.1)
 	b.ResetTimer()
@@ -184,7 +191,7 @@ func BenchmarkChainAll(b *testing.B) {
 
 // Whatever the block sizes, everything that went in comes out Delay later, in order.
 func TestChainKeepsCount(t *testing.T) {
-	for _, s := range []Settings{{Echo: true}, {Noise: true, GateThreshold: 0.3, GateGraceMs: 300}, {Gain: true}, {Echo: true, Noise: true, Gain: true}} {
+	for _, s := range []Settings{{Echo: true}, {Noise: true, GateThreshold: 0.3, GateGraceMs: 300}, {Noise: true, NoiseLookahead: true}, {Gain: true}, {Echo: true, Noise: true, Gain: true}} {
 		c, err := NewChain(s)
 		if err != nil {
 			t.Fatal(err)

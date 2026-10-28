@@ -115,7 +115,8 @@ function appConfig(): AppConfig {
       noise: p.noiseSuppression,
       gain: p.autoGainControl,
       gateThreshold: p.noiseGate,
-      gateGraceMs: p.noiseGraceMs
+      gateGraceMs: p.noiseGraceMs,
+      noiseLookahead: p.noiseLookahead
     }
   }
 }
@@ -734,7 +735,7 @@ export async function setOutput(deviceId: string) {
 }
 
 /** In the app: its own devices and how it opens them (it reopens the sound card on the spot), and its processing. */
-export function setAppDevices(patch: Partial<Pick<Prefs, 'appInputId' | 'appOutputId' | 'appExclusive' | 'noiseGate' | 'noiseGraceMs'>>) {
+export function setAppDevices(patch: Partial<Pick<Prefs, 'appInputId' | 'appOutputId' | 'appExclusive' | 'noiseGate' | 'noiseGraceMs' | 'noiseLookahead'>>) {
   updatePrefs(patch)
   nv?.configure(appConfig())
 }

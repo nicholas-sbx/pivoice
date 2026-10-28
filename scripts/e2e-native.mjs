@@ -129,6 +129,17 @@ try {
 
   await showRoute(bob)
   await showRoute(ada)
+  // The website has the low-latency engine off by default (the app has it on): a plain call, Opus over RTP to the app.
+  await engineOf(bob, 'Ada', /webrtc audio/, 'Bob (engine off by default), Ada over a plain call')
+  await engineOf(ada, 'Bob', /webrtc audio/, 'Ada, Bob over a plain call')
+  await bob.waitForTimeout(3000)
+  ok('a plain call to start with: ' + one(await cardFor(ada, 'Bob')))
+
+  // Bob turns the engine on: the pair moves over to it.
+  await bob.click('button[aria-label="Voice Settings"]')
+  await bob.click('button[role="tab"]:has-text("Low Latency")')
+  await bob.click('text=Low-Latency Engine (Experimental)')
+  await bob.click('button[aria-label="Voice Settings"]')
   await engineOf(bob, 'Ada', /low-latency engine/, 'Bob, Ada on the engine')
   await engineOf(ada, 'Bob', /low-latency engine/, 'Ada, Bob on the engine')
   await bob.waitForFunction(
@@ -137,22 +148,27 @@ try {
     { timeout: 15_000 }
   )
   await ada.waitForFunction(() => [...document.querySelectorAll('.route')].some(r => /mouth to ear/i.test(r.textContent)), null, { timeout: 15_000 })
+  await bob.click('button[aria-label="Mute"]')
+  await bob.click('button[aria-label="Unmute"]')
+  await hears(ada, 'Bob', 'Ada (app), Bob on the engine')
+  await hears(bob, 'Ada', 'Bob (website), Ada on the engine')
   ok("Bob's card for Ada: " + one(await cardFor(bob, 'Ada')))
   ok("Ada's card for Bob: " + one(await cardFor(ada, 'Bob')))
 
-  // Bob turns the engine off: the pair goes back to a plain call, Opus over RTP to the app.
-  await bob.click('button[aria-label="Voice Settings"]')
-  await bob.click('button[role="tab"]:has-text("Low Latency")')
-  await bob.click('text=Low-Latency Engine (Experimental)')
-  await bob.click('button[aria-label="Voice Settings"]')
-  await engineOf(bob, 'Ada', /webrtc audio/, 'Bob, Ada after the engine went off')
-  await engineOf(ada, 'Bob', /webrtc audio/, 'Ada, Bob after the engine went off')
-  await bob.click('button[aria-label="Mute"]')
-  await bob.click('button[aria-label="Unmute"]')
-  await hears(ada, 'Bob', 'Ada (app), Bob over a plain call')
-  await hears(bob, 'Ada', 'Bob (website), Ada over a plain call')
-  await bob.waitForTimeout(3000)
-  ok('over a plain call too: ' + one(await cardFor(ada, 'Bob')))
+  // Ada turns on the app's echo cancellation and gain control: Bob still hears her.
+  await ada.click('button[aria-label="Voice Settings"]')
+  await ada.click('text=Echo Cancellation')
+  await ada.click('text=Automatic Gain Control')
+  await ada.click('button[aria-label="Voice Settings"]')
+  await ada.click('button[aria-label="Mute"]')
+  await ada.click('button[aria-label="Unmute"]')
+  await hears(bob, 'Ada', 'Bob (website), Ada with processing on')
+  await bob.waitForTimeout(2000)
+  ok("with Ada's processing on: " + one(await cardFor(bob, 'Ada')))
+  await ada.click('button[aria-label="Voice Settings"]')
+  await ada.click('text=Echo Cancellation')
+  await ada.click('text=Automatic Gain Control')
+  await ada.click('button[aria-label="Voice Settings"]')
 
   // A setting that needs a fresh connection: Ada drops and comes straight back, the app's sound card closed and reopened.
   await ada.click('button[aria-label="Voice Settings"]')

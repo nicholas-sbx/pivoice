@@ -13,7 +13,7 @@ const NoiseAvailable = false
 
 type Denoise struct{}
 
-func NewDenoise() (*Denoise, error) {
+func NewDenoise(bool) (*Denoise, error) {
 	return nil, errors.New("this build has no noise suppression (built without RNNoise)")
 }
 

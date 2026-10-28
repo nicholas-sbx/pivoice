@@ -27,6 +27,8 @@ export interface Prefs {
    */
   noiseGate: number
   noiseGraceMs: number
+  /** RNNoise's lookahead: off by default, since it's 10 ms more delay. */
+  noiseLookahead: boolean
   /** The room code is hidden until you ask to see it (screen sharing, streaming). */
   showCode: boolean
   /** Ping beside everyone's name. */
@@ -70,6 +72,7 @@ export const DEFAULT_PREFS: Prefs = {
   autoGainControl: false,
   noiseGate: 0.4,
   noiseGraceMs: 400,
+  noiseLookahead: false,
   showCode: false,
   showPing: true,
   showRoute: false,
@@ -92,7 +95,7 @@ export function loadPrefs(): Prefs {
     if (typeof raw.appOutputId === 'string') p.appOutputId = raw.appOutputId
     if (typeof raw.noiseGate === 'number' && raw.noiseGate >= 0 && raw.noiseGate <= 1) p.noiseGate = raw.noiseGate
     if (typeof raw.noiseGraceMs === 'number' && raw.noiseGraceMs >= 0 && raw.noiseGraceMs <= 2000) p.noiseGraceMs = raw.noiseGraceMs
-    for (const k of ['echoCancellation', 'noiseSuppression', 'autoGainControl', 'appExclusive', 'showCode', 'showPing', 'showRoute'] as const) {
+    for (const k of ['echoCancellation', 'noiseSuppression', 'autoGainControl', 'appExclusive', 'noiseLookahead', 'showCode', 'showPing', 'showRoute'] as const) {
       if (typeof raw[k] === 'boolean') p[k] = raw[k]
     }
     if (typeof raw.dtx === 'boolean' && raw.rev === PREFS_REV) p.dtx = raw.dtx

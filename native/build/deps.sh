@@ -88,6 +88,8 @@ curl -sSfL "https://github.com/xiph/rnnoise/releases/download/v$RNNOISE_VERSION/
 got=$(sha256 "$src/rnnoise.tar.gz")
 [[ $got == "$RNNOISE_SHA256" ]] || { echo "rnnoise tarball checksum mismatch: $got" >&2; exit 1; }
 tar -xzf "$src/rnnoise.tar.gz" -C "$src"
+# A switch for its lookahead (see the patch), so noise suppression needn't add 10 ms.
+git -C "$src/rnnoise-$RNNOISE_VERSION" apply "$PWD/rnnoise-lookahead.patch"
 cat > "$src/rnnoise-$RNNOISE_VERSION/CMakeLists.txt" <<'EOF'
 cmake_minimum_required(VERSION 3.10)
 project(rnnoise C)

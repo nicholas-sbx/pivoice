@@ -233,7 +233,7 @@ func (e *Engine) configure(c proto.Config) {
 }
 
 func (e *Engine) setProcessing(p proto.Processing) {
-	s := dsp.Settings{Echo: p.Echo, Noise: p.Noise, Gain: p.Gain, GateThreshold: float32(p.GateThreshold), GateGraceMs: float32(p.GateGraceMs)}
+	s := dsp.Settings{Echo: p.Echo, Noise: p.Noise, Gain: p.Gain, GateThreshold: float32(p.GateThreshold), GateGraceMs: float32(p.GateGraceMs), NoiseLookahead: p.NoiseLookahead}
 	if !s.Active() {
 		e.processing.Store(nil)
 		e.echoRef.Store(false)

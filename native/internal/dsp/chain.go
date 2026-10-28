@@ -11,6 +11,8 @@ type Settings struct {
 	// last voice has passed. 0 turns the gate off (RNNoise still denoises).
 	GateThreshold float32
 	GateGraceMs   float32
+	// RNNoise's own lookahead: a frame (10 ms) more delay, for cleaner starts of words.
+	NoiseLookahead bool
 }
 
 // Active: anything to do at all.
@@ -33,9 +35,10 @@ type Chain struct {
 	echoOut    []float32
 	out        []float32
 
-	// RNNoise's first NoiseDelay samples out are its silence before the
+	// RNNoise's first noiseDelay samples out are its silence before the
 	// first frame: dropped, so output sample k is input sample k.
-	preroll int
+	noiseDelay int
+	preroll    int
 
 	// The gate: open while there's voice, and for the grace period after.
 	vad      float32
@@ -45,8 +48,14 @@ type Chain struct {
 }
 
 // NoiseDelay is RNNoise's own delay beyond its frame filling: the
-// overlap of its analysis window, one frame (checked in the tests).
-const NoiseDelay = NoiseFrame
+// overlap of its analysis window, one frame, and with its lookahead on,
+// another (checked in the tests).
+func NoiseDelay(lookahead bool) int {
+	if lookahead {
+		return 2 * NoiseFrame
+	}
+	return NoiseFrame
+}
 
 func NewChain(s Settings) (*Chain, error) {
 	c := &Chain{set: s, gateGain: 1, open: true}
@@ -58,13 +67,14 @@ func NewChain(s Settings) (*Chain, error) {
 		c.echo = e
 	}
 	if s.Noise && NoiseAvailable {
-		d, err := NewDenoise()
+		d, err := NewDenoise(s.NoiseLookahead)
 		if err != nil {
 			c.Close()
 			return nil, err
 		}
 		c.noise = d
-		c.preroll = NoiseDelay
+		c.noiseDelay = NoiseDelay(s.NoiseLookahead)
+		c.preroll = c.noiseDelay
 	}
 	if s.Gain {
 		c.agc = NewAGC()
@@ -73,9 +83,14 @@ func NewChain(s Settings) (*Chain, error) {
 }
 
 // Retune what doesn't need new state (the gate); the caller makes a new
-// chain when a stage goes on or off.
+// chain when a stage goes on or off (see SameStages).
 func (c *Chain) Retune(s Settings) {
 	c.set.GateThreshold, c.set.GateGraceMs = s.GateThreshold, s.GateGraceMs
+}
+
+// SameStages: whether a chain made for a would do for b, retuned.
+func (a Settings) SameStages(b Settings) bool {
+	return a.Echo == b.Echo && a.Noise == b.Noise && a.Gain == b.Gain && a.NoiseLookahead == b.NoiseLookahead
 }
 
 // Settings it was made with.
@@ -87,7 +102,7 @@ func (c *Chain) Settings() Settings { return c.set }
 func (c *Chain) Delay() int {
 	d := len(c.micQ) + len(c.noiseQ)
 	if c.noise != nil {
-		d += NoiseDelay - c.preroll
+		d += c.noiseDelay - c.preroll
 	}
 	return d
 }

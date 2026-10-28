@@ -37,6 +37,8 @@ export interface ProcessingConfig {
   /** Noise suppression's voice gate: 0 is off, up to 1. */
   gateThreshold: number
   gateGraceMs: number
+  /** RNNoise's own lookahead: 10 ms more delay, for cleaner starts of words. */
+  noiseLookahead: boolean
 }
 
 /** One of our signals' bodies, as the app sends it: the page adds `kind` and `link` for the room. */

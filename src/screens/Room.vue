@@ -79,9 +79,9 @@ onBeforeUnmount(() => removeEventListener('keydown', onKey))
           </button>
         </div>
         <div class="divider" />
-        <div class="status" :class="call.status">
+        <div class="status" :class="call.status" :title="call.status === 'connected' ? 'Voice Connected' : 'Reconnecting…'">
           <Icon name="signal" :size="16" />
-          <span>{{ call.status === 'connected' ? 'Voice Connected' : 'Reconnecting…' }}</span>
+          <span class="status-text">{{ call.status === 'connected' ? 'Voice Connected' : 'Reconnecting…' }}</span>
         </div>
       </div>
       <div class="right">
@@ -103,9 +103,9 @@ onBeforeUnmount(() => removeEventListener('keydown', onKey))
           </button>
           <DisplayPanel v-if="displayOpen" @close="displayOpen = false" />
         </div>
-        <button type="button" class="invite" @click="copyInvite">
+        <button type="button" class="invite" title="Copy invite link" @click="copyInvite">
           <Icon name="link" :size="18" />
-          Copy Invite
+          <span class="invite-text">Copy Invite</span>
         </button>
       </div>
     </header>
@@ -170,8 +170,9 @@ onBeforeUnmount(() => removeEventListener('keydown', onKey))
 }
 .bar {
   flex: none;
-  height: 48px;
-  padding: 0 8px 0 16px;
+  height: 52px;
+  padding: 0 12px 0 20px;
+  gap: 16px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -184,8 +185,12 @@ onBeforeUnmount(() => removeEventListener('keydown', onKey))
 .right {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 12px;
   min-width: 0;
+}
+.right {
+  flex: none;
+  gap: 10px;
 }
 .muted-icon {
   color: var(--text-muted);
@@ -199,6 +204,7 @@ h1 {
   white-space: nowrap;
 }
 .code {
+  flex: none;
   display: inline-flex;
   align-items: center;
   gap: 2px;
@@ -236,18 +242,24 @@ h1 {
   color: var(--interactive-hover);
 }
 .divider {
+  flex: none;
   width: 1px;
   height: 24px;
-  margin: 0 8px;
+  margin: 0 4px;
   background: var(--bg-accent);
 }
 .status {
+  min-width: 0;
   display: inline-flex;
   align-items: center;
   gap: 6px;
   font-size: 14px;
   font-weight: 600;
   white-space: nowrap;
+}
+.status-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .status.connected {
   color: var(--green);
@@ -287,9 +299,10 @@ h1 {
 .invite {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  height: 32px;
-  padding: 0 14px;
+  gap: 8px;
+  height: 34px;
+  padding: 0 16px;
+  white-space: nowrap;
   border: 0;
   border-radius: 3px;
   background: var(--brand);
@@ -301,6 +314,33 @@ h1 {
 }
 .invite:hover {
   background: var(--brand-hover);
+}
+/* Narrower windows: the words go before anything gets squeezed, icons and the code stay. */
+@media (max-width: 760px) {
+  .bar h1,
+  .bar .muted-icon {
+    display: none;
+  }
+  .bar {
+    padding-left: 12px;
+  }
+}
+@media (max-width: 600px) {
+  .status-text,
+  .invite-text {
+    display: none;
+  }
+  .invite {
+    width: 34px;
+    padding: 0;
+    justify-content: center;
+  }
+}
+@media (max-width: 380px) {
+  .people,
+  .divider {
+    display: none;
+  }
 }
 
 .stage {

@@ -96,6 +96,8 @@ type Processing struct {
 	// Noise suppression's voice gate: 0–1 (0 is off), and how long it stays open after the last voice.
 	GateThreshold float64 `json:"gateThreshold"`
 	GateGraceMs   float64 `json:"gateGraceMs"`
+	// RNNoise's lookahead: 10 ms more delay, cleaner starts of words.
+	NoiseLookahead bool `json:"noiseLookahead"`
 }
 
 type LLConfig struct {

@@ -110,7 +110,7 @@ const appProcessing = computed(() => [
     hint:
       native.app?.noise === false
         ? 'Not in this build of the app.'
-        : 'RNNoise: a small neural network takes out fans, keyboards and hum. Adds 10 ms (its frame) plus up to 10 ms more to fill one.',
+        : `RNNoise: a small neural network takes out fans, keyboards and hum. Adds 10 ms (its analysis window) plus up to 10 ms to fill a frame${call.prefs.noiseLookahead ? ', plus 10 ms of lookahead' : ''}.`,
     off: native.app?.noise === false
   },
   {
@@ -247,6 +247,12 @@ onBeforeUnmount(() => {
           @update:model-value="v => applyMicPrefs({ [p.key]: v })"
         />
         <template v-if="call.prefs.noiseSuppression && native.app?.noise !== false">
+          <Switch
+            label="Lookahead"
+            hint="RNNoise as its authors run it: it hears the next 10 ms before deciding, so the first sound of each word comes through cleaner. Costs those 10 ms. Off, nothing is held back."
+            :model-value="call.prefs.noiseLookahead"
+            @update:model-value="v => setAppDevices({ noiseLookahead: v })"
+          />
           <Slider
             label="Voice gate"
             unit="%"
@@ -273,7 +279,7 @@ onBeforeUnmount(() => {
             @update:model-value="v => setAppDevices({ noiseGraceMs: v })"
           />
         </template>
-        <p class="note">All off, the app doesn’t touch your mic at all, and none of it costs anything.</p>
+        <p class="note spaced">All off, the app doesn’t touch your mic at all, and none of it costs anything.</p>
       </template>
       <template v-else>
       <Switch
@@ -501,5 +507,8 @@ select {
 }
 .note.bad {
   color: var(--red);
+}
+.note.spaced {
+  margin: 4px 0 12px;
 }
 </style>

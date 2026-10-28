@@ -112,8 +112,7 @@ func (s *sender) process(b capBlock, p *dsp.Settings) capBlock {
 			s.setChain(p)
 		}
 	default:
-		have := s.chain.Settings()
-		if have.Echo != p.Echo || have.Noise != p.Noise || have.Gain != p.Gain {
+		if !s.chain.Settings().SameStages(*p) {
 			s.setChain(p)
 		} else {
 			s.chain.Retune(*p)
