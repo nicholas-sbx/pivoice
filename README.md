@@ -117,13 +117,17 @@ server, and which one), the transport, codec and bitrate, a mouth-to-ear
 estimate with its breakdown (mic, codec, network, jitter buffer, playout),
 and jitter and packet loss. It's all read once a second from the calls'
 own WebRTC stats, and it also says which engine is carrying that person's
-voice. The mouth-to-ear figure is measured where it can be (see below), and
+voice. Those stats are only read while the route card is up: `getStats()`
+stalls Chrome's network thread, where the low-latency engine's packets
+come in, and its jitter buffer grows to cover the stall (p90 mouth to ear
+went from 22.7 to 25–26 ms with the poll on). Ping to people on that
+engine comes from its own pings over its data channel instead. The mouth-to-ear figure is measured where it can be (see below), and
 an estimate (`≈`) where it can't. Hover the estimate for what each part means.
 
 **Voice settings.** Input and output device, an input level meter,
 spatial audio (**Off**, **Stereo**, **HRTF**), echo cancellation, noise
 suppression and automatic gain control (all **off** by default), and
-silence suppression (DTX, on). The **Low Latency** tab has the experimental
+silence suppression (DTX, off). The **Low Latency** tab has the experimental
 engine and all its settings (below).
 
 ### Seating
@@ -164,12 +168,12 @@ to where they're going.
   out. A disabled track would still send encoded silence 100 times a second.
   Nobody sends audio to someone who's deafened. Swapping the track back is
   instant and needs no renegotiation.
-- **Silence suppression (DTX), on by default.** While someone's quiet, Opus
-  sends a small comfort-noise update every 400 ms instead of 100 packets a
-  second, and resumes on the first frame of speech, so nothing is clipped.
-  It costs about 9 ms: measured in Chrome, the jitter buffer sat at ~36 ms
-  with it and ~27 ms without. Turn it off in Voice Settings to save those
-  9 ms. It applies to what people send *you*. Changing it reconnects you for
+- **Silence suppression (DTX), off by default.** With it on, while someone's
+  quiet Opus sends a small comfort-noise update every 400 ms instead of 100
+  packets a second, and resumes on the first frame of speech, so nothing is
+  clipped. It costs about 9 ms: measured in Chrome, the jitter buffer sat at
+  ~36 ms with it and ~27 ms without. Turn it on in Voice Settings to save
+  bandwidth while people are quiet. It applies to what people send *you*. Changing it reconnects you for
   a moment, since it's part of how each call is set up.
 - **Spatial audio off by default.** With it off, each voice plays from a plain
   `<audio>` element, the shortest path the browser has from the network to your
@@ -220,8 +224,10 @@ it's as good as your two clocks (NTP usually keeps desktops within a few ms).
 
 ### The low-latency engine (experimental)
 
-Off by default, in **Voice Settings → Low Latency**. Pairs of people who both
-turn it on stop using WebRTC's audio for each other and use this instead:
+On by default, sending raw PCM, in **Voice Settings → Low Latency**. Pairs
+of people who both have it on stop using WebRTC's audio for each other and
+use this instead. PCM is about 1.3 Mbit/s to each person you're talking to,
+so on a slow uplink switch the codec to Opus or turn the engine off:
 
 ```
 mic → pv-capture AudioWorklet: frames of 2.5–20 ms on the audio clock (one 2.7 ms block for PCM)

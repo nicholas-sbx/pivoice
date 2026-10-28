@@ -497,12 +497,12 @@ export class Session {
     return receiver?.getSynchronizationSources()[0] ?? null
   }
 
-  /** Each live call's WebRTC stats, keyed by who it's with. */
-  async getStats(): Promise<Map<string, RTCStatsReport>> {
+  /** Each live call's WebRTC stats (or just the ones `want` picks), keyed by who it's with. */
+  async getStats(want: (id: string) => boolean = () => true): Promise<Map<string, RTCStatsReport>> {
     const out = new Map<string, RTCStatsReport>()
     await Promise.all(
       [...this.voice].map(async ([id, v]) => {
-        if (!v.remote || v.link.closed) return
+        if (!v.remote || v.link.closed || !want(id)) return
         try {
           out.set(id, await v.link.pc.getStats())
         } catch {

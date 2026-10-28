@@ -2,6 +2,8 @@ import type { OutputBuffer, SpatialMode } from '../audio/engine'
 import { LL_DEFAULTS, sanitizeLL, type LLConfig } from '../audio/ll/config'
 
 export interface Prefs {
+  /** See PREFS_REV. */
+  rev: number
   name: string
   spatial: SpatialMode
   /** What the spatial button in the call controls switches to. */
@@ -18,7 +20,7 @@ export interface Prefs {
   showPing: boolean
   /** A card under everyone with the route their audio takes and what it's costing. */
   showRoute: boolean
-  /** Opus DTX for what people send you: less bandwidth in silence, ~9 ms more buffering. */
+  /** Opus DTX for what people send you: less bandwidth in silence, ~9 ms more buffering. Off by default. */
   dtx: boolean
   /**
    * Web Audio's output buffer. 'min' asks for the smallest the device will
@@ -33,8 +35,15 @@ export interface Prefs {
 }
 
 const KEY = 'pv.prefs'
+/**
+ * Bumped when a default changes for everyone who already has prefs saved
+ * (which is everyone who's been in a call: all of them are saved). 1: DTX
+ * went from on to off by default, so a saved `dtx` from before doesn't count.
+ */
+const PREFS_REV = 1
 
 export const DEFAULT_PREFS: Prefs = {
+  rev: PREFS_REV,
   name: '',
   spatial: 'off',
   lastSpatial: 'hrtf',
@@ -46,7 +55,7 @@ export const DEFAULT_PREFS: Prefs = {
   showCode: false,
   showPing: true,
   showRoute: false,
-  dtx: true,
+  dtx: false,
   outputBuffer: 'min',
   ll: LL_DEFAULTS
 }
@@ -61,9 +70,10 @@ export function loadPrefs(): Prefs {
     if (typeof raw.inputId === 'string') p.inputId = raw.inputId
     if (raw.outputBuffer === 'min' || raw.outputBuffer === 'small' || raw.outputBuffer === 'interactive') p.outputBuffer = raw.outputBuffer
     if (typeof raw.outputId === 'string') p.outputId = raw.outputId
-    for (const k of ['echoCancellation', 'noiseSuppression', 'autoGainControl', 'showCode', 'showPing', 'showRoute', 'dtx'] as const) {
+    for (const k of ['echoCancellation', 'noiseSuppression', 'autoGainControl', 'showCode', 'showPing', 'showRoute'] as const) {
       if (typeof raw[k] === 'boolean') p[k] = raw[k]
     }
+    if (typeof raw.dtx === 'boolean' && raw.rev === PREFS_REV) p.dtx = raw.dtx
     return p
   } catch {
     return { ...DEFAULT_PREFS, ll: { ...LL_DEFAULTS } }

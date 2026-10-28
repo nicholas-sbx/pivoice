@@ -23,9 +23,16 @@ export const PCM_FRAME = 128
  * who already have settings saved: their tuning resets to the new defaults
  * once (whether the engine is on is kept). 2: the silence gate stopped
  * chopping quiet speech (−70 dBFS, 400 ms hangover) and the jitter target
- * moved to the 99th percentile. 3: raw PCM became the default codec.
+ * moved to the 99th percentile. 3: raw PCM became the default codec, and
+ * the engine is on by default (see ENABLED_SINCE).
  */
 export const LL_REV = 3
+/**
+ * Whether the engine is on survives a revision, except across this one:
+ * it used to be off by default and saved as such for everyone, so a saved
+ * `enabled` from before it doesn't count.
+ */
+const ENABLED_SINCE = 3
 
 export interface LLConfig {
   rev: number
@@ -66,7 +73,7 @@ export const APPLICATIONS: OpusApplication[] = ['lowdelay', 'voip', 'audio']
 
 export const LL_DEFAULTS: LLConfig = {
   rev: LL_REV,
-  enabled: false,
+  enabled: true,
   codec: 'pcm',
   frameMs: 5,
   application: 'lowdelay',
@@ -106,7 +113,7 @@ export function sanitizeLL(raw: unknown): LLConfig {
   const c: LLConfig = { ...LL_DEFAULTS }
   if (!raw || typeof raw !== 'object') return c
   const r = raw as Record<string, unknown>
-  if (typeof r.enabled === 'boolean') c.enabled = r.enabled
+  if (typeof r.enabled === 'boolean' && typeof r.rev === 'number' && r.rev >= ENABLED_SINCE) c.enabled = r.enabled
   if (r.rev !== LL_REV) return c
   if (typeof r.dtx === 'boolean') c.dtx = r.dtx
   if (FRAME_OPTIONS.includes(r.frameMs as FrameMs)) c.frameMs = r.frameMs as FrameMs
