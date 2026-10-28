@@ -25,15 +25,20 @@ ldflags="-s -w -X main.siteURL=${PIVOICE_URL:-}"
 # which are the only copies on that pkg-config path, so the linker can't
 # pick shared ones. What they need from the system goes in by hand.
 if [[ ${STATIC_AUDIO:-} == 1 ]]; then
-  [[ -d build/deps/lib/pkgconfig ]] || { echo "STATIC_AUDIO=1 needs build/deps.sh run first" >&2; exit 1; }
-  export PKG_CONFIG_PATH="$PWD/build/deps/lib/pkgconfig:$PKG_CONFIG_PATH"
+  deps=${DEPS_DIR:-$PWD/build/deps}
+  [[ -d $deps/lib/pkgconfig ]] || { echo "STATIC_AUDIO=1 needs build/deps.sh run first" >&2; exit 1; }
+  export PKG_CONFIG_PATH="$deps/lib/pkgconfig:$PKG_CONFIG_PATH"
   case "$(go env GOOS)" in
     linux) export CGO_LDFLAGS="${CGO_LDFLAGS:-} -lm" ;;
     windows) export CGO_LDFLAGS="${CGO_LDFLAGS:-} -lwinmm -lole32 -luuid -lsetupapi" ;;
   esac
 fi
-# No console window on Windows.
-[[ "$(go env GOOS)" == windows ]] && ldflags+=" -H windowsgui"
+# No console window on Windows. And go.exe and pkg-config.exe are Windows
+# programs: hand them the search path the Windows way, not MSYS2's.
+if [[ "$(go env GOOS)" == windows ]]; then
+  ldflags+=" -H windowsgui"
+  command -v cygpath >/dev/null && PKG_CONFIG_PATH=$(cygpath -wp "$PKG_CONFIG_PATH")
+fi
 
 go build -trimpath ${tags[@]+"${tags[@]}"} -ldflags "$ldflags" -o "$out" .
 echo "built $out ($(du -h "$out" | cut -f1))"
