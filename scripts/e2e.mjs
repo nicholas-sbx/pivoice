@@ -166,6 +166,76 @@ try {
   })
   ok('ping shows: ' + (await dan.$$eval('.seat:not(.self) .ping', els => els.map(e => e.textContent.trim()).join(', '))))
 
+  // The table popped out into its own always-on-top window (Document Picture-in-Picture).
+  if (!(await dan.evaluate(() => 'documentPictureInPicture' in window))) {
+    console.log('- pop-out: this Chromium has no Document Picture-in-Picture, skipped')
+  } else {
+    const [pip] = await Promise.all([dan.context().waitForEvent('page', { timeout: 10_000 }), dan.click('button[aria-label="Pop out table"]')])
+    pip.on('pageerror', e => console.error('[pop-out] page error:', e.message))
+    await pip.waitForSelector('.seat', { timeout: 10_000 })
+    await pip.waitForFunction(() => [...document.querySelectorAll('.seat')].filter(e => e.style.opacity === '').length === 6, null, { timeout: 10_000 }).catch(async () => {
+      throw new Error(`pop-out: expected six seats at rest, saw ${await pip.$$eval('.seat', e => e.length)}`)
+    })
+    if (!(await dan.$('button[aria-label="Close pop-out table"][aria-pressed="true"]'))) throw new Error('pop-out: the button should show it is open')
+    // The same table: you at the bottom, everyone else at their seats, names and all.
+    const names = await pip.$$eval('.seat .name', els => els.map(e => e.textContent.trim()).sort())
+    if (names.join() !== ['Bob', 'Cara', 'Dan', 'Eve', 'Finn', 'Gus'].join()) throw new Error('pop-out: wrong people at the table: ' + names)
+    const lowest = await pip.$$eval('.seat', els => els.sort((a, b) => b.getBoundingClientRect().top - a.getBoundingClientRect().top)[0].classList.contains('self'))
+    if (!lowest) throw new Error('pop-out: you should be at the bottom')
+    // Everyone fits at the sizes it's meant for, and nothing runs past the edge.
+    for (const size of [240, 320, 500]) {
+      await pip.setViewportSize({ width: size, height: size })
+      await pip.waitForTimeout(300)
+      const out = await pip.evaluate(() => {
+        const stage = document.querySelector('.stage').getBoundingClientRect()
+        const bad = [...document.querySelectorAll('.seat .ring, .seat .tag')]
+          .filter(e => {
+            const r = e.getBoundingClientRect()
+            return r.left < -0.5 || r.right > innerWidth + 0.5 || r.top < -0.5 || r.bottom > stage.bottom + 0.5
+          })
+          .map(e => e.className)
+        return { bad, wide: document.documentElement.scrollWidth > innerWidth, tall: document.documentElement.scrollHeight > innerHeight }
+      })
+      if (out.bad.length || out.wide || out.tall) throw new Error(`pop-out at ${size}px: ${JSON.stringify(out)}`)
+    }
+    await pip.setViewportSize({ width: 320, height: 320 })
+    await pip.waitForTimeout(300)
+    if (process.env.PIP_SHOT) await pip.screenshot({ path: process.env.PIP_SHOT })
+    ok('pop-out: the table in its own window at 240, 320 and 500 px, six seats, you at the bottom')
+
+    // Its buttons and shortcuts are the call's.
+    await pip.click('button[aria-label="Mute"]')
+    await dan.waitForSelector('button[aria-label="Unmute"]', { timeout: 5_000 })
+    await pip.waitForSelector('button[aria-label="Unmute"]', { timeout: 5_000 })
+    await pip.click('button[aria-label="Unmute"]')
+    await dan.waitForSelector('button[aria-label="Mute"]', { timeout: 5_000 })
+    await pip.keyboard.press('Control+Shift+D')
+    await dan.waitForSelector('button[aria-label="Undeafen"]', { timeout: 5_000 }).catch(() => {
+      throw new Error('pop-out: Ctrl+Shift+D in the pop-out did nothing')
+    })
+    await pip.click('button[aria-label="Undeafen"]')
+    await dan.waitForSelector('button[aria-label="Deafen"]', { timeout: 5_000 })
+    ok('pop-out: mute and deafen from its buttons and Ctrl+Shift+D, shown on both')
+
+    // Someone in the middle of the pop-out sees it when they speak: a ring in the pop-out too.
+    await pip.waitForSelector('.seat.speaking:not(.self)', { timeout: 15_000 }).catch(() => {
+      throw new Error('pop-out: never saw anyone speaking')
+    })
+
+    // The button closes it; closing it from its own window puts the button back.
+    await dan.click('button[aria-label="Close pop-out table"]')
+    await pip.waitForEvent('close', { timeout: 5_000 }).catch(() => {})
+    if (!pip.isClosed()) throw new Error('pop-out: the button should close it')
+    await dan.waitForSelector('button[aria-label="Pop out table"][aria-pressed="false"]', { timeout: 5_000 })
+    const [again] = await Promise.all([dan.context().waitForEvent('page', { timeout: 10_000 }), dan.click('button[aria-label="Pop out table"]')])
+    await again.waitForSelector('.seat', { timeout: 10_000 })
+    await again.evaluate(() => window.close())
+    await dan.waitForSelector('button[aria-label="Pop out table"][aria-pressed="false"]', { timeout: 5_000 }).catch(() => {
+      throw new Error('pop-out: closing its window should reset the button')
+    })
+    ok('pop-out: opens and closes from the button, and from its own window')
+  }
+
   if (SHOTS) {
     await dan.click('button[aria-label^="Spatial Audio"]')
     await dan.waitForTimeout(1200)
@@ -371,6 +441,7 @@ try {
       throw new Error(`phone: expected ${n} tiles, saw ${await phone.$$eval('.tile', e => e.length)}`)
     })
     if (await phone.$('.table')) throw new Error('phone: the table showed with spatial audio off')
+    if (await phone.$('button[aria-label="Pop out table"]')) throw new Error('phone: offered a pop-out window on a phone')
     const wide = await phone.evaluate(() => document.documentElement.scrollWidth > innerWidth)
     if (wide) throw new Error('phone: the page is wider than the screen')
     const cutRoom = await offScreen('.bar, .bar > *, .pill, .tile, .tile .tag')
@@ -398,6 +469,18 @@ try {
       await phone.waitForTimeout(500)
       await phone.screenshot({ path: `${SHOTS}/phone.png` })
     }
+  }
+
+  // Leaving the call takes a pop-out with it.
+  if (await extra[2].evaluate(() => 'documentPictureInPicture' in window)) {
+    const gus = extra[2]
+    const [gone] = await Promise.all([gus.context().waitForEvent('page', { timeout: 10_000 }), gus.click('button[aria-label="Pop out table"]')])
+    await gone.waitForSelector('.seat', { timeout: 10_000 })
+    await gus.click('button[aria-label="Disconnect"]')
+    await gus.waitForSelector('button:has-text("Create a Room")')
+    await gone.waitForEvent('close', { timeout: 5_000 }).catch(() => {})
+    if (!gone.isClosed()) throw new Error('pop-out: should close when you leave the call')
+    ok('pop-out: closes when you leave')
   }
 
   if (SHOTS) {
