@@ -45,7 +45,8 @@ dev:worker` start just one half.
 The e2e run makes a room, has people join, checks everyone hears everyone
 (the fake mic beeps, which lights up speaking rings on the other screens),
 mutes, has whoever made the room leave and checks the call carries on, joins
-someone new after that, and fills the table to six. It needs Playwright
+someone new after that, fills the table to six and pops it out into its own
+window. It needs Playwright
 installed (`npm i -g playwright && npx playwright install chromium`).
 `SHOTS_DIR=docs/screenshots npm run e2e` retakes the screenshots above.
 
@@ -87,6 +88,18 @@ their menu (a phone has no right-click), and the settings open as sheets
 across the screen. The layout keeps clear of notches and the home bar, and
 nothing on the page is wider than the screen (a phone would zoom the whole
 page out to fit it).
+
+**Pop-out table.** The pop-out button in the top bar opens the table in its
+own small always-on-top window, so you can see where people sit and who's
+talking while you're in something else, with mute and deafen under it (and
+`Ctrl+Shift+M` / `D` working there too). It's a miniature of the same table:
+the same seats, from the same seating, so it's never out of step with what
+you hear. It uses the browser's Document Picture-in-Picture window, so it's
+there in Chrome and Edge 116+ and recent Firefox, on a desktop, and only
+in the website: not on a phone, and not in the app, which will get an
+overlay of its own. The window's own animation frames drive the seats while
+the page is hidden. Close it from its own window or with the button, or
+leave the call.
 
 **Call controls.** A floating pill at the bottom: mute (`Ctrl+Shift+M`),
 deafen (`Ctrl+Shift+D`), spatial audio, voice settings, disconnect. Like
@@ -166,9 +179,18 @@ The motion is done in JavaScript: each seat's angle is a critically damped
 spring, stepped every animation frame, and it moves along the table's edge,
 not in a straight line across it. A change halfway through a move keeps the
 seat's speed, so it bends toward its new spot instead of restarting. Because
-the angle is known every frame, the spatial audio reads it directly. The loop
-stops when everything is still. With reduced motion on, seats jump straight
-to where they're going.
+the angle is known every frame, the spatial audio reads it directly.
+
+The seating is one model for the whole call ([`src/lib/seating.ts`](src/lib/seating.ts)),
+not a part of the table you look at: it follows the roster, sends each angle
+to the audio itself whenever it changes, and the table (and the pop-out below)
+only draws what it says. It steps on animation frames from a window that's
+visible, and stops when everything is still. When none is (a hidden tab, a
+minimised window: browsers pause animation frames there), nobody could see
+the slide, so every seat jumps to where it's going and the final angles go
+out at once. Someone who joins while you're in another tab is heard from
+their seat straight away, not once you look back. With reduced motion on,
+seats jump straight to where they're going.
 
 ### Audio and latency
 
@@ -794,19 +816,22 @@ checks for them and has no environment:
 
 ```
 src/
-  lib/          seats (planning + the animated Table), tiles (the phone layout), spring,
-                room codes, prefs, viewport
+  lib/          seats (planning + the animated Table), seating (the call's one Table, and
+                who draws it), tableView (what the table and the pop-out share), tiles
+                (the phone layout), spring, room codes, prefs, viewport
   net/          protocol (+ validation, shared with the Worker), roomSocket (the
                 WebSocket to the room), peer (one peer connection), session
                 (joining, the call mesh), sdp, ICE config
   audio/        engine: mic, per-person channel strips, panning, speaking detection
   audio/ll/     the low-latency engine: worklets (capture, playback), worker
                 (encode, decode, network), jitter buffer, shared-memory ring, packet format, settings
-  components/   round table, call control buttons, settings, user menu, icons
+  components/   round table, its miniature for the pop-out, call control buttons, settings,
+                user menu, icons
   screens/      Home (make or join) and Room
   native/       the page's side of the app: finding it, the bridge, and the links and
                 voice that stand in for the page's own when the app does the audio
   call.ts       the call as reactive state, and everything the UI can do to it
+  pip.ts        the pop-out window (Document Picture-in-Picture)
 worker/         the Cloudflare Worker: static assets, the rooms (a Durable Object each), /api/ice
 scripts/        dev (app + Worker), e2e runs (website, and the app with the website)
 tests/          unit tests

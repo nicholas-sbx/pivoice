@@ -25,3 +25,12 @@ declare module '*.vue' {
   const component: DefineComponent<object, object, unknown>
   export default component
 }
+
+/** Document Picture-in-Picture (Chrome and Edge 116+, recent Firefox): an always-on-top window with a page of our own in it. Not in lib.dom yet. */
+interface DocumentPictureInPicture extends EventTarget {
+  requestWindow(options?: { width?: number; height?: number; disallowReturnToOpener?: boolean; preferInitialWindowPlacement?: boolean }): Promise<Window>
+  readonly window: Window | null
+}
+interface Window {
+  readonly documentPictureInPicture?: DocumentPictureInPicture
+}

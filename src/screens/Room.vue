@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
   call,
   copyCode,
@@ -13,6 +13,7 @@ import {
 import ControlButton from '../components/ControlButton.vue'
 import DisplayPanel from '../components/DisplayPanel.vue'
 import Icon from '../components/Icon.vue'
+import OverlayTable from '../components/OverlayTable.vue'
 import PeopleGrid from '../components/PeopleGrid.vue'
 import RoundTable from '../components/RoundTable.vue'
 import SettingsPanel from '../components/SettingsPanel.vue'
@@ -20,6 +21,7 @@ import UserMenu from '../components/UserMenu.vue'
 import { isNative } from '../native/bridge'
 import { useCompact } from '../lib/viewport'
 import { vSnap } from '../lib/snap'
+import { closePip, pipRoot, pipSupported, pipWindow, togglePip } from '../pip'
 
 const settingsOpen = ref(false)
 const displayOpen = ref(false)
@@ -54,7 +56,20 @@ function onKey(e: KeyboardEvent) {
 }
 
 onMounted(() => addEventListener('keydown', onKey))
-onBeforeUnmount(() => removeEventListener('keydown', onKey))
+// The pop-out is a window of its own, with its own key events.
+watch(
+  pipWindow,
+  (win, old) => {
+    old?.removeEventListener('keydown', onKey)
+    win?.addEventListener('keydown', onKey)
+  },
+  { immediate: true }
+)
+onBeforeUnmount(() => {
+  removeEventListener('keydown', onKey)
+  pipWindow.value?.removeEventListener('keydown', onKey)
+  closePip()
+})
 </script>
 
 <template>
@@ -91,6 +106,18 @@ onBeforeUnmount(() => removeEventListener('keydown', onKey))
           <Icon name="people" :size="20" />
           <span>{{ present }}</span>
         </div>
+        <button
+          v-if="pipSupported"
+          type="button"
+          class="bar-btn"
+          :class="{ active: !!pipRoot }"
+          :title="pipRoot ? 'Close pop-out table' : 'Pop out table'"
+          :aria-label="pipRoot ? 'Close pop-out table' : 'Pop out table'"
+          :aria-pressed="!!pipRoot"
+          @click="togglePip"
+        >
+          <Icon name="pip" :size="20" />
+        </button>
         <div class="display-anchor">
           <button
             type="button"
@@ -173,6 +200,22 @@ onBeforeUnmount(() => removeEventListener('keydown', onKey))
         <ControlButton icon="hangup" label="Disconnect" danger @click="leaveCall" />
       </div>
     </main>
+
+    <!-- The pop-out window's page is another document, but the same JavaScript: same props, same state. -->
+    <Teleport v-if="pipRoot" :to="pipRoot">
+      <OverlayTable
+        :members="call.members"
+        :self-id="call.selfId"
+        :speaking="call.speaking"
+        :audible="call.audible"
+        :self-muted="selfMuted"
+        :self-deafened="call.deafened"
+        :silenced="call.silenced"
+        controls
+        @toggle-mute="toggleMute"
+        @toggle-deafen="toggleDeafen"
+      />
+    </Teleport>
 
     <UserMenu v-if="menu" :id="menu.id" :key="menu.id + menu.x + menu.y" :x="menu.x" :y="menu.y" @close="menu = null" />
   </div>
