@@ -16,7 +16,11 @@ export default defineConfig({
   resolve: {
     alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) }
   },
-  build: { target: 'es2022' },
+  build: {
+    target: 'es2022',
+    // The app's overlay window has a page of its own (overlay.html), with only the table in it.
+    rollupOptions: { input: { main: 'index.html', overlay: 'overlay.html' } }
+  },
   server: {
     host: true,
     // Same cross-origin isolation the Worker gives the real site (worker/index.ts).

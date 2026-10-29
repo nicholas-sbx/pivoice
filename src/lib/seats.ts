@@ -126,15 +126,8 @@ export class Table {
   private selfId = ''
 
   sync(ids: readonly string[], selfId: string) {
-    this.selfId = selfId
+    this.sitDown(selfId)
     const present = new Set(ids)
-
-    const me = this.seats.get(selfId)
-    if (!me) this.seats.set(selfId, { id: selfId, angle: spring(0), presence: spring(0, 1), leaving: false })
-    else {
-      me.leaving = false
-      me.presence.target = 1
-    }
 
     const placed: Placed[] = []
     for (const seat of this.seats.values()) {
@@ -158,6 +151,52 @@ export class Table {
       const seat = this.seats.get(id)
       if (seat) seat.angle.target = target
       else this.seats.set(id, { id, angle: spring(target), presence: spring(0, 1), leaving: false })
+    }
+  }
+
+  /**
+   * Seats chosen by another table: the app's overlay copies the page's,
+   * whose seats depend on everything that's happened in the call so far, so
+   * it takes where everyone's heading rather than working it out again.
+   * Newcomers fade in at their seat, people missing fade out where they are,
+   * and everyone else slides to theirs, as with `sync`.
+   */
+  mirror(placed: readonly Placed[], selfId: string) {
+    this.sitDown(selfId)
+    const to = new Map(placed.map(p => [p.id, p.angle]))
+    for (const seat of this.seats.values()) {
+      if (seat.id === selfId) continue
+      const angle = to.get(seat.id)
+      if (angle === undefined) {
+        seat.leaving = true
+        seat.presence.target = 0
+        seat.angle.target = seat.angle.x
+        continue
+      }
+      seat.leaving = false
+      seat.presence.target = 1
+      seat.angle.target = angle
+    }
+    for (const [id, angle] of to) {
+      if (id !== selfId && !this.seats.has(id)) this.seats.set(id, { id, angle: spring(angle), presence: spring(0, 1), leaving: false })
+    }
+  }
+
+  /** Where everyone else is heading (people fading out aside): what `mirror` takes. */
+  targets(): Placed[] {
+    const out: Placed[] = []
+    for (const seat of this.seats.values()) if (seat.id !== this.selfId && !seat.leaving) out.push({ id: seat.id, angle: seat.angle.target })
+    return out
+  }
+
+  /** You, at the bottom, there for good. */
+  private sitDown(selfId: string) {
+    this.selfId = selfId
+    const me = this.seats.get(selfId)
+    if (!me) this.seats.set(selfId, { id: selfId, angle: spring(0), presence: spring(0, 1), leaving: false })
+    else {
+      me.leaving = false
+      me.presence.target = 1
     }
   }
 

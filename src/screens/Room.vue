@@ -5,8 +5,10 @@ import {
   copyCode,
   copyInvite,
   leaveCall,
+  seating,
   toggleDeafen,
   toggleMute,
+  updatePrefs,
   toggleShowCode,
   toggleSpatial
 } from '../call'
@@ -22,6 +24,7 @@ import { isNative } from '../native/bridge'
 import { useCompact } from '../lib/viewport'
 import { vSnap } from '../lib/snap'
 import { closePip, pipRoot, pipSupported, pipWindow, togglePip } from '../pip'
+import { overlayError, overlaySupported } from '../native/overlay'
 
 const settingsOpen = ref(false)
 const displayOpen = ref(false)
@@ -40,6 +43,12 @@ const spatialLabel = computed(() =>
       ? `Spatial Audio: ${isNative ? 'Binaural' : 'HRTF'}`
       : 'Spatial Audio: Stereo'
 )
+/** The app's overlay, on or off: it stays that way for later calls too. */
+function toggleOverlay() {
+  updatePrefs({ overlay: { ...call.prefs.overlay, on: !call.prefs.overlay.on } })
+}
+const overlayOn = computed(() => call.prefs.overlay.on && !overlayError.value)
+
 const isMac = /Mac|iPhone|iPad/.test(navigator.platform)
 const mod = isMac ? '⌘⇧' : 'Ctrl+Shift+'
 
@@ -115,6 +124,18 @@ onBeforeUnmount(() => {
           :aria-label="pipRoot ? 'Close pop-out table' : 'Pop out table'"
           :aria-pressed="!!pipRoot"
           @click="togglePip"
+        >
+          <Icon name="pip" :size="20" />
+        </button>
+        <button
+          v-else-if="overlaySupported"
+          type="button"
+          class="bar-btn"
+          :class="{ active: overlayOn }"
+          :title="overlayOn ? 'Hide overlay' : 'Show overlay'"
+          :aria-label="overlayOn ? 'Hide overlay' : 'Show overlay'"
+          :aria-pressed="overlayOn"
+          @click="toggleOverlay"
         >
           <Icon name="pip" :size="20" />
         </button>
@@ -204,6 +225,7 @@ onBeforeUnmount(() => {
     <!-- The pop-out window's page is another document, but the same JavaScript: same props, same state. -->
     <Teleport v-if="pipRoot" :to="pipRoot">
       <OverlayTable
+        :seating="seating"
         :members="call.members"
         :self-id="call.selfId"
         :speaking="call.speaking"
@@ -212,8 +234,12 @@ onBeforeUnmount(() => {
         :self-deafened="call.deafened"
         :silenced="call.silenced"
         controls
+        :spatial="call.prefs.spatial !== 'off'"
+        :spatial-label="spatialLabel"
         @toggle-mute="toggleMute"
         @toggle-deafen="toggleDeafen"
+        @toggle-spatial="toggleSpatial"
+        @leave="leaveCall"
       />
     </Teleport>
 
