@@ -361,7 +361,7 @@ onBeforeUnmount(() => {
         :model-value="call.prefs[p.key]"
         @update:model-value="v => applyMicPrefs({ [p.key]: v })"
       />
-      <p class="note">Off for the lowest latency. Turn them on if you're not on headphones.</p>
+      <p class="note">The browser's own. All three off is the lowest latency: the browser hands your mic over untouched. Echo cancellation is for when you're not on headphones.</p>
       </template>
       <Switch
         label="Silence Suppression (DTX)"

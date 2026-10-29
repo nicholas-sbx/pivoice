@@ -206,9 +206,12 @@ seats jump straight to where they're going.
 - **A full mesh of WebRTC calls.** Everyone calls everyone directly, with no
   SFU or relay in the middle unless the network forces TURN. That's the
   lowest latency you can get, and fine for the 12 people a room allows.
-- **Raw microphone.** Echo cancellation, noise suppression and auto gain are
-  off unless you turn them on. Each adds processing delay, and everyone's on
-  headphones.
+- **Noise suppression and auto gain on, echo cancellation off.** The
+  browser's own, by default: most people's mics need them, and the bigger
+  latency win is the app. Echo cancellation is on by default only on phones,
+  which are usually on their speaker; on a computer it costs latency and
+  people are on headphones. All three off, the browser hands the mic over
+  untouched, for the lowest latency.
 - **10 ms Opus frames.** The SDP each side sends asks for `ptime=10`
   instead of 20 ms, with in-band FEC and mono
   ([`src/net/sdp.ts`](src/net/sdp.ts)). Measured: 100 packets a second.
@@ -502,8 +505,10 @@ e2e:native`):
 
 The website asks the browser for echo cancellation, noise suppression and
 gain control. The app does its own, in Go and two small C libraries, on the
-sending side (never on the audio thread), and each is off until you turn it
-on in **Voice Settings**:
+sending side (never on the audio thread), and never asks its webview for a
+mic, so the browser's processing never runs underneath it. Noise
+suppression and gain control are on by default, echo cancellation off
+(people are on headphones); each is a switch in **Voice Settings**:
 
 | | What | Delay it adds | CPU (share of one core) |
 | --- | --- | --- | --- |
