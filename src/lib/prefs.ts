@@ -53,6 +53,8 @@ export interface Prefs {
   showPing: boolean
   /** A card under everyone with the route their audio takes and what it's costing. */
   showRoute: boolean
+  /** Ask the browser to keep the screen awake while you're in a call. */
+  keepAwake: boolean
   /** Opus DTX for what people send you: less bandwidth in silence, ~9 ms more buffering. Off by default. */
   dtx: boolean
   /**
@@ -97,6 +99,7 @@ export const DEFAULT_PREFS: Prefs = {
   showCode: false,
   showPing: true,
   showRoute: false,
+  keepAwake: true,
   dtx: false,
   outputBuffer: 'min',
   ll: llDefaults(isNative),
@@ -134,7 +137,7 @@ export function loadPrefs(): Prefs {
     if (typeof raw.noiseGraceMs === 'number' && raw.noiseGraceMs >= 0 && raw.noiseGraceMs <= 2000) p.noiseGraceMs = raw.noiseGraceMs
     if (typeof raw.agcTargetDb === 'number' && raw.agcTargetDb >= -30 && raw.agcTargetDb <= -6) p.agcTargetDb = raw.agcTargetDb
     if (typeof raw.agcMaxDb === 'number' && raw.agcMaxDb >= 0 && raw.agcMaxDb <= 40) p.agcMaxDb = raw.agcMaxDb
-    for (const k of ['echoCancellation', 'noiseSuppression', 'autoGainControl', 'appExclusive', 'noiseLookahead', 'showCode', 'showPing', 'showRoute'] as const) {
+    for (const k of ['echoCancellation', 'noiseSuppression', 'autoGainControl', 'appExclusive', 'noiseLookahead', 'showCode', 'showPing', 'showRoute', 'keepAwake'] as const) {
       if (typeof raw[k] === 'boolean') p[k] = raw[k]
     }
     if (typeof raw.dtx === 'boolean' && raw.rev === PREFS_REV) p.dtx = raw.dtx

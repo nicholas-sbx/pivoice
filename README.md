@@ -141,8 +141,11 @@ to show it and to copy it, so you can screen share without giving the room
 away. **Copy Invite** copies the link without showing it. The code shows in
 the middle of the table only while you have it revealed.
 
-**Display settings** (the gear in the top bar). **Show ping** (on) and **Show
-audio route** (off). The route card under each person shows how their audio
+**Display settings** (the gear in the top bar). **Show ping** (on), **Show
+audio route** (off) and **Keep screen awake** (on: while you're in a room the
+page asks the browser's Wake Lock for the screen, so a phone on speaker
+doesn't lock and cut the audio; it asks again when the page is shown after
+being hidden, and says nothing if the browser can't or won't). The route card under each person shows how their audio
 reaches you (same network, direct peer to peer, or relayed through a TURN
 server, and which one), the transport, codec and bitrate, a mouth-to-ear
 estimate with its breakdown (mic, codec, network, jitter buffer, playout),

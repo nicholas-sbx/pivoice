@@ -41,6 +41,13 @@ onBeforeUnmount(() => {
       :model-value="call.prefs.showRoute"
       @update:model-value="v => updatePrefs({ showRoute: v })"
     />
+    <span class="eyebrow second">On this device</span>
+    <Switch
+      label="Keep screen awake"
+      hint="Stops the screen going to sleep while you're in a call."
+      :model-value="call.prefs.keepAwake"
+      @update:model-value="v => updatePrefs({ keepAwake: v })"
+    />
   </div>
 </template>
 
@@ -74,5 +81,8 @@ onBeforeUnmount(() => {
   letter-spacing: 0.02em;
   text-transform: uppercase;
   color: var(--header-secondary);
+}
+.eyebrow.second {
+  margin-top: 12px;
 }
 </style>
