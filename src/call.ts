@@ -7,6 +7,7 @@ import { LowLatencyEngine } from './audio/ll/engine'
 import { copyText } from './lib/copyText'
 import { loadPrefs, savePrefs, type Prefs } from './lib/prefs'
 import { Seating } from './lib/seating'
+import { createWakeLock } from './lib/wakeLock'
 import { NativeBridge, isNative } from './native/bridge'
 import { NativeLinks } from './native/link'
 import type { AppConfig } from './native/protocol'
@@ -109,6 +110,14 @@ watch(
     if (!ids.includes(call.selfId)) ids.unshift(call.selfId)
     seating.sync(ids, call.selfId)
   }
+)
+
+// The screen stays awake while you're in a room, if you let it. Says nothing either way.
+const wakeLock = createWakeLock()
+watch(
+  () => call.phase === 'room' && call.prefs.keepAwake,
+  on => wakeLock.set(on),
+  { immediate: true }
 )
 
 /** In the app: connected to it, and on versions that work together. */
