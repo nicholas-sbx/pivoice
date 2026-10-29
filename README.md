@@ -177,7 +177,8 @@ to where they're going.
   lowest latency you can get, and fine for the 12 people a room allows.
 - **Raw microphone.** Echo cancellation, noise suppression and auto gain are
   off unless you turn them on. Each adds processing delay, and everyone's on
-  headphones.
+  headphones. On a phone or tablet they start on instead: held at arm's
+  length on the speaker, a raw mic is faint and the speaker feeds back.
 - **10 ms Opus frames.** The SDP each side sends asks for `ptime=10`
   instead of 20 ms, with in-band FEC and mono
   ([`src/net/sdp.ts`](src/net/sdp.ts)). Measured: 100 packets a second.

@@ -1,6 +1,7 @@
 import type { OutputBuffer, SpatialMode } from '../audio/engine'
 import { llDefaults, sanitizeLL, type LLConfig } from '../audio/ll/config'
 import { isNative } from '../native/bridge'
+import { onMobileDevice } from '../native/downloads'
 
 export interface Prefs {
   /** See PREFS_REV. */
@@ -16,7 +17,9 @@ export interface Prefs {
   appOutputId: string
   /** The app on Windows: WASAPI exclusive mode (smallest buffers; nothing else can play meanwhile). */
   appExclusive: boolean
-  // All off by default: they each add latency, and everyone's on headphones.
+  // Off by default on a computer: they each add latency, and everyone's on
+  // headphones. On a phone they're on (MOBILE_MIC): it's held at arm's
+  // length on the speaker, where a raw mic is faint and the speaker feeds back.
   echoCancellation: boolean
   noiseSuppression: boolean
   autoGainControl: boolean
@@ -54,8 +57,14 @@ const KEY = 'pv.prefs'
  * Bumped when a default changes for everyone who already has prefs saved
  * (which is everyone who's been in a call: all of them are saved). 1: DTX
  * went from on to off by default, so a saved `dtx` from before doesn't count.
+ * 2: echo cancellation, noise suppression and auto gain went on by default
+ * on phones, so what a phone saved before doesn't count for those three.
  */
-const PREFS_REV = 1
+const PREFS_REV = 2
+
+/** The mic processing a phone starts with (see Prefs). */
+const MOBILE_MIC = { echoCancellation: true, noiseSuppression: true, autoGainControl: true } as const
+const MIC_KEYS = ['echoCancellation', 'noiseSuppression', 'autoGainControl'] as const
 
 export const DEFAULT_PREFS: Prefs = {
   rev: PREFS_REV,
@@ -84,7 +93,9 @@ export const DEFAULT_PREFS: Prefs = {
 export function loadPrefs(): Prefs {
   try {
     const raw = JSON.parse(localStorage.getItem(KEY) ?? '{}') as Partial<Prefs>
-    const p = { ...DEFAULT_PREFS, ll: sanitizeLL(raw.ll, isNative) }
+    const mobile = onMobileDevice()
+    const savedRev = typeof raw.rev === 'number' ? raw.rev : 0
+    const p = { ...DEFAULT_PREFS, ...(mobile ? MOBILE_MIC : {}), ll: sanitizeLL(raw.ll, isNative) }
     if (typeof raw.name === 'string') p.name = raw.name
     if (raw.spatial === 'off' || raw.spatial === 'stereo' || raw.spatial === 'hrtf') p.spatial = raw.spatial
     if (raw.lastSpatial === 'stereo' || raw.lastSpatial === 'hrtf') p.lastSpatial = raw.lastSpatial
@@ -95,13 +106,17 @@ export function loadPrefs(): Prefs {
     if (typeof raw.appOutputId === 'string') p.appOutputId = raw.appOutputId
     if (typeof raw.noiseGate === 'number' && raw.noiseGate >= 0 && raw.noiseGate <= 1) p.noiseGate = raw.noiseGate
     if (typeof raw.noiseGraceMs === 'number' && raw.noiseGraceMs >= 0 && raw.noiseGraceMs <= 2000) p.noiseGraceMs = raw.noiseGraceMs
-    for (const k of ['echoCancellation', 'noiseSuppression', 'autoGainControl', 'appExclusive', 'noiseLookahead', 'showCode', 'showPing', 'showRoute'] as const) {
+    for (const k of ['appExclusive', 'noiseLookahead', 'showCode', 'showPing', 'showRoute'] as const) {
       if (typeof raw[k] === 'boolean') p[k] = raw[k]
     }
-    if (typeof raw.dtx === 'boolean' && raw.rev === PREFS_REV) p.dtx = raw.dtx
+    // A phone's saved choice only counts if it was made once they were on by default.
+    if (!mobile || savedRev >= 2) {
+      for (const k of MIC_KEYS) if (typeof raw[k] === 'boolean') p[k] = raw[k]
+    }
+    if (typeof raw.dtx === 'boolean' && savedRev >= 1) p.dtx = raw.dtx
     return p
   } catch {
-    return { ...DEFAULT_PREFS, ll: llDefaults(isNative) }
+    return { ...DEFAULT_PREFS, ...(onMobileDevice() ? MOBILE_MIC : {}), ll: llDefaults(isNative) }
   }
 }
 
