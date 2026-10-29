@@ -25,9 +25,9 @@ describe('mic processing defaults', () => {
     expect(mic(device(IPAD))).toEqual([true, true, true])
   })
 
-  it('has only noise suppression on for a computer', () => {
-    expect(mic(device({ userAgent: WINDOWS }))).toEqual([false, true, false])
-    expect(mic(device({ userAgent: MAC }))).toEqual([false, true, false])
+  it('has everything but echo cancellation on for a computer', () => {
+    expect(mic(device({ userAgent: WINDOWS }))).toEqual([false, true, true])
+    expect(mic(device({ userAgent: MAC }))).toEqual([false, true, true])
   })
 
   it('has the same defaults when nothing readable is saved', () => {
@@ -35,7 +35,7 @@ describe('mic processing defaults', () => {
     vi.stubGlobal('navigator', { userAgent: IPHONE, maxTouchPoints: 5 })
     expect(mic(loadPrefs())).toEqual([true, true, true])
     vi.stubGlobal('navigator', { userAgent: WINDOWS, maxTouchPoints: 0 })
-    expect(mic(loadPrefs())).toEqual([false, true, false])
+    expect(mic(loadPrefs())).toEqual([false, true, true])
   })
 
   it('ignores what a phone saved before the new defaults', () => {
@@ -44,10 +44,10 @@ describe('mic processing defaults', () => {
     expect(mic(device({ userAgent: IPHONE }, { echoCancellation: false }))).toEqual([true, true, true])
   })
 
-  it("ignores a computer's saved noise suppression from before it was on, but not the other two", () => {
-    const old = { rev: 1, echoCancellation: true, noiseSuppression: false, autoGainControl: true }
+  it("ignores a computer's saved noise suppression and auto gain from before they were on, but not echo cancellation", () => {
+    const old = { rev: 1, echoCancellation: true, noiseSuppression: false, autoGainControl: false }
     expect(mic(device({ userAgent: WINDOWS }, old))).toEqual([true, true, true])
-    expect(mic(device({ userAgent: WINDOWS }, { echoCancellation: false, noiseSuppression: false }))).toEqual([false, true, false])
+    expect(mic(device({ userAgent: WINDOWS }, { echoCancellation: false, noiseSuppression: false, autoGainControl: false }))).toEqual([false, true, true])
   })
 
   it('keeps any choice made since', () => {

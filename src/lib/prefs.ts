@@ -17,10 +17,10 @@ export interface Prefs {
   appOutputId: string
   /** The app on Windows: WASAPI exclusive mode (smallest buffers; nothing else can play meanwhile). */
   appExclusive: boolean
-  // Noise suppression is on by default. Echo cancellation and auto gain are
-  // off on a computer, where they add latency and everyone's on headphones,
-  // and on a phone (MOBILE_MIC), held at arm's length on the speaker, where
-  // a raw mic is faint and the speaker feeds back.
+  // Noise suppression and auto gain are on by default. Echo cancellation is
+  // off on a computer, where it adds latency and everyone's on headphones,
+  // and on for a phone (MOBILE_MIC), held at arm's length on the speaker,
+  // where the speaker feeds back.
   echoCancellation: boolean
   noiseSuppression: boolean
   autoGainControl: boolean
@@ -61,13 +61,13 @@ const KEY = 'pv.prefs'
  * Bumped when a default changes for everyone who already has prefs saved
  * (which is everyone who's been in a call: all of them are saved). 1: DTX
  * went from on to off by default, so a saved `dtx` from before doesn't count.
- * 2: noise suppression went on by default everywhere, and echo cancellation
- * and auto gain on phones, so what was saved before doesn't count for those.
+ * 2: noise suppression and auto gain went on by default everywhere, and echo
+ * cancellation on phones, so what was saved before doesn't count for those.
  */
 const PREFS_REV = 2
 
 /** What a phone starts with on top of everyone's defaults (see Prefs). */
-const MOBILE_MIC = { echoCancellation: true, autoGainControl: true } as const
+const MOBILE_MIC = { echoCancellation: true } as const
 
 export const DEFAULT_PREFS: Prefs = {
   rev: PREFS_REV,
@@ -81,7 +81,7 @@ export const DEFAULT_PREFS: Prefs = {
   appExclusive: false,
   echoCancellation: false,
   noiseSuppression: true,
-  autoGainControl: false,
+  autoGainControl: true,
   noiseGate: 0.4,
   noiseGraceMs: 400,
   noiseLookahead: false,
@@ -117,10 +117,10 @@ export function loadPrefs(): Prefs {
       if (typeof raw[k] === 'boolean') p[k] = raw[k]
     }
     // A saved choice only counts if it was made once the default it overrides was in place.
-    if (savedRev >= 2 && typeof raw.noiseSuppression === 'boolean') p.noiseSuppression = raw.noiseSuppression
-    for (const k of ['echoCancellation', 'autoGainControl'] as const) {
-      if ((!mobile || savedRev >= 2) && typeof raw[k] === 'boolean') p[k] = raw[k]
+    for (const k of ['noiseSuppression', 'autoGainControl'] as const) {
+      if (savedRev >= 2 && typeof raw[k] === 'boolean') p[k] = raw[k]
     }
+    if ((!mobile || savedRev >= 2) && typeof raw.echoCancellation === 'boolean') p.echoCancellation = raw.echoCancellation
     if (typeof raw.dtx === 'boolean' && savedRev >= 1) p.dtx = raw.dtx
     return p
   } catch {

@@ -158,8 +158,8 @@ an estimate (`≈`) where it can't. Hover the estimate for what each part means.
 **Voice settings.** Input and output device, an input level meter,
 spatial audio (**Off**, **Stereo**, **HRTF**; in the app **Binaural**
 instead of HRTF), echo cancellation, noise suppression and automatic gain
-control (noise suppression **on** by default, the other two **off**, or on
-too on a phone; in the app, its own: see below), and
+control (noise suppression and gain control **on** by default, echo
+cancellation **off**, or on on a phone; in the app, its own: see below), and
 silence suppression (DTX, off). The **Low Latency** tab has the experimental
 engine and all its settings (below).
 
@@ -198,11 +198,11 @@ seats jump straight to where they're going.
 - **A full mesh of WebRTC calls.** Everyone calls everyone directly, with no
   SFU or relay in the middle unless the network forces TURN. That's the
   lowest latency you can get, and fine for the 12 people a room allows.
-- **Little processing on the microphone.** Noise suppression is on by
-  default. Echo cancellation and auto gain are off unless you turn them on:
-  each adds processing delay, and everyone's on headphones. On a phone or
-  tablet they start on too: held at arm's length on the speaker, a raw mic
-  is faint and the speaker feeds back.
+- **Little processing on the microphone.** Noise suppression and auto gain
+  are on by default (a raw mic is faint on a phone held away from you, and
+  noisy anywhere). Echo cancellation is off unless you turn it on: it adds
+  processing delay, and everyone's on headphones. On a phone or tablet it
+  starts on too, since the speaker feeds back into the mic.
 - **10 ms Opus frames.** The SDP each side sends asks for `ptime=10`
   instead of 20 ms, with in-band FEC and mono
   ([`src/net/sdp.ts`](src/net/sdp.ts)). Measured: 100 packets a second.
@@ -492,9 +492,9 @@ e2e:native`):
 
 The website asks the browser for echo cancellation, noise suppression and
 gain control. The app does its own, in Go and two small C libraries, on the
-sending side (never on the audio thread). Noise suppression starts on (when
-the app was built with RNNoise); echo cancellation and gain control are off
-until you turn them on in **Voice Settings**:
+sending side (never on the audio thread). Noise suppression (when the app was
+built with RNNoise) and gain control start on; echo cancellation is off until
+you turn it on in **Voice Settings**:
 
 | | What | Delay it adds | CPU (share of one core) |
 | --- | --- | --- | --- |
