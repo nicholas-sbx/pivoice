@@ -60,6 +60,24 @@ type In struct {
 	// open new ones). Understood whatever the protocol, so a page can always
 	// send people to download a newer app.
 	URL string `json:"url,omitempty"`
+
+	// overlay (op "show", "hide", "state", "look"): where to put it, and
+	// what to draw in it, passed on to its page as it is (src/overlay).
+	Place *OverlayPlace   `json:"place,omitempty"`
+	State json.RawMessage `json:"state,omitempty"`
+	Look  json.RawMessage `json:"look,omitempty"`
+}
+
+// OverlayPlace is where the overlay goes (OverlayPlace in
+// src/native/protocol.ts): a side of a screen and a distance in from it,
+// in the screen's own scaled pixels, from the part of it windows can use.
+type OverlayPlace struct {
+	// One of Monitors' ids, or "" for the one the Pivoice window is on.
+	Monitor string `json:"monitor"`
+	// top-left, top, top-right, left, center, right, bottom-left, bottom, bottom-right.
+	Anchor string  `json:"anchor"`
+	Margin float64 `json:"margin"`
+	Size   float64 `json:"size"`
 }
 
 type Member struct {
@@ -141,6 +159,36 @@ type Hello struct {
 	Arch     string `json:"arch"`
 	// Whether this build can do noise suppression (it's built without RNNoise where that won't link).
 	Noise bool `json:"noise"`
+	// Whether it can show the overlay (a window, on a desktop it knows how to put one on).
+	Overlay bool `json:"overlay,omitempty"`
+}
+
+// Monitors: the screens the overlay can go on. Placeable: it goes where
+// it's told (not on GNOME, which places windows itself). OnTop: it stays
+// above other windows (GNOME only lets you ask for that from its menu).
+type Monitors struct {
+	T         string    `json:"t"` // "monitors"
+	Monitors  []Monitor `json:"monitors"`
+	Placeable bool      `json:"placeable"`
+	OnTop     bool      `json:"onTop"`
+}
+
+type Monitor struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	// The part windows can use, in the screen's own scaled pixels.
+	Width   int  `json:"width"`
+	Height  int  `json:"height"`
+	Primary bool `json:"primary"`
+	// The Pivoice window is on it.
+	Current bool `json:"current"`
+}
+
+// OverlayState: whether the overlay is up, after the page asked for it.
+type OverlayState struct {
+	T     string `json:"t"` // "overlay"
+	On    bool   `json:"on"`
+	Error string `json:"error,omitempty"`
 }
 
 // SignalOut: our side of setting up a link, for the page to pass to the room.

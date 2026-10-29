@@ -1,6 +1,21 @@
 import type { OutputBuffer, SpatialMode } from '../audio/engine'
 import { llDefaults, sanitizeLL, type LLConfig } from '../audio/ll/config'
 import { isNative } from '../native/bridge'
+import type { OverlayAnchor } from '../native/protocol'
+
+/** The app's overlay: whether it's up during calls, where (see OverlayPlace), and how faded. */
+export interface OverlayPrefs {
+  on: boolean
+  monitor: string
+  anchor: OverlayAnchor
+  margin: number
+  size: number
+  /** How big the faces and names are in it, apart from how big it is. */
+  scale: number
+  opacity: number
+}
+
+const ANCHORS: readonly OverlayAnchor[] = ['top-left', 'top', 'top-right', 'left', 'center', 'right', 'bottom-left', 'bottom', 'bottom-right']
 
 export interface Prefs {
   /** See PREFS_REV. */
@@ -50,6 +65,7 @@ export interface Prefs {
   outputBuffer: OutputBuffer
   /** The experimental low-latency engine and all its knobs. */
   ll: LLConfig
+  overlay: OverlayPrefs
 }
 
 const KEY = 'pv.prefs'
@@ -83,13 +99,29 @@ export const DEFAULT_PREFS: Prefs = {
   showRoute: false,
   dtx: false,
   outputBuffer: 'min',
-  ll: llDefaults(isNative)
+  ll: llDefaults(isNative),
+  // Top right, out of the way of most things, a little in from the edge.
+  overlay: { on: false, monitor: '', anchor: 'top-right', margin: 24, size: 260, scale: 1, opacity: 0.8 }
+}
+
+function sanitizeOverlay(raw: unknown): OverlayPrefs {
+  const o = { ...DEFAULT_PREFS.overlay }
+  if (!raw || typeof raw !== 'object') return o
+  const r = raw as Partial<OverlayPrefs>
+  if (typeof r.on === 'boolean') o.on = r.on
+  if (typeof r.monitor === 'string') o.monitor = r.monitor
+  if (r.anchor && ANCHORS.includes(r.anchor)) o.anchor = r.anchor
+  if (typeof r.margin === 'number' && r.margin >= 0 && r.margin <= 400) o.margin = r.margin
+  if (typeof r.size === 'number' && r.size >= 160 && r.size <= 600) o.size = r.size
+  if (typeof r.scale === 'number' && r.scale >= 0.75 && r.scale <= 1.5) o.scale = r.scale
+  if (typeof r.opacity === 'number' && r.opacity >= 0.2 && r.opacity <= 1) o.opacity = r.opacity
+  return o
 }
 
 export function loadPrefs(): Prefs {
   try {
     const raw = JSON.parse(localStorage.getItem(KEY) ?? '{}') as Partial<Prefs>
-    const p = { ...DEFAULT_PREFS, ll: sanitizeLL(raw.ll, isNative) }
+    const p = { ...DEFAULT_PREFS, ll: sanitizeLL(raw.ll, isNative), overlay: sanitizeOverlay(raw.overlay) }
     if (typeof raw.name === 'string') p.name = raw.name
     if (raw.spatial === 'off' || raw.spatial === 'stereo' || raw.spatial === 'hrtf') p.spatial = raw.spatial
     if (raw.lastSpatial === 'stereo' || raw.lastSpatial === 'hrtf') p.lastSpatial = raw.lastSpatial
@@ -108,7 +140,7 @@ export function loadPrefs(): Prefs {
     if (typeof raw.dtx === 'boolean' && raw.rev === PREFS_REV) p.dtx = raw.dtx
     return p
   } catch {
-    return { ...DEFAULT_PREFS, ll: llDefaults(isNative) }
+    return { ...DEFAULT_PREFS, ll: llDefaults(isNative), overlay: { ...DEFAULT_PREFS.overlay } }
   }
 }
 

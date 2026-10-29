@@ -1,5 +1,5 @@
 import { shallowRef, type ShallowRef } from 'vue'
-import { Table } from './seats'
+import { Table, type Placed } from './seats'
 
 /**
  * Who sits where, once per call. The audio and every view of the table (the
@@ -53,6 +53,8 @@ export class Seating {
   table = new Table()
   /** Seats to draw, people fading out included. You last, so you're drawn on top of anyone sliding past the bottom. */
   readonly seatIds: ShallowRef<string[]> = shallowRef([])
+  /** Counts each change to where people are heading, for anything that copies the seats (the app's overlay). */
+  readonly revision: ShallowRef<number> = shallowRef(0)
 
   private selfId = ''
   private views = new Set<SeatView>()
@@ -84,9 +86,25 @@ export class Seating {
     this.selfId = selfId
     this.table.sync(ids, selfId)
     this.refresh()
+    this.revision.value++
     // Newcomers sit at their final angle from the start, and the audio shouldn't wait a frame for it.
     this.push()
     this.kick()
+  }
+
+  /** Seats copied from another table's `targets()` (the app's overlay, from the page's). */
+  mirror(placed: readonly Placed[], selfId: string) {
+    this.selfId = selfId
+    this.table.mirror(placed, selfId)
+    this.refresh()
+    this.revision.value++
+    this.push()
+    this.kick()
+  }
+
+  /** Where everyone else is heading, for a copy of the table to `mirror`. */
+  targets(): Placed[] {
+    return this.table.targets()
   }
 
   /** Everyone's gone (the call ended): the next one starts with an empty table. */
@@ -96,6 +114,7 @@ export class Seating {
     this.selfId = ''
     this.sent.clear()
     this.refresh()
+    this.revision.value++
   }
 
   /** The sink changed (a new audio engine): tell it where everyone is again. */

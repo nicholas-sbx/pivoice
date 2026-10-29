@@ -9,6 +9,7 @@ import { loadPrefs, savePrefs, type Prefs } from './lib/prefs'
 import { Seating } from './lib/seating'
 import { NativeBridge, isNative } from './native/bridge'
 import { NativeLinks } from './native/link'
+import { driveOverlay } from './native/overlay'
 import type { AppConfig } from './native/protocol'
 import { NativeVoice } from './native/voice'
 import { fetchIceServers, publicUrl } from './net/config'
@@ -118,7 +119,10 @@ function connectApp(): Promise<boolean> {
   const b = new NativeBridge(__APP_VERSION__, __NATIVE_VERSION__)
   bridge = b
   nativeLinks = new NativeLinks(b)
-  return b.connect()
+  return b.connect().then(ok => {
+    if (ok) driveOverlay(b, call, seating)
+    return ok
+  })
 }
 
 export function getNative(): NativeVoice | null {

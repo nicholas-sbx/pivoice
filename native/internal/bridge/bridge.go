@@ -39,11 +39,25 @@ type Bridge struct {
 	Token string
 	// OpenURL opens a link in the system's browser (set by main; nil: links do nothing).
 	OpenURL func(url string)
+	// Overlay is the overlay window (set by main when there's a window; nil: none).
+	Overlay Overlay
 	version string
 	engine  *engine.Engine
 
 	mu      sync.Mutex
 	current *Conn
+}
+
+// Overlay is what the bridge needs of internal/overlay.
+type Overlay interface {
+	Supported() bool
+	Show(proto.OverlayPlace) error
+	Hide()
+	Reset()
+	State(json.RawMessage)
+	Look(json.RawMessage)
+	Levels(proto.Levels)
+	Monitors() proto.Monitors
 }
 
 // Conn is one way in: the window, or one WebSocket.
@@ -132,6 +146,9 @@ func (c *Conn) handle(m proto.In) {
 		if wasCurrent {
 			b.engine.SetEmitter(nil)
 			b.engine.Reset()
+			if b.Overlay != nil {
+				b.Overlay.Reset()
+			}
 		}
 	case m.T == "hello":
 		if subtle.ConstantTimeCompare([]byte(m.Token), []byte(b.Token)) != 1 {
@@ -152,11 +169,15 @@ func (c *Conn) handle(m proto.In) {
 		// A fresh page: nothing from before carries over.
 		b.engine.SetEmitter(nil)
 		b.engine.Reset()
-		c.emit(proto.Hello{T: "hello", Version: b.version, Protocol: proto.Protocol, OS: runtime.GOOS, Arch: runtime.GOARCH, Noise: dsp.NoiseAvailable})
+		if b.Overlay != nil {
+			b.Overlay.Reset()
+		}
+		overlay := b.Overlay != nil && b.Overlay.Supported()
+		c.emit(proto.Hello{T: "hello", Version: b.version, Protocol: proto.Protocol, OS: runtime.GOOS, Arch: runtime.GOARCH, Noise: dsp.NoiseAvailable, Overlay: overlay})
 		c.compatible = m.Protocol == proto.Protocol
 		if c.compatible {
 			log.Printf("bridge: the page is here (site %s)", m.Site)
-			b.engine.SetEmitter(c.emit)
+			b.engine.SetEmitter(c.emitter())
 		} else {
 			// The page tells the person which of us to update.
 			log.Printf("bridge: the page (site %s) speaks bridge protocol %d and we speak %d", m.Site, m.Protocol, proto.Protocol)
@@ -172,8 +193,59 @@ func (c *Conn) handle(m proto.In) {
 		b.mu.Lock()
 		current := b.current == c
 		b.mu.Unlock()
-		if current {
+		if !current {
+			return
+		}
+		switch m.T {
+		case "overlay", "monitors":
+			c.overlay(m)
+		default:
 			b.engine.Handle(m)
+		}
+	}
+}
+
+// overlay: the page asking for the overlay, or what to draw in it.
+func (c *Conn) overlay(m proto.In) {
+	ov := c.b.Overlay
+	if ov == nil || !ov.Supported() {
+		if m.T == "monitors" {
+			c.emit(proto.Monitors{T: "monitors", Monitors: []proto.Monitor{}})
+		} else if m.Op == "show" {
+			c.emit(proto.OverlayState{T: "overlay", Error: "no overlay here"})
+		}
+		return
+	}
+	switch {
+	case m.T == "monitors":
+		c.emit(ov.Monitors())
+	case m.Op == "show" && m.Place != nil:
+		st := proto.OverlayState{T: "overlay", On: true}
+		if err := ov.Show(*m.Place); err != nil {
+			log.Printf("overlay: %v", err)
+			st = proto.OverlayState{T: "overlay", Error: err.Error()}
+		}
+		c.emit(st)
+	case m.Op == "hide":
+		ov.Hide()
+		c.emit(proto.OverlayState{T: "overlay"})
+	case m.Op == "state":
+		ov.State(m.State)
+	case m.Op == "look":
+		ov.Look(m.Look)
+	}
+}
+
+// emitter is where the engine's messages go: the page, and the levels to the overlay too.
+func (c *Conn) emitter() func(any) {
+	ov := c.b.Overlay
+	if ov == nil {
+		return c.emit
+	}
+	return func(msg any) {
+		c.emit(msg)
+		if l, ok := msg.(proto.Levels); ok {
+			ov.Levels(l)
 		}
 	}
 }

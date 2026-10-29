@@ -8,7 +8,7 @@
 // hear each other (the fake mic beeps, which lights up the speaking ring on
 // everyone else's screen), and that the call survives whoever made the room
 // leaving.
-import { mkdirSync } from 'node:fs'
+import { mkdirSync, readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 
 // Playwright isn't a dependency (it's big): use whichever one is installed,
@@ -215,7 +215,14 @@ try {
     })
     await pip.click('button[aria-label="Undeafen"]')
     await dan.waitForSelector('button[aria-label="Deafen"]', { timeout: 5_000 })
-    ok('pop-out: mute and deafen from its buttons and Ctrl+Shift+D, shown on both')
+    await pip.click('button[aria-label="Spatial Audio: Off"]')
+    await dan.waitForSelector('button[aria-label="Spatial Audio: HRTF"]', { timeout: 5_000 }).catch(() => {
+      throw new Error("pop-out: its spatial audio button didn't turn it on")
+    })
+    await pip.waitForSelector('button[aria-label="Spatial Audio: HRTF"][aria-pressed="true"]', { timeout: 5_000 })
+    await pip.click('button[aria-label="Spatial Audio: HRTF"]')
+    await dan.waitForSelector('button[aria-label="Spatial Audio: Off"]', { timeout: 5_000 })
+    ok('pop-out: mute, deafen and spatial audio from its buttons, and Ctrl+Shift+D, shown on both')
 
     // Someone in the middle of the pop-out sees it when they speak: a ring in the pop-out too.
     await pip.waitForSelector('.seat.speaking:not(.self)', { timeout: 15_000 }).catch(() => {
@@ -471,16 +478,121 @@ try {
     }
   }
 
-  // Leaving the call takes a pop-out with it.
+  // Hanging up from the pop-out leaves the call, and takes the pop-out with it.
   if (await extra[2].evaluate(() => 'documentPictureInPicture' in window)) {
     const gus = extra[2]
     const [gone] = await Promise.all([gus.context().waitForEvent('page', { timeout: 10_000 }), gus.click('button[aria-label="Pop out table"]')])
     await gone.waitForSelector('.seat', { timeout: 10_000 })
-    await gus.click('button[aria-label="Disconnect"]')
+    await gone.click('button[aria-label="Disconnect"]')
     await gus.waitForSelector('button:has-text("Create a Room")')
     await gone.waitForEvent('close', { timeout: 5_000 }).catch(() => {})
     if (!gone.isClosed()) throw new Error('pop-out: should close when you leave the call')
-    ok('pop-out: closes when you leave')
+    ok('pop-out: hanging up from it leaves the call and closes it')
+  }
+
+  // The app's overlay, with a stand-in for the app: what the page asks it for, and what the overlay's page draws from that.
+  {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } })
+    const app = await ctx.newPage()
+    app.on('pageerror', e => console.error('[app] page error:', e.message))
+    await app.addInitScript(version => {
+      const sent = (window.__sent = [])
+      const api = {
+        token: 'x'.repeat(43),
+        onmessage: null,
+        send(s) {
+          const m = JSON.parse(s)
+          sent.push(m)
+          const reply = r => setTimeout(() => api.onmessage?.(r), 5)
+          if (m.t === 'hello') reply({ t: 'hello', version, protocol: m.protocol, os: 'linux', arch: 'amd64', noise: true, overlay: true })
+          else if (m.t === 'audio' && m.on) reply({ t: 'audio', on: true, info: { input: 'Fake', output: 'Fake', api: 'Fake', inputLatencyMs: 3, outputLatencyMs: 3, block: 128 } })
+          else if (m.t === 'devices') reply({ t: 'devices', devices: [] })
+          else if (m.t === 'stats') reply({ t: 'stats', peers: {}, test: null, audio: null })
+          else if (m.t === 'monitors')
+            reply({
+              t: 'monitors',
+              placeable: true,
+              onTop: true,
+              monitors: [
+                { id: 'Dell U2720Q', name: 'Dell U2720Q', width: 2560, height: 1400, primary: true, current: true },
+                { id: 'LG 27GL850', name: 'LG 27GL850', width: 1920, height: 1040, primary: false, current: false }
+              ]
+            })
+          else if (m.t === 'overlay' && m.op === 'show') reply({ t: 'overlay', on: true })
+        }
+      }
+      Object.defineProperty(window, '__pivoiceNative', { value: api })
+    }, readFileSync(new URL('../native/VERSION', import.meta.url), 'utf8').trim())
+    await app.goto(APP)
+    await app.fill('input[autocomplete="nickname"]', 'Ivy')
+    await app.click('button:has-text("Create a Room")')
+    await app.waitForSelector('.pill', { timeout: 20_000 })
+    const asked = () => app.evaluate(() => window.__sent.filter(m => m.t === 'overlay' || m.t === 'monitors'))
+    if ((await asked()).length) throw new Error('overlay: the page asked for it before it was switched on')
+    if (await app.$('button[aria-label="Pop out table"]')) throw new Error('overlay: the app should get its overlay, not a pop-out')
+    await app.click('button[aria-label="Show overlay"]')
+    await app.waitForSelector('button[aria-label="Hide overlay"][aria-pressed="true"]', { timeout: 5_000 })
+    const shown = (await asked()).find(m => m.op === 'show')
+    if (!shown || shown.place.anchor !== 'top-right' || shown.place.size !== 260) throw new Error('overlay: not shown where it should be: ' + JSON.stringify(shown))
+    // Its settings: the screens the app has, and every change moves it straight away.
+    await app.click('button[aria-label="Voice Settings"]')
+    await app.click('button[role="tab"]:has-text("Overlay")')
+    await app.waitForSelector('option:has-text("LG 27GL850")', { state: 'attached', timeout: 5_000 })
+    await app.selectOption('.overlay-settings select', 'LG 27GL850')
+    await app.click('.overlay-settings button[aria-label="Bottom left"]')
+    await app.waitForTimeout(200)
+    const moved = (await asked()).filter(m => m.op === 'show').at(-1)
+    if (moved.place.monitor !== 'LG 27GL850' || moved.place.anchor !== 'bottom-left') throw new Error('overlay: settings did not move it: ' + JSON.stringify(moved))
+    const placing = (await asked()).filter(m => m.op === 'look').at(-1)
+    if (!placing.look.placing) throw new Error('overlay: no outline while its settings are open')
+    const cut = await app.evaluate(() => [...document.querySelectorAll('.overlay-settings *')].filter(e => e.getBoundingClientRect().right > innerWidth).length)
+    if (cut) throw new Error('overlay: its settings run off the screen')
+    if (SHOTS) await app.screenshot({ path: `${SHOTS}/overlay-settings.png` })
+    await app.click('button[aria-label="Voice Settings"]')
+    ok('overlay: shown with the call when switched on, on the screen and side its settings say')
+
+    // The overlay's own page, fed as the app feeds it: the page's latest state and look, and the app's rings.
+    const state = (await asked()).filter(m => m.op === 'state').at(-1).state
+    if (state.selfId !== (await app.evaluate(() => document.querySelector('.seat.self')?.dataset.member))) throw new Error('overlay: the state is not about you')
+    const people = ['Bob', 'Cara', 'Dan', 'Eve', 'Finn'].map((n, i) => ({ id: n, name: n, joinedAt: i, muted: n === 'Eve', deafened: false, ll: false, away: false }))
+    const full = { ...state, members: [...state.members, ...people], seats: people.map((p, i) => ({ id: p.id, angle: (Math.PI * 2 * (i + 1)) / 6 })) }
+    const ov = await ctx.newPage()
+    ov.on('pageerror', e => console.error('[overlay] page error:', e.message))
+    await ov.setViewportSize({ width: 260, height: 260 })
+    await ov.addInitScript(() => {
+      const api = { onmessage: null, ready: () => (window.__ready = true), _recv: m => api.onmessage?.(m) }
+      Object.defineProperty(window, '__pivoiceOverlay', { value: api })
+    })
+    await ov.goto(APP + 'overlay.html')
+    await ov.waitForFunction(() => window.__ready === true, null, { timeout: 10_000 })
+    await ov.evaluate(([s, l]) => {
+      window.__pivoiceOverlay._recv({ t: 'state', state: s })
+      window.__pivoiceOverlay._recv({ t: 'look', look: l })
+      window.__pivoiceOverlay._recv({ t: 'rings', speaking: ['Cara'], audible: ['Cara', 'Bob', ''] })
+    }, [full, { ...placing.look, placing: false }])
+    await ov.waitForFunction(() => document.querySelectorAll('.seat').length === 6, null, { timeout: 5_000 })
+    const look = await ov.evaluate(() => {
+      const bg = e => getComputedStyle(e).backgroundColor
+      const at = id => document.querySelector(`.seat[data-member="${id}"]`).getBoundingClientRect()
+      return {
+        clear: [document.documentElement, document.body, document.querySelector('.overlay'), document.querySelector('.table')].map(bg),
+        speaking: [...document.querySelectorAll('.seat.speaking')].map(e => e.dataset.member),
+        selfAudible: document.querySelector('.seat.self').classList.contains('audible'),
+        // Cara at 2π·2/6 (upper left on screen), Eve at 2π·4/6 (upper right), you at the bottom.
+        cara: at('Cara').left < at('Eve').left && at('Cara').top < at(document.querySelector('.seat.self').dataset.member).top
+      }
+    })
+    if (look.clear.some(c => c !== 'rgba(0, 0, 0, 0)')) throw new Error('overlay: its page has a background: ' + look.clear)
+    if (look.speaking.join() !== 'Cara' || !look.selfAudible || !look.cara) throw new Error('overlay: wrong rings or seats: ' + JSON.stringify(look))
+    if (SHOTS) await ov.screenshot({ path: `${SHOTS}/overlay.png`, omitBackground: true })
+    ok("overlay: its page draws the call from what it's sent: see-through, seats where the page has them, the app's rings")
+
+    await app.click('button[aria-label="Disconnect"]')
+    await app.waitForSelector('button:has-text("Create a Room")')
+    await app.waitForTimeout(200)
+    if ((await asked()).at(-1).op !== 'hide') throw new Error('overlay: should be taken down when you leave the call')
+    ok('overlay: taken down when you leave')
+    await ctx.close()
   }
 
   if (SHOTS) {

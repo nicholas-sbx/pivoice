@@ -323,3 +323,45 @@ describe('Seating, with a view', () => {
     close(s.heard.get('a'), A_WITH_B)
   })
 })
+
+describe('A copy of the table (the app overlay)', () => {
+  // The page's table after people come and go: its seats depend on that history, not just who's there now.
+  function history(): Seating {
+    const s = new Seating(() => {})
+    s.sync(['me', 'a', 'b', 'c'], 'me')
+    s.sync(['me', 'a', 'c'], 'me')
+    s.sync(['me', 'a', 'c', 'd', 'e'], 'me')
+    return s
+  }
+
+  it('sits everyone where the page has them, not where a fresh table would', () => {
+    const page = history()
+    const copy = new Seating(() => {})
+    copy.mirror(page.targets(), 'me')
+    const fresh = new Seating(() => {})
+    fresh.sync(['me', 'a', 'c', 'd', 'e'], 'me')
+    for (const id of ['a', 'c', 'd', 'e']) expect(copy.angleOf(id)).toBeCloseTo(page.angleOf(id)!, 9)
+    expect(['a', 'c', 'd', 'e'].some(id => Math.abs(fresh.angleOf(id)! - page.angleOf(id)!) > 1e-6)).toBe(true)
+    expect(copy.seatIds.value).toEqual(['a', 'c', 'd', 'e', 'me'])
+  })
+
+  it('follows the page as people leave and join, fading the ones who left', () => {
+    const page = history()
+    const copy = new Seating(() => {})
+    copy.mirror(page.targets(), 'me')
+    page.sync(['me', 'c', 'd', 'e', 'f'], 'me')
+    const rev = copy.revision.value
+    copy.mirror(page.targets(), 'me')
+    expect(copy.revision.value).toBe(rev + 1)
+    // With nothing on screen it's all settled at once: a is gone, f is in, the rest have moved up.
+    expect(copy.angleOf('a')).toBeUndefined()
+    for (const id of ['c', 'd', 'e', 'f']) expect(copy.angleOf(id)).toBeCloseTo(page.angleOf(id)!, 9)
+  })
+
+  it('leaves out you and anyone fading out', () => {
+    const t = new Table()
+    t.sync(['me', 'a', 'b'], 'me')
+    t.sync(['me', 'a'], 'me')
+    expect(t.targets().map(p => p.id)).toEqual(['a'])
+  })
+})

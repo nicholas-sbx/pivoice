@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { ref } from 'vue'
-import { seating } from '../call'
+import { computed, ref } from 'vue'
 import { tableRadius } from '../lib/seats'
+import type { Seating } from '../lib/seating'
 import { useSeatStates, useTableView } from '../lib/tableView'
 import type { Member } from '../net/protocol'
 import Avatar from './Avatar.vue'
@@ -11,9 +11,10 @@ import Icon from './Icon.vue'
  * The table in miniature, for a small always-on-top window: the same seats
  * as the big one (from the call's shared seating), each face with its
  * speaking ring and the thin one for any sound, mute and deafen marks, and a
- * short name tag. Everything it needs is in its props, so whatever draws it
- * (the pop-out window now, the app's overlay later) only has to hand it a
- * snapshot of the call.
+ * short name tag. Everything it needs is in its props, seats included, so
+ * whatever draws it only has to hand it the call: the pop-out window gives it
+ * the call's own seating, and the app's overlay (overlay/main.ts) a copy of
+ * it, sent across.
  *
  * It can be shown in another window than the page's, so it asks the element
  * it's in for the window (lib/tableView does) and never uses the global one:
@@ -22,6 +23,8 @@ import Icon from './Icon.vue'
  */
 
 const props = defineProps<{
+  /** Who sits where (the call's, or the overlay's copy of it). */
+  seating: Seating
   members: Member[]
   selfId: string
   speaking: Set<string>
@@ -30,30 +33,42 @@ const props = defineProps<{
   selfMuted: boolean
   selfDeafened: boolean
   silenced: Record<string, boolean>
-  /** Mute and deafen buttons under the table. */
+  /** Mute, deafen, spatial audio and hang up, under the table. */
   controls?: boolean
+  /**
+   * Drawn straight onto the screen, over whatever you're doing (the app's
+   * overlay): no background, and the table and anyone quiet faded back to
+   * `dim` while whoever's speaking comes up in full.
+   */
+  bare?: boolean
+  dim?: number
+  /** How big the faces and names are, whatever the size of the space (1: as they'd be). */
+  scale?: number
+  spatial?: boolean
+  spatialLabel?: string
 }>()
 
-defineEmits<{ toggleMute: []; toggleDeafen: [] }>()
+defineEmits<{ toggleMute: []; toggleDeafen: []; toggleSpatial: []; leave: [] }>()
 
 const root = ref<HTMLElement>()
 const tableEl = ref<HTMLElement>()
 
 const { geometry, member, setSeatEl, seatIds } = useTableView({
-  seating,
+  seating: props.seating,
   root,
   tableEl,
   members: () => props.members,
   selfId: () => props.selfId,
   geometry(w, h) {
+    const k = props.scale ?? 1
     // Even, so its centre lands on a whole pixel.
-    const avatar = 2 * Math.round(Math.max(28, Math.min(56, Math.min(w, h) * 0.16)) / 2)
+    const avatar = 2 * Math.round(Math.max(28 * k, Math.min(56 * k, Math.min(w, h) * 0.16 * k)) / 2)
     // A name tag under each face, and a little air round the edge.
-    const label = 22
+    const label = Math.round(22 * k)
     const pad = 8
     const ringV = (h - 2 * pad - avatar - label) / 2
     // Name tags reach about this far out either side of a face.
-    const ringH = w / 2 - Math.max(avatar / 2, 40) - pad
+    const ringH = w / 2 - Math.max(avatar / 2, 40 * k) - pad
     const ring = Math.max(40, Math.min(240, ringV, ringH))
     const block = 2 * ring + avatar + label
     const cx = w / 2
@@ -64,10 +79,11 @@ const { geometry, member, setSeatEl, seatIds } = useTableView({
 })
 
 const { isSelf, mutedOf, deafenedOf, speakingOf, audibleOf, moodOf } = useSeatStates(props, member)
+const icon = computed(() => Math.round(12 * (props.scale ?? 1)))
 </script>
 
 <template>
-  <div class="overlay">
+  <div class="overlay" :class="{ bare }" :style="{ '--dim': dim ?? 1, '--k': scale ?? 1 }">
     <div ref="root" class="stage">
       <div ref="tableEl" class="table">
         <div class="felt" />
@@ -94,9 +110,9 @@ const { isSelf, mutedOf, deafenedOf, speakingOf, audibleOf, moodOf } = useSeatSt
         <div class="under">
           <div class="tag">
             <span class="name">{{ member(id)?.name }}</span>
-            <Icon v-if="mutedOf(id)" name="mic" :size="12" slash class="state" />
-            <Icon v-if="deafenedOf(id)" name="headphones" :size="12" slash class="state" />
-            <Icon v-if="silenced[id]" name="speaker" :size="12" slash class="state" />
+            <Icon v-if="mutedOf(id)" name="mic" :size="icon" slash class="state" />
+            <Icon v-if="deafenedOf(id)" name="headphones" :size="icon" slash class="state" />
+            <Icon v-if="silenced[id]" name="speaker" :size="icon" slash class="state" />
           </div>
         </div>
       </div>
@@ -125,6 +141,20 @@ const { isSelf, mutedOf, deafenedOf, speakingOf, audibleOf, moodOf } = useSeatSt
       >
         <Icon name="headphones" :size="20" :slash="selfDeafened" />
       </button>
+      <button
+        type="button"
+        class="btn"
+        :class="{ on: spatial }"
+        :title="spatialLabel ?? 'Spatial Audio'"
+        :aria-label="spatialLabel ?? 'Spatial Audio'"
+        :aria-pressed="!!spatial"
+        @click="$emit('toggleSpatial')"
+      >
+        <Icon name="spatial" :size="20" />
+      </button>
+      <button type="button" class="btn danger" title="Disconnect" aria-label="Disconnect" @click="$emit('leave')">
+        <Icon name="hangup" :size="20" />
+      </button>
     </div>
   </div>
 </template>
@@ -137,6 +167,34 @@ const { isSelf, mutedOf, deafenedOf, speakingOf, audibleOf, moodOf } = useSeatSt
   height: 100%;
   background: var(--bg-stage);
 }
+.overlay.bare {
+  background: transparent;
+}
+/* Over whatever's on the screen, only the table's rim says where it is: no
+   top, and a dark line beside the light one so it shows on anything. */
+.bare .table {
+  background: none;
+  border-color: rgba(255, 255, 255, 0.45);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35);
+  opacity: var(--dim);
+}
+.bare .felt {
+  display: none;
+}
+.bare .seat .ring,
+.bare .seat .tag {
+  opacity: var(--dim);
+  transition: opacity 0.2s ease;
+}
+.bare .seat.speaking .ring,
+.bare .seat.speaking .tag {
+  opacity: 1;
+  transition-duration: 0.05s;
+}
+.bare .seat.away .ring {
+  opacity: calc(var(--dim) * 0.45);
+}
+
 .stage {
   position: relative;
   flex: 1;
@@ -197,18 +255,18 @@ const { isSelf, mutedOf, deafenedOf, speakingOf, audibleOf, moodOf } = useSeatSt
   pointer-events: none;
 }
 .tag {
-  margin-top: 6px;
+  margin-top: calc(6px * var(--k));
   display: flex;
   align-items: center;
   gap: 3px;
-  max-width: 80px;
-  padding: 1px 6px;
+  max-width: calc(80px * var(--k));
+  padding: 1px calc(6px * var(--k));
   border-radius: 4px;
   background: var(--bg-floating);
   color: #fff;
-  font-size: 12px;
+  font-size: calc(12px * var(--k));
   font-weight: 500;
-  line-height: 16px;
+  line-height: calc(16px * var(--k));
   white-space: nowrap;
 }
 .name {
@@ -252,5 +310,21 @@ const { isSelf, mutedOf, deafenedOf, speakingOf, audibleOf, moodOf } = useSeatSt
 }
 .btn.off:hover {
   background: #dbdee1;
+}
+.btn.on {
+  background: var(--brand);
+  color: #fff;
+}
+.btn.on:hover {
+  background: var(--brand-hover);
+}
+.btn.danger {
+  width: 52px;
+  border-radius: 18px;
+  background: var(--red-strong);
+  color: #fff;
+}
+.btn.danger:hover {
+  background: var(--red-hover);
 }
 </style>

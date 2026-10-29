@@ -1,6 +1,7 @@
 import type { LLConfig } from '../audio/ll/config'
 import type { SpatialMode } from '../audio/engine'
-import type { IceCandidate, LinkKind, SessionDescription } from '../net/protocol'
+import type { Placed } from '../lib/seats'
+import type { IceCandidate, LinkKind, Member, SessionDescription } from '../net/protocol'
 import type { LinkStats } from '../net/stats'
 
 /**
@@ -62,6 +63,70 @@ export type ToApp =
   | { t: 'devices' }
   /** A link for the system's browser (the window opens none itself). Works on any protocol. */
   | { t: 'open'; url: string }
+  /** The overlay (only to an app whose hello says `overlay`): show it there, take it down, or what to draw. */
+  | { t: 'overlay'; op: 'show'; place: OverlayPlace }
+  | { t: 'overlay'; op: 'hide' }
+  | { t: 'overlay'; op: 'state'; state: OverlayState }
+  | { t: 'overlay'; op: 'look'; look: OverlayLook }
+  | { t: 'monitors' }
+
+/** Which side of the screen the overlay keeps to: a corner, the middle of an edge, or the very middle. */
+export type OverlayAnchor = 'top-left' | 'top' | 'top-right' | 'left' | 'center' | 'right' | 'bottom-left' | 'bottom' | 'bottom-right'
+
+/**
+ * Where the overlay goes. Kept as a side of a screen and a distance from it,
+ * not a position, so it stays in its corner whatever happens to the screen
+ * (another resolution, a panel moved, the screens rearranged), and it's the
+ * same thing a Wayland compositor is asked for. Distances are in the screen's
+ * own (scaled) pixels, and measured from the area windows can use, so it
+ * never sits under a taskbar or panel.
+ */
+export interface OverlayPlace {
+  /** One of the app's `monitors`, or '' for whichever has the Pivoice window on it. */
+  monitor: string
+  anchor: OverlayAnchor
+  margin: number
+  /** Its width and height. */
+  size: number
+}
+
+export interface OverlayLook {
+  /** How visible the table and anyone quiet are, 0–1; whoever's speaking is always in full. */
+  opacity: number
+  /** How big the faces and names are (1: as they'd be at this size). */
+  scale: number
+  /** Being placed: show its edges. */
+  placing: boolean
+}
+
+/** What the overlay draws, from the call: a snapshot, sent whenever it changes. */
+export interface OverlayState {
+  selfId: string
+  members: Member[]
+  /** Where everyone else is heading on the page's table (lib/seats `targets`). */
+  seats: Placed[]
+  selfMuted: boolean
+  selfDeafened: boolean
+  silenced: Record<string, boolean>
+}
+
+/** What the app tells the overlay's own page (src/overlay). */
+export type ToOverlay =
+  | { t: 'state'; state: OverlayState }
+  | { t: 'look'; look: OverlayLook }
+  /** Who's speaking and who's making any sound at all, as the app hears it, whenever that changes. You're ''. */
+  | { t: 'rings'; speaking: string[]; audible: string[] }
+
+export interface AppMonitor {
+  id: string
+  name: string
+  /** Its usable area's size, in its own (scaled) pixels. */
+  width: number
+  height: number
+  primary: boolean
+  /** The Pivoice window is on it. */
+  current: boolean
+}
 
 export interface AppInfo {
   version: string
@@ -70,6 +135,8 @@ export interface AppInfo {
   arch: string
   /** Whether this build has noise suppression (RNNoise). */
   noise?: boolean
+  /** Whether it can show the overlay here (a window, on a desktop it knows how to put one on). */
+  overlay?: boolean
 }
 
 /** The sound card, as the app has it open. */
@@ -122,6 +189,14 @@ export type FromApp =
   | { t: 'audio'; on: boolean; error?: string; micProblem?: 'missing'; info?: AudioInfo }
   | ({ t: 'stats' } & AppStats)
   | { t: 'devices'; devices: AppDevice[] | null }
+  /**
+   * The screens the overlay can go on. `placeable`: it goes where it's told
+   * (not on GNOME, which places windows itself). `onTop`: it stays above
+   * other windows (not on GNOME either, which only lets you ask for that
+   * yourself, from the window's menu).
+   */
+  | { t: 'monitors'; monitors: AppMonitor[]; placeable: boolean; onTop: boolean }
+  | { t: 'overlay'; on: boolean; error?: string }
 
 // ---- versions ------------------------------------------------------------------
 

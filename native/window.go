@@ -5,8 +5,10 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 
 	"github.com/nicholas-sbx/pivoice/native/internal/bridge"
+	"github.com/nicholas-sbx/pivoice/native/internal/overlay"
 	webview "github.com/webview/webview_go"
 )
 
@@ -32,10 +34,26 @@ func runWindow(b *bridge.Bridge, page, origin string, devtools bool) error {
 		return err
 	}
 	w.Init(initScript(origin, b.Token))
+
+	// The overlay, made only when the page asks for it (src/native/overlay.ts).
+	ov := overlay.New(overlay.Config{Dispatch: w.Dispatch, Main: w.Window(), URL: overlayPage(page), Origin: origin, Debug: devtools})
+	b.Overlay = ov
+
 	w.Navigate(page)
 	w.Run()
+	ov.Close()
 	conn.Gone()
 	return nil
+}
+
+// overlayPage is the site's overlay.html, next to the page the window opens.
+func overlayPage(page string) string {
+	u, err := url.Parse(page)
+	if err != nil {
+		return page
+	}
+	u.Fragment = ""
+	return u.ResolveReference(&url.URL{Path: "overlay.html"}).String()
 }
 
 // initScript runs at the start of every page in the window, before the
