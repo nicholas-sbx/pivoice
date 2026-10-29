@@ -1,19 +1,20 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, shallowRef, watch } from 'vue'
-import { Table, seatOffset, tableRadius } from '../lib/seats'
-import { SEAT_SPRING, isSettled, settle, spring, stepSpring } from '../lib/spring'
+import { computed, ref, watch } from 'vue'
+import { seating } from '../call'
+import { tableRadius } from '../lib/seats'
+import { useSeatStates, useTableView } from '../lib/tableView'
 import type { Member } from '../net/protocol'
 import { pingLevel, routeLabel, type LinkStats } from '../net/stats'
-import { snapNow, vSnap } from '../lib/snap'
+import { vSnap } from '../lib/snap'
 import { touchFirst } from '../lib/viewport'
 import Avatar from './Avatar.vue'
 import Icon from './Icon.vue'
 
 /**
  * The round table. You're always at the bottom; everyone else is spread
- * evenly around it. Seats are moved by springs in JavaScript (not CSS
- * transitions) so their angles are known every frame, which is what the
- * spatial audio reads (the `angle` event).
+ * evenly around it. Where each seat is comes from the call's shared seating
+ * (lib/seating), which moves them with springs in JavaScript (not CSS
+ * transitions) and is what the spatial audio reads; this draws them.
  */
 
 const props = defineProps<{
@@ -33,239 +34,50 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  angle: [id: string, angle: number]
   menu: [id: string, x: number, y: number]
 }>()
 
 const root = ref<HTMLElement>()
-const size = reactive({ w: 0, h: 0 })
-const table = new Table()
-/** Seats on screen, people fading out included. */
-const seatIds = shallowRef<string[]>([])
-/** The last we knew of everyone, so someone fading out still has a name. */
-const known = new Map<string, Member>()
-const seatEls = new Map<string, HTMLElement>()
-const reducedMotion = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
-
-const geometry = computed(() => {
-  const { w, h } = size
-  // A phone: smaller seats, and the ring as wide as the screen allows (name tags may reach past it).
-  const small = w < 640
-  // Even, so its centre lands on a whole pixel.
-  const avatar = 2 * Math.round(Math.max(small ? 40 : 56, Math.min(92, Math.min(w, h) * 0.1)) / 2)
-  // Name tag, plus the route card under it when that's on.
-  const label = props.showRoute ? 160 : 34
-  // Room for the floating call controls along the bottom.
-  const bottom = 108
-  const top = 20
-  const ringV = (h - bottom - top - avatar - label) / 2
-  const ringH = small ? w / 2 - avatar * 0.75 - 12 : w / 2 - avatar * 1.4 - 24
-  const ring = Math.max(small ? 90 : 110, Math.min(360, ringV, ringH))
-  const block = 2 * ring + avatar + label
-  const cx = w / 2
-  const cy = top + Math.max(0, (h - bottom - top - block) / 2) + avatar / 2 + ring
-  return { avatar, ring, cx, cy }
-})
-
-/**
- * How far out the seats are right now. The table grows with the number of
- * people (half size for 1–3, full size from 8), on a spring like everything
- * else so the seats ease outward as people sit down.
- */
-const radius = spring(0)
 const tableEl = ref<HTMLElement>()
 
-function presentCount(): number {
-  let n = 0
-  for (const seat of table.seats.values()) if (!seat.leaving) n++
-  return n
-}
-
-function retargetRadius(snap: boolean) {
-  const g = geometry.value
+const { size, geometry, member, retarget, setSeatEl, seatIds } = useTableView({
+  seating,
+  root,
+  tableEl,
+  members: () => props.members,
+  selfId: () => props.selfId,
+  geometry(w, h) {
+    // A phone: smaller seats, and the ring as wide as the screen allows (name tags may reach past it).
+    const small = w < 640
+    // Even, so its centre lands on a whole pixel.
+    const avatar = 2 * Math.round(Math.max(small ? 40 : 56, Math.min(92, Math.min(w, h) * 0.1)) / 2)
+    // Name tag, plus the route card under it when that's on.
+    const label = props.showRoute ? 160 : 34
+    // Room for the floating call controls along the bottom.
+    const bottom = 108
+    const top = 20
+    const ringV = (h - bottom - top - avatar - label) / 2
+    const ringH = small ? w / 2 - avatar * 0.75 - 12 : w / 2 - avatar * 1.4 - 24
+    const ring = Math.max(small ? 90 : 110, Math.min(360, ringV, ringH))
+    const block = 2 * ring + avatar + label
+    const cx = w / 2
+    const cy = top + Math.max(0, (h - bottom - top - block) / 2) + avatar / 2 + ring
+    return { avatar, ring, cx, cy }
+  },
+  // The table grows with the number of people (half size for 1–3, full size from 8).
   // Route cards are big: with them showing, the table stays full size so they have room.
-  radius.target = props.showRoute ? g.ring : tableRadius(presentCount(), g.ring, g.avatar)
-  if (snap || radius.x === 0) settle(radius)
-}
-
-const byId = computed(() => {
-  const map = new Map<string, Member>()
-  for (const m of props.members) {
-    map.set(m.id, m)
-    known.set(m.id, m)
-  }
-  return map
+  radius: (g, present) => (props.showRoute ? g.ring : tableRadius(present, g.ring, g.avatar))
 })
 
-function member(id: string): Member | undefined {
-  return byId.value.get(id) ?? known.get(id)
-}
-
-function refreshSeats() {
-  // You last, so you're drawn on top of anyone sliding past the bottom.
-  const ids = [...table.seats.keys()].filter(id => id !== props.selfId)
-  if (table.seats.has(props.selfId)) ids.push(props.selfId)
-  seatIds.value = ids
-  for (const id of known.keys()) if (!table.seats.has(id)) known.delete(id)
-}
-
-function setSeatEl(id: string) {
-  return (el: unknown) => {
-    if (el instanceof HTMLElement) {
-      seatEls.set(id, el)
-      paintSeat(id)
-    } else seatEls.delete(id)
-  }
-}
-
-let raf = 0
-let last = 0
-
-function kick() {
-  if (raf) return
-  last = performance.now()
-  raf = requestAnimationFrame(frame)
-}
-
-function frame(now: number) {
-  const dt = Math.min(0.05, (now - last) / 1000)
-  last = now
-  let moving: boolean
-  if (reducedMotion) {
-    table.finish()
-    moving = false
-  } else moving = table.step(dt)
-  if (reducedMotion) settle(radius)
-  else {
-    stepSpring(radius, dt, SEAT_SPRING)
-    if (isSettled(radius, 0.05)) settle(radius)
-    else moving = true
-  }
-  if (table.seats.size !== seatIds.value.length) {
-    refreshSeats()
-    retargetRadius(false)
-  }
-  paint()
-  raf = moving ? requestAnimationFrame(frame) : 0
-}
-
-/** To the nearest whole device pixel (a CSS pixel is 1.25 of them at Windows' 125% scaling). */
-function px(v: number): number {
-  const dpr = window.devicePixelRatio || 1
-  return Math.round(v * dpr) / dpr
-}
-
-function paintSeat(id: string) {
-  const seat = table.seats.get(id)
-  const el = seatEls.get(id)
-  if (!seat || !el) return
-  const g = geometry.value
-  const { x, y } = seatOffset(seat.angle.x, radius.x)
-  const p = Math.max(0, Math.min(1, seat.presence.x))
-  const left = g.cx + x - g.avatar / 2
-  const top = g.cy + y - g.avatar / 2
-  // At rest: whole pixels and no scale, so the face and name are drawn
-  // crisp rather than resampled. Only while moving is it fractional.
-  const still = seat.angle.v === 0 && seat.presence.v === 0 && p === 1 && radius.v === 0
-  el.style.transform = still
-    ? `translate(${px(left)}px, ${px(top)}px)`
-    : `translate(${left.toFixed(2)}px, ${top.toFixed(2)}px) scale(${(0.55 + 0.45 * p).toFixed(4)})`
-  // Come to rest: its name tag onto whole pixels too (it's centred under the face, on a fractional width).
-  const tag = still && !el.dataset.still ? el.querySelector<HTMLElement>('.tag') : null
-  el.dataset.still = still ? '1' : ''
-  if (tag) snapNow(tag)
-  el.style.opacity = p === 1 ? '' : p.toFixed(3)
-}
-
-function paintTable() {
-  const el = tableEl.value
-  if (!el) return
-  const g = geometry.value
-  const still = radius.v === 0
-  const r = Math.max(0, radius.x - g.avatar * 0.22)
-  const d = still ? 2 * Math.round(r) : 2 * r
-  const left = g.cx - d / 2
-  const top = g.cy - d / 2
-  el.style.width = el.style.height = d.toFixed(2) + 'px'
-  el.style.transform = still ? `translate(${px(left)}px, ${px(top)}px)` : `translate(${left.toFixed(2)}px, ${top.toFixed(2)}px)`
-}
-
-function paint() {
-  paintTable()
-  for (const seat of table.seats.values()) {
-    paintSeat(seat.id)
-    if (seat.id !== props.selfId) emit('angle', seat.id, seat.angle.x)
-  }
-}
-
-watch(
-  () => [props.selfId, ...props.members.map(m => m.id)].join(','),
-  () => {
-    if (!props.selfId) return
-    const ids = props.members.map(m => m.id)
-    if (!ids.includes(props.selfId)) ids.unshift(props.selfId)
-    table.sync(ids, props.selfId)
-    refreshSeats()
-    retargetRadius(false)
-    void nextTick(paint)
-    kick()
-  },
-  { immediate: true }
-)
-
-// A resized window jumps straight to the new size; only people joining and leaving animate.
 watch(
   () => props.showRoute,
   () => {
-    retargetRadius(false)
-    kick()
+    retarget(false)
+    seating.kick()
   }
 )
 
-watch(geometry, () => {
-  retargetRadius(true)
-  paint()
-})
-
-let observer: ResizeObserver | null = null
-onMounted(() => {
-  const el = root.value!
-  const measure = () => {
-    size.w = el.clientWidth
-    size.h = el.clientHeight
-  }
-  measure()
-  observer = new ResizeObserver(measure)
-  observer.observe(el)
-  void nextTick(paint)
-})
-
-onBeforeUnmount(() => {
-  observer?.disconnect()
-  if (raf) cancelAnimationFrame(raf)
-})
-
-function isSelf(id: string) {
-  return id === props.selfId
-}
-function mutedOf(id: string) {
-  return isSelf(id) ? props.selfMuted || props.selfDeafened : !!member(id)?.muted
-}
-function deafenedOf(id: string) {
-  return isSelf(id) ? props.selfDeafened : !!member(id)?.deafened
-}
-function speakingOf(id: string) {
-  return props.speaking.has(id) && !mutedOf(id) && !props.silenced[id]
-}
-function audibleOf(id: string) {
-  return props.audible.has(id) && !mutedOf(id) && !props.silenced[id]
-}
-
-function moodOf(id: string): 'idle' | 'talking' | 'deafened' | 'away' {
-  if (member(id)?.away) return 'away'
-  if (deafenedOf(id)) return 'deafened'
-  return speakingOf(id) ? 'talking' : 'idle'
-}
+const { isSelf, mutedOf, deafenedOf, speakingOf, audibleOf, moodOf } = useSeatStates(props, member)
 
 function n0(ms: number | null): string {
   return ms == null ? '?' : String(Math.round(ms))
