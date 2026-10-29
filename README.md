@@ -45,7 +45,8 @@ dev:worker` start just one half.
 The e2e run makes a room, has people join, checks everyone hears everyone
 (the fake mic beeps, which lights up speaking rings on the other screens),
 mutes, has whoever made the room leave and checks the call carries on, joins
-someone new after that, and fills the table to six. It needs Playwright
+someone new after that, fills the table to six and pops it out into its own
+window. It needs Playwright
 installed (`npm i -g playwright && npx playwright install chromium`).
 `SHOTS_DIR=docs/screenshots npm run e2e` retakes the screenshots above.
 
@@ -66,7 +67,7 @@ from their name, so the same name is the same creature on everyone's screen.
 Faces smile while they talk, doze off while deafened and look puzzled while
 reconnecting. They're still pictures, not animations: animated blobatars
 restyle every face every frame on the main thread, which took a whole core
-with six at the table and showed up as wandering latency. A green ring shows who's talking, and mute and deafen show next to
+with six at the table and showed up as wandering latency. A green ring shows who's talking, and a thin one anyone whose mic is coming through at all (anything above about −80 dBFS: a room, a fan, someone talking very quietly), so you can tell a quiet mic from a dead one. Mute and deafen show next to
 their names, along with your ping to each of them (green under 80 ms, yellow
 under 160, red above). Right-click someone for **User Volume** (0–200%,
 sticking at 100% on the way past; **Reset** or a double-click puts it back)
@@ -87,6 +88,18 @@ their menu (a phone has no right-click), and the settings open as sheets
 across the screen. The layout keeps clear of notches and the home bar, and
 nothing on the page is wider than the screen (a phone would zoom the whole
 page out to fit it).
+
+**Pop-out table.** The pop-out button in the top bar opens the table in its
+own small always-on-top window, so you can see where people sit and who's
+talking while you're in something else, with mute and deafen under it (and
+`Ctrl+Shift+M` / `D` working there too). It's a miniature of the same table:
+the same seats, from the same seating, so it's never out of step with what
+you hear. It uses the browser's Document Picture-in-Picture window, so it's
+there in Chrome and Edge 116+ and recent Firefox, on a desktop, and only
+in the website: not on a phone, and not in the app, which will get an
+overlay of its own. The window's own animation frames drive the seats while
+the page is hidden. Close it from its own window or with the button, or
+leave the call.
 
 **Call controls.** A floating pill at the bottom: mute (`Ctrl+Shift+M`),
 deafen (`Ctrl+Shift+D`), spatial audio, voice settings, disconnect. Like
@@ -143,9 +156,10 @@ engine comes from its own pings over its data channel instead. The mouth-to-ear 
 an estimate (`≈`) where it can't. Hover the estimate for what each part means.
 
 **Voice settings.** Input and output device, an input level meter,
-spatial audio (**Off**, **Stereo**, **HRTF**; in the app **Stereo + ITD**
+spatial audio (**Off**, **Stereo**, **HRTF**; in the app **Binaural**
 instead of HRTF), echo cancellation, noise suppression and automatic gain
-control (all **off** by default; in the app, its own: see below), and
+control (noise suppression **on** by default, the other two **off**, or on
+too on a phone; in the app, its own: see below), and
 silence suppression (DTX, off). The **Low Latency** tab has the experimental
 engine and all its settings (below).
 
@@ -166,19 +180,29 @@ The motion is done in JavaScript: each seat's angle is a critically damped
 spring, stepped every animation frame, and it moves along the table's edge,
 not in a straight line across it. A change halfway through a move keeps the
 seat's speed, so it bends toward its new spot instead of restarting. Because
-the angle is known every frame, the spatial audio reads it directly. The loop
-stops when everything is still. With reduced motion on, seats jump straight
-to where they're going.
+the angle is known every frame, the spatial audio reads it directly.
+
+The seating is one model for the whole call ([`src/lib/seating.ts`](src/lib/seating.ts)),
+not a part of the table you look at: it follows the roster, sends each angle
+to the audio itself whenever it changes, and the table (and the pop-out below)
+only draws what it says. It steps on animation frames from a window that's
+visible, and stops when everything is still. When none is (a hidden tab, a
+minimised window: browsers pause animation frames there), nobody could see
+the slide, so every seat jumps to where it's going and the final angles go
+out at once. Someone who joins while you're in another tab is heard from
+their seat straight away, not once you look back. With reduced motion on,
+seats jump straight to where they're going.
 
 ### Audio and latency
 
 - **A full mesh of WebRTC calls.** Everyone calls everyone directly, with no
   SFU or relay in the middle unless the network forces TURN. That's the
   lowest latency you can get, and fine for the 12 people a room allows.
-- **Raw microphone.** Echo cancellation, noise suppression and auto gain are
-  off unless you turn them on. Each adds processing delay, and everyone's on
-  headphones. On a phone or tablet they start on instead: held at arm's
-  length on the speaker, a raw mic is faint and the speaker feeds back.
+- **Little processing on the microphone.** Noise suppression is on by
+  default. Echo cancellation and auto gain are off unless you turn them on:
+  each adds processing delay, and everyone's on headphones. On a phone or
+  tablet they start on too: held at arm's length on the speaker, a raw mic
+  is faint and the speaker feeds back.
 - **10 ms Opus frames.** The SDP each side sends asks for `ptime=10`
   instead of 20 ms, with in-band FEC and mono
   ([`src/net/sdp.ts`](src/net/sdp.ts)). Measured: 100 packets a second.
@@ -438,13 +462,22 @@ becomes just the UI.
   device for the app alone, for WASAPI's smallest buffers, at the cost of
   nothing else being able to use it meanwhile. The sound card line there
   says which one you got (exclusive, raw or shared).
-- **Stereo + ITD** instead of HRTF. The app pans equal-power and delays
-  only the far ear by the interaural time difference a real head would
-  give, from Woodworth's formula: (r/c)(θ + sin θ), with r = 8.75 cm and
-  c = 343 m/s, at most 0.66 ms (31.5 samples) for someone straight to one
-  side. The near ear is never delayed, so nobody arrives later than they
-  would with plain **Stereo**; the delay is fractional and glides when a
-  seat moves, so it never clicks.
+- **Binaural** instead of HRTF: Brown and Duda's spherical head model
+  ([`native/internal/engine/head.go`](native/internal/engine/head.go)).
+  Each person is heard from where their seat is, as seen from yours (90° −
+  θ/2 off straight ahead for a seat θ round the table from you, so evenly
+  spaced seats sound evenly spaced). Instead of a level pan, each ear gets
+  the model's head-shadow filter: bass goes round the head untouched, the
+  ear away from the voice loses treble (about −8 dB at 4 kHz in its
+  shadow) and the ear facing it gains a little. And the far ear hears them
+  later by Woodworth's interaural time difference, (r/c)(θ + sin θ) with r
+  = 8.75 cm and c = 343 m/s: at most 0.66 ms (31.5 samples), for someone
+  straight to one side. Two changes from the paper: only the far ear is
+  delayed (the near ear is never later than with spatial audio off), and
+  both ears are equalised to straight ahead, so the person across the
+  table sounds exactly as with it off. The delay and both filters glide
+  when a seat moves, so nothing clicks, and it's a few dozen operations a
+  sample per person. Plain **Stereo** stays a level-only equal-power pan.
 
 Measured on one machine, fake devices, website to app and back (`npm run
 e2e:native`):
@@ -459,14 +492,15 @@ e2e:native`):
 
 The website asks the browser for echo cancellation, noise suppression and
 gain control. The app does its own, in Go and two small C libraries, on the
-sending side (never on the audio thread), and each is off until you turn it
-on in **Voice Settings**:
+sending side (never on the audio thread). Noise suppression starts on (when
+the app was built with RNNoise); echo cancellation and gain control are off
+until you turn them on in **Voice Settings**:
 
 | | What | Delay it adds | CPU (share of one core) |
 | --- | --- | --- | --- |
 | **Echo Cancellation** | [SpeexDSP](https://github.com/xiph/speexdsp)'s MDF adaptive filter (85 ms tail) and its residual echo suppressor, fed what the same duplex callback just played, so mic and reference are already lined up | up to one 2.7 ms block to fill its frame; none when the sound card works in 128-sample blocks, as it usually does | 51 µs per 2.7 ms frame: **1.9%** |
 | **Noise Suppression** | [RNNoise](https://github.com/xiph/rnnoise) 0.2, a small recurrent network, with a voice gate on top | 10 ms (its analysis window) + up to 10 ms to fill a frame; +10 ms with **Lookahead** | 61 µs per 10 ms frame: **0.6%** |
-| **Automatic Gain Control** | ours ([`native/internal/dsp/agc.go`](native/internal/dsp/agc.go)): tracks your speech level and the noise floor, brings speech to −20 dBFS between −6 and +24 dB, cuts fast (50 ms) and lifts slowly (2 s), only moves while you're talking, and rounds off peaks with a soft limiter. It changes its own gain, never your system's mic volume | none: no lookahead | 0.3 µs per block: **0.01%** |
+| **Automatic Gain Control** | ours ([`native/internal/dsp/agc.go`](native/internal/dsp/agc.go)): tracks your speech level and the noise floor, brings speech to the **Target level** (−16 dBFS RMS by default, about where browsers' own gain control leaves people), between −6 dB and the **Max boost** (+30 dB by default), both adjustable. It cuts fast (50 ms), lifts within a second, only moves while you're talking, and rounds off peaks with a soft limiter. Even a mic too quiet to clear the old −50 dBFS floor counts as talking now. It changes its own gain, never your system's mic volume | none: no lookahead | 0.3 µs per block: **0.01%** |
 
 All three at once: 102 µs per 2.7 ms block, **3.8%** of one core. Measured
 by the **check** job's benchmarks on its Xeon Platinum 8370C (`go test
@@ -596,8 +630,8 @@ only; ALSA is loaded at start-up), Opus, RNNoise and SpeexDSP statically, built 
 sources by [`native/build/deps.sh`](native/build/deps.sh), so the binary
 needs nothing but the system's webview and sound server.
 
-**Not yet in the app:** a real HRTF (**Stereo + ITD** is panning and the
-time difference, without the head's filtering); a measured mouth to ear on plain calls (no `abs-capture-time` from the app);
+**Not yet in the app:** a measured HRTF (**Binaural** is a spherical head:
+direction left to right, not up and down); a measured mouth to ear on plain calls (no `abs-capture-time` from the app);
 honouring a receiver's DTX request on calls; Linux on ARM; macOS releases
 (it builds, but CI has it switched off); signing (Windows warns before the
 first run).
@@ -786,19 +820,22 @@ checks for them and has no environment:
 
 ```
 src/
-  lib/          seats (planning + the animated Table), tiles (the phone layout), spring,
-                room codes, prefs, viewport
+  lib/          seats (planning + the animated Table), seating (the call's one Table, and
+                who draws it), tableView (what the table and the pop-out share), tiles
+                (the phone layout), spring, room codes, prefs, viewport
   net/          protocol (+ validation, shared with the Worker), roomSocket (the
                 WebSocket to the room), peer (one peer connection), session
                 (joining, the call mesh), sdp, ICE config
   audio/        engine: mic, per-person channel strips, panning, speaking detection
   audio/ll/     the low-latency engine: worklets (capture, playback), worker
                 (encode, decode, network), jitter buffer, shared-memory ring, packet format, settings
-  components/   round table, call control buttons, settings, user menu, icons
+  components/   round table, its miniature for the pop-out, call control buttons, settings,
+                user menu, icons
   screens/      Home (make or join) and Room
   native/       the page's side of the app: finding it, the bridge, and the links and
                 voice that stand in for the page's own when the app does the audio
   call.ts       the call as reactive state, and everything the UI can do to it
+  pip.ts        the pop-out window (Document Picture-in-Picture)
 worker/         the Cloudflare Worker: static assets, the rooms (a Durable Object each), /api/ice
 scripts/        dev (app + Worker), e2e runs (website, and the app with the website)
 tests/          unit tests

@@ -243,7 +243,7 @@ func TestITDDelaysOnlyTheFarEar(t *testing.T) {
 	mix := make([]float32, 128)
 	mix[0] = 1
 	out := make([]float32, 256)
-	r.mixITD(mix, out, 1, 1, itd)
+	r.mixHead(mix, out, 1, 1, itd, shadowFront, shadowFront)
 	if out[1] != 1 {
 		t.Fatalf("near (right) ear: %v at 0, want the click on time", out[1])
 	}
@@ -255,7 +255,7 @@ func TestITDDelaysOnlyTheFarEar(t *testing.T) {
 			t.Fatalf("far ear has %v at %d", out[2*i], i)
 		}
 	}
-	if a := testing.AllocsPerRun(100, func() { r.mixITD(mix, out, 1, 1, itd) }); a > 0 {
+	if a := testing.AllocsPerRun(100, func() { r.mixHead(mix, out, 1, 1, itd, shadowFront, shadowFront) }); a > 0 {
 		t.Fatalf("%v allocations", a)
 	}
 }

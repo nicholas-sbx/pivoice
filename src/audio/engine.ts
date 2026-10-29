@@ -1,3 +1,4 @@
+import { ActivityTracker, type Activity } from './activity'
 import { seatDirection } from '../lib/seats'
 
 /**
@@ -57,10 +58,6 @@ interface Remote {
   angle: number
 }
 
-/** RMS above this counts as talking (about −40 dBFS). */
-export const SPEAKING_RMS = 0.01
-/** Keep the ring lit this long after the last loud bit, so it doesn't flicker between words. */
-export const SPEAKING_HOLD_MS = 300
 
 export class AudioEngine {
   readonly ctx: AudioContext
@@ -83,9 +80,11 @@ export class AudioEngine {
   private micOn = true
   private volumes = new Map<string, number>()
   private silenced = new Set<string>()
+  /** Where everyone sits, kept for people whose voice isn't here yet (or comes and goes, switching engines). */
+  private angles = new Map<string, number>()
   private outputId = ''
   private buf = new Float32Array(1024)
-  private loudAt = new Map<string, number>()
+  private activityOf = new ActivityTracker()
 
   constructor(buffer: OutputBuffer = 'min') {
     // Created from a click, so it starts running. A latency hint of 0 asks
@@ -250,7 +249,7 @@ export class AudioEngine {
       coneInnerAngle: 360,
       coneOuterAngle: 360
     })
-    r = { media: null, ll: null, analyser, gain, panner, angle: Math.PI }
+    r = { media: null, ll: null, analyser, gain, panner, angle: this.angles.get(id) ?? Math.PI }
     this.remotes.set(id, r)
     return r
   }
@@ -307,13 +306,14 @@ export class AudioEngine {
 
   private forget(id: string, r: Remote) {
     this.remotes.delete(id)
-    this.loudAt.delete(id)
+    this.activityOf.forget(id)
     r.gain.disconnect()
     r.panner.disconnect()
   }
 
   /** Where they sit, as a table angle (see lib/seats). Cheap to call every frame. */
   setAngle(id: string, angle: number) {
+    this.angles.set(id, angle)
     const r = this.remotes.get(id)
     if (!r || r.angle === angle) return
     r.angle = angle
@@ -386,17 +386,12 @@ export class AudioEngine {
     return this.mic ? Math.min(1, this.rms(this.mic.analyser) * 4) : 0
   }
 
-  /** Who's talking right now. `selfId` is you, counted only while your mic is on. */
-  speaking(selfId: string, now = performance.now()): Set<string> {
-    const out = new Set<string>()
-    const check = (id: string, analyser: AnalyserNode) => {
-      if (this.rms(analyser) > SPEAKING_RMS) this.loudAt.set(id, now)
-      if (now - (this.loudAt.get(id) ?? -Infinity) < SPEAKING_HOLD_MS) out.add(id)
-    }
-    if (this.mic && this.micOn) check(selfId, this.mic.analyser)
-    else this.loudAt.delete(selfId)
-    for (const [id, r] of this.remotes) check(id, r.analyser)
-    return out
+  /** Who's talking, and who's making any sound at all, right now. `selfId` is you, counted only while your mic is on. */
+  activity(selfId: string, now = performance.now()): Activity {
+    if (this.mic && this.micOn) this.activityOf.hear(selfId, this.rms(this.mic.analyser), now)
+    else this.activityOf.forget(selfId)
+    for (const [id, r] of this.remotes) this.activityOf.hear(id, this.rms(r.analyser), now)
+    return this.activityOf.read(now)
   }
 
   close() {

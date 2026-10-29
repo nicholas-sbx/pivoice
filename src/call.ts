@@ -1,10 +1,12 @@
-import { reactive } from 'vue'
+import { reactive, watch } from 'vue'
+import { sameActivity } from './audio/activity'
 import { AudioEngine, type MicProblem, type SpatialMode } from './audio/engine'
 import { LOOP_ID, sanitizeLL, sendDelayMs, type LLConfig } from './audio/ll/config'
 import { WebRTCLoopback } from './audio/loopback'
 import { LowLatencyEngine } from './audio/ll/engine'
 import { copyText } from './lib/copyText'
 import { loadPrefs, savePrefs, type Prefs } from './lib/prefs'
+import { Seating } from './lib/seating'
 import { NativeBridge, isNative } from './native/bridge'
 import { NativeLinks } from './native/link'
 import type { AppConfig } from './native/protocol'
@@ -44,6 +46,8 @@ export const call = reactive({
   selfId: '',
   members: [] as Member[],
   speaking: new Set<string>(),
+  /** Anyone making a sound at all (a thin ring), speaking or not. */
+  audible: new Set<string>(),
   /** Your choice. What you send is muted if this, deafened, or there's no mic. */
   muted: false,
   deafened: false,
@@ -86,6 +90,27 @@ let nativeLinks: NativeLinks | null = null
 /** The audio, when the app is doing it. */
 let nv: NativeVoice | null = null
 
+/**
+ * Where everyone sits, for the audio and for every view of the table. It
+ * lives here, with the audio it feeds, so the angles are right whether or
+ * not anything is on screen (see lib/seating).
+ */
+export const seating = new Seating((id, angle) => {
+  engine?.setAngle(id, angle)
+  nv?.setAngle(id, angle)
+})
+
+// Whoever's in the call sits at the table; the seats move themselves from there.
+watch(
+  () => [call.selfId, ...call.members.map(m => m.id)].join(','),
+  () => {
+    if (!call.selfId || !call.members.length) return
+    const ids = call.members.map(m => m.id)
+    if (!ids.includes(call.selfId)) ids.unshift(call.selfId)
+    seating.sync(ids, call.selfId)
+  }
+)
+
 /** In the app: connected to it, and on versions that work together. */
 export const nativeReady: Promise<boolean> = isNative ? connectApp() : Promise.resolve(false)
 
@@ -116,7 +141,9 @@ function appConfig(): AppConfig {
       gain: p.autoGainControl,
       gateThreshold: p.noiseGate,
       gateGraceMs: p.noiseGraceMs,
-      noiseLookahead: p.noiseLookahead
+      noiseLookahead: p.noiseLookahead,
+      gainTargetDb: p.agcTargetDb,
+      gainMaxDb: p.agcMaxDb
     }
   }
 }
@@ -192,6 +219,7 @@ export async function startCall(kind: 'create' | 'join', name: string, code = ''
   call.error = ''
   call.members = []
   call.speaking = new Set()
+  call.audible = new Set()
   call.volumes = {}
   call.silenced = {}
   call.links = {}
@@ -227,6 +255,8 @@ async function connect(kind: 'create' | 'join', name: string, code: string, rejo
 
   const eng = new AudioEngine(call.prefs.outputBuffer)
   engine = eng
+  // A new engine hasn't been told where anyone sits (coming back after a rejoin, say).
+  seating.flush()
   const icePromise = fetchIceServers()
   await eng.openMic(micSettings())
   if (engine !== eng) return
@@ -324,6 +354,7 @@ async function connectNative(kind: 'create' | 'join', name: string, code: string
   }
   const v = new NativeVoice(bridge)
   nv = v
+  seating.flush()
   const icePromise = fetchIceServers()
   await v.start(appConfig())
   if (nv !== v) return
@@ -417,10 +448,12 @@ function cleanup() {
   snapshots.clear()
   // Coming straight back: keep the room on screen, everyone at the table.
   if (rejoining) return
+  seating.reset()
   call.phase = 'home'
   call.joining = null
   call.members = []
   call.speaking = new Set()
+  call.audible = new Set()
 }
 
 export function leaveCall() {
@@ -438,10 +471,10 @@ function startSpeakingPoll() {
   speakingTimer = setInterval(() => {
     const src = nv ?? engine
     if (!src) return
-    const now = src.speaking(call.selfId)
-    const prev = call.speaking
-    if (now.size === prev.size && [...now].every(id => prev.has(id))) return
-    call.speaking = now
+    const now = src.activity(call.selfId)
+    if (sameActivity(now, { speaking: call.speaking, audible: call.audible })) return
+    call.speaking = now.speaking
+    call.audible = now.audible
   }, 50)
 }
 
@@ -735,7 +768,9 @@ export async function setOutput(deviceId: string) {
 }
 
 /** In the app: its own devices and how it opens them (it reopens the sound card on the spot), and its processing. */
-export function setAppDevices(patch: Partial<Pick<Prefs, 'appInputId' | 'appOutputId' | 'appExclusive' | 'noiseGate' | 'noiseGraceMs' | 'noiseLookahead'>>) {
+export function setAppDevices(
+  patch: Partial<Pick<Prefs, 'appInputId' | 'appOutputId' | 'appExclusive' | 'noiseGate' | 'noiseGraceMs' | 'noiseLookahead' | 'agcTargetDb' | 'agcMaxDb'>>
+) {
   updatePrefs(patch)
   nv?.configure(appConfig())
 }
@@ -750,12 +785,6 @@ export function setSilenced(id: string, on: boolean) {
   call.silenced[id] = on
   engine?.setSilenced(id, on)
   nv?.setSilenced(id, on)
-}
-
-/** Where someone sits, for spatial audio. Cheap to call every frame. */
-export function setSeatAngle(id: string, angle: number) {
-  engine?.setAngle(id, angle)
-  nv?.setAngle(id, angle)
 }
 
 /** Your microphone level, 0–1, for the meters. */

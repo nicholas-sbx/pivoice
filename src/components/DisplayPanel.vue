@@ -2,6 +2,7 @@
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { call, updatePrefs } from '../call'
 import Switch from './Switch.vue'
+import { vSnap } from '../lib/snap'
 
 /** What the table shows about everyone's connection. Pops down from the top bar. */
 
@@ -26,7 +27,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div ref="el" class="panel" role="dialog" aria-label="Display settings">
+  <div ref="el" v-snap class="panel" role="dialog" aria-label="Display settings">
     <span class="eyebrow">At the table</span>
     <Switch
       label="Show ping"

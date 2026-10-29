@@ -98,6 +98,9 @@ type Processing struct {
 	GateGraceMs   float64 `json:"gateGraceMs"`
 	// RNNoise's lookahead: 10 ms more delay, cleaner starts of words.
 	NoiseLookahead bool `json:"noiseLookahead"`
+	// Automatic gain: the level it aims for (dBFS RMS) and the most it may boost (dB). 0, 0: the app's defaults.
+	GainTargetDb float64 `json:"gainTargetDb"`
+	GainMaxDb    float64 `json:"gainMaxDb"`
 }
 
 type LLConfig struct {

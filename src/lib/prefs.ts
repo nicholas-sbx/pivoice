@@ -17,9 +17,10 @@ export interface Prefs {
   appOutputId: string
   /** The app on Windows: WASAPI exclusive mode (smallest buffers; nothing else can play meanwhile). */
   appExclusive: boolean
-  // Off by default on a computer: they each add latency, and everyone's on
-  // headphones. On a phone they're on (MOBILE_MIC): it's held at arm's
-  // length on the speaker, where a raw mic is faint and the speaker feeds back.
+  // Noise suppression is on by default. Echo cancellation and auto gain are
+  // off on a computer, where they add latency and everyone's on headphones,
+  // and on a phone (MOBILE_MIC), held at arm's length on the speaker, where
+  // a raw mic is faint and the speaker feeds back.
   echoCancellation: boolean
   noiseSuppression: boolean
   autoGainControl: boolean
@@ -32,6 +33,9 @@ export interface Prefs {
   noiseGraceMs: number
   /** RNNoise's lookahead: off by default, since it's 10 ms more delay. */
   noiseLookahead: boolean
+  /** The app's automatic gain: the level it brings you to (dBFS RMS), and the most it may boost a quiet mic (dB). */
+  agcTargetDb: number
+  agcMaxDb: number
   /** The room code is hidden until you ask to see it (screen sharing, streaming). */
   showCode: boolean
   /** Ping beside everyone's name. */
@@ -57,14 +61,13 @@ const KEY = 'pv.prefs'
  * Bumped when a default changes for everyone who already has prefs saved
  * (which is everyone who's been in a call: all of them are saved). 1: DTX
  * went from on to off by default, so a saved `dtx` from before doesn't count.
- * 2: echo cancellation, noise suppression and auto gain went on by default
- * on phones, so what a phone saved before doesn't count for those three.
+ * 2: noise suppression went on by default everywhere, and echo cancellation
+ * and auto gain on phones, so what was saved before doesn't count for those.
  */
 const PREFS_REV = 2
 
-/** The mic processing a phone starts with (see Prefs). */
-const MOBILE_MIC = { echoCancellation: true, noiseSuppression: true, autoGainControl: true } as const
-const MIC_KEYS = ['echoCancellation', 'noiseSuppression', 'autoGainControl'] as const
+/** What a phone starts with on top of everyone's defaults (see Prefs). */
+const MOBILE_MIC = { echoCancellation: true, autoGainControl: true } as const
 
 export const DEFAULT_PREFS: Prefs = {
   rev: PREFS_REV,
@@ -77,11 +80,13 @@ export const DEFAULT_PREFS: Prefs = {
   appOutputId: '',
   appExclusive: false,
   echoCancellation: false,
-  noiseSuppression: false,
+  noiseSuppression: true,
   autoGainControl: false,
   noiseGate: 0.4,
   noiseGraceMs: 400,
   noiseLookahead: false,
+  agcTargetDb: -16,
+  agcMaxDb: 30,
   showCode: false,
   showPing: true,
   showRoute: false,
@@ -106,12 +111,15 @@ export function loadPrefs(): Prefs {
     if (typeof raw.appOutputId === 'string') p.appOutputId = raw.appOutputId
     if (typeof raw.noiseGate === 'number' && raw.noiseGate >= 0 && raw.noiseGate <= 1) p.noiseGate = raw.noiseGate
     if (typeof raw.noiseGraceMs === 'number' && raw.noiseGraceMs >= 0 && raw.noiseGraceMs <= 2000) p.noiseGraceMs = raw.noiseGraceMs
+    if (typeof raw.agcTargetDb === 'number' && raw.agcTargetDb >= -30 && raw.agcTargetDb <= -6) p.agcTargetDb = raw.agcTargetDb
+    if (typeof raw.agcMaxDb === 'number' && raw.agcMaxDb >= 0 && raw.agcMaxDb <= 40) p.agcMaxDb = raw.agcMaxDb
     for (const k of ['appExclusive', 'noiseLookahead', 'showCode', 'showPing', 'showRoute'] as const) {
       if (typeof raw[k] === 'boolean') p[k] = raw[k]
     }
-    // A phone's saved choice only counts if it was made once they were on by default.
-    if (!mobile || savedRev >= 2) {
-      for (const k of MIC_KEYS) if (typeof raw[k] === 'boolean') p[k] = raw[k]
+    // A saved choice only counts if it was made once the default it overrides was in place.
+    if (savedRev >= 2 && typeof raw.noiseSuppression === 'boolean') p.noiseSuppression = raw.noiseSuppression
+    for (const k of ['echoCancellation', 'autoGainControl'] as const) {
+      if ((!mobile || savedRev >= 2) && typeof raw[k] === 'boolean') p[k] = raw[k]
     }
     if (typeof raw.dtx === 'boolean' && savedRev >= 1) p.dtx = raw.dtx
     return p

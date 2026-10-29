@@ -13,41 +13,47 @@ function device(nav: { userAgent: string; maxTouchPoints?: number }, saved?: obj
   return loadPrefs()
 }
 
+/** [echo cancellation, noise suppression, auto gain] */
 const mic = (p: ReturnType<typeof loadPrefs>) => [p.echoCancellation, p.noiseSuppression, p.autoGainControl]
 
 describe('mic processing defaults', () => {
   afterEach(() => vi.unstubAllGlobals())
 
-  it('is on for phones and tablets', () => {
+  it('has all three on for phones and tablets', () => {
     expect(mic(device({ userAgent: IPHONE }))).toEqual([true, true, true])
     expect(mic(device({ userAgent: ANDROID }))).toEqual([true, true, true])
     expect(mic(device(IPAD))).toEqual([true, true, true])
   })
 
-  it('stays off on a computer', () => {
-    expect(mic(device({ userAgent: WINDOWS }))).toEqual([false, false, false])
-    expect(mic(device({ userAgent: MAC }))).toEqual([false, false, false])
+  it('has only noise suppression on for a computer', () => {
+    expect(mic(device({ userAgent: WINDOWS }))).toEqual([false, true, false])
+    expect(mic(device({ userAgent: MAC }))).toEqual([false, true, false])
   })
 
-  it('is on for a phone with nothing readable saved', () => {
-    vi.stubGlobal('navigator', { userAgent: IPHONE, maxTouchPoints: 5 })
+  it('has the same defaults when nothing readable is saved', () => {
     vi.stubGlobal('localStorage', { getItem: () => '{not json', setItem: () => {} })
+    vi.stubGlobal('navigator', { userAgent: IPHONE, maxTouchPoints: 5 })
     expect(mic(loadPrefs())).toEqual([true, true, true])
+    vi.stubGlobal('navigator', { userAgent: WINDOWS, maxTouchPoints: 0 })
+    expect(mic(loadPrefs())).toEqual([false, true, false])
   })
 
-  it('ignores what a phone saved before they were on by default', () => {
+  it('ignores what a phone saved before the new defaults', () => {
     const old = { rev: 1, echoCancellation: false, noiseSuppression: false, autoGainControl: false }
     expect(mic(device({ userAgent: IPHONE }, old))).toEqual([true, true, true])
     expect(mic(device({ userAgent: IPHONE }, { echoCancellation: false }))).toEqual([true, true, true])
   })
 
-  it("keeps a phone's choice once it was made with them on by default", () => {
-    const chosen = { rev: 2, echoCancellation: true, noiseSuppression: false, autoGainControl: true }
-    expect(mic(device({ userAgent: IPHONE }, chosen))).toEqual([true, false, true])
+  it("ignores a computer's saved noise suppression from before it was on, but not the other two", () => {
+    const old = { rev: 1, echoCancellation: true, noiseSuppression: false, autoGainControl: true }
+    expect(mic(device({ userAgent: WINDOWS }, old))).toEqual([true, true, true])
+    expect(mic(device({ userAgent: WINDOWS }, { echoCancellation: false, noiseSuppression: false }))).toEqual([false, true, false])
   })
 
-  it("keeps a computer's saved choice whatever its rev", () => {
-    expect(mic(device({ userAgent: WINDOWS }, { rev: 1, echoCancellation: true, noiseSuppression: false, autoGainControl: true }))).toEqual([true, false, true])
+  it('keeps any choice made since', () => {
+    const chosen = { rev: 2, echoCancellation: true, noiseSuppression: false, autoGainControl: true }
+    expect(mic(device({ userAgent: IPHONE }, chosen))).toEqual([true, false, true])
+    expect(mic(device({ userAgent: WINDOWS }, chosen))).toEqual([true, false, true])
     expect(mic(device({ userAgent: WINDOWS }, { rev: 2, echoCancellation: false, noiseSuppression: true, autoGainControl: false }))).toEqual([false, true, false])
   })
 
