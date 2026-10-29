@@ -121,7 +121,10 @@ function appConfig(): AppConfig {
       gateGraceMs: p.noiseGraceMs,
       noiseLookahead: p.noiseLookahead,
       gainTargetDb: p.agcTargetDb,
-      gainMaxDb: p.agcMaxDb
+      gainMaxDb: p.agcMaxDb,
+      gainCeilingDb: p.agcCeilingDb,
+      gainRiseMs: p.agcRiseMs,
+      gainFallMs: p.agcFallMs
     }
   }
 }
@@ -743,7 +746,22 @@ export async function setOutput(deviceId: string) {
 
 /** In the app: its own devices and how it opens them (it reopens the sound card on the spot), and its processing. */
 export function setAppDevices(
-  patch: Partial<Pick<Prefs, 'appInputId' | 'appOutputId' | 'appExclusive' | 'noiseGate' | 'noiseGraceMs' | 'noiseLookahead' | 'agcTargetDb' | 'agcMaxDb'>>
+  patch: Partial<
+    Pick<
+      Prefs,
+      | 'appInputId'
+      | 'appOutputId'
+      | 'appExclusive'
+      | 'noiseGate'
+      | 'noiseGraceMs'
+      | 'noiseLookahead'
+      | 'agcTargetDb'
+      | 'agcMaxDb'
+      | 'agcCeilingDb'
+      | 'agcRiseMs'
+      | 'agcFallMs'
+    >
+  >
 ) {
   updatePrefs(patch)
   nv?.configure(appConfig())

@@ -16,9 +16,19 @@
  * A frame arriving later than that is too late and is dropped.
  *
  * - **Steering.** If playback drifts from where it should be, the speed
- *   changes by up to ±stretch% until it's back. Pitch moves by the same
- *   amount, which is inaudible at 2%. Far too deep (more than the max
- *   buffer behind) jumps straight there.
+ *   changes by up to ±stretch% until it's back, and the pitch moves with
+ *   it (it's a resampling). On a jittery network (wifi) the target moves
+ *   all the time, and steering at full stretch through speech was a
+ *   constant, audible pitch wobble. So the full stretch is only used in
+ *   the quiet between words (the last block played under QUIET_RMS), where
+ *   it can't be heard. While someone's talking it steers only when it must:
+ *   when there's too little buffered (more than 1 ms short: frames would
+ *   arrive too late, a gap you'd hear, which is worse than a slight pitch
+ *   change), and at a quarter of that when there's far too much (over 20
+ *   ms deep). A little too much buffered, half of what the target moving
+ *   about asks for, just waits for the next pause. The
+ *   speed glides between settings rather than jumping, a block at a time.
+ *   Far too deep (more than the max buffer behind) jumps straight there.
  * - **Gaps** (a lost packet nothing recovered) are concealed by fading out a
  *   repeat of the last frame over `conceal` samples, then silence.
  * - **Underruns** (nothing left: the talker went quiet, DTX, or the network
@@ -26,6 +36,11 @@
  *   a fresh talkspurt exactly `target` behind, which is where most
  *   adaptation happens for free.
  */
+
+/** Below this (RMS, about −50 dBFS) the last block played counts as quiet, where a change of speed can't be heard. */
+export const QUIET_RMS = 0.003
+/** The most the playback speed moves in one block: ±2% takes about 50 ms to reach. */
+const RATE_GLIDE = 0.001
 
 export interface JitterConfig {
   sampleRate: number
@@ -73,6 +88,10 @@ export class JitterBuffer {
   private estimatedAt = -Infinity
   /** Sender-clock position being played, or null while idle. */
   private pos: number | null = null
+  /** How loud the last block played was (RMS): steering waits for the quiet. */
+  private lastRms = 0
+  /** The playback speed now (1 is normal), gliding toward what steering wants. */
+  private rate = 1
   private cursor: Stored | null = null
   private lastGood: Stored | null = null
   private lastGoodEnd = 0
@@ -142,6 +161,7 @@ export class JitterBuffer {
     const n = out.length
     if (this.base === null) {
       out.fill(0)
+      this.lastRms = 0
       return
     }
     const desired = now - this.base - this.targetSamples() - n
@@ -152,10 +172,12 @@ export class JitterBuffer {
       const first = this.frames[0]
       if (!first || first.start > desired) {
         out.fill(0)
+        this.lastRms = 0
         return
       }
       const last = this.frames[this.frames.length - 1]
       this.pos = Math.min(Math.max(first.start, desired), last.start)
+      this.rate = 1
       this.cursor = null
       this.emptySince = null
     }
@@ -167,7 +189,15 @@ export class JitterBuffer {
       err = 0
     }
     const k = this.samples(20)
-    const rate = 1 - Math.max(-1, Math.min(1, err / k)) * this.cfg.stretch
+    let stretch = this.cfg.stretch
+    if (this.lastRms >= QUIET_RMS) {
+      // Talking: too little buffered (a gap's coming) steers as ever; far too much at a quarter; a little too much waits.
+      if (err < -k) stretch /= 4
+      else if (err <= this.samples(1)) stretch = 0
+    }
+    const want = 1 - Math.max(-1, Math.min(1, err / k)) * stretch
+    this.rate += Math.max(-RATE_GLIDE, Math.min(RATE_GLIDE, want - this.rate))
+    const rate = this.rate
 
     for (let i = 0; i < n; i++) {
       if (this.pos === null) {
@@ -182,6 +212,9 @@ export class JitterBuffer {
       out[i] = a + (b - a) * frac
       if (this.pos !== null) this.pos += rate
     }
+    let sum = 0
+    for (let i = 0; i < n; i++) sum += out[i] * out[i]
+    this.lastRms = Math.sqrt(sum / n)
     if (this.pos !== null) this.dropOlderThan(this.pos - this.samples(5))
   }
 

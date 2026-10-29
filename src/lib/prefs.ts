@@ -29,9 +29,14 @@ export interface Prefs {
   noiseGraceMs: number
   /** RNNoise's lookahead: off by default, since it's 10 ms more delay. */
   noiseLookahead: boolean
-  /** The app's automatic gain: the level it brings you to (dBFS RMS), and the most it may boost a quiet mic (dB). */
+  /** The app's automatic gain: the level it brings you to (dBFS RMS), the most it may boost a quiet mic (dB), the loudest it lets your peaks be (dBFS), and how fast it turns up and down (ms). */
   agcTargetDb: number
   agcMaxDb: number
+  agcCeilingDb: number
+  agcRiseMs: number
+  agcFallMs: number
+  /** See AGC_REV. */
+  agcRev: number
   /** The room code is hidden until you ask to see it (screen sharing, streaming). */
   showCode: boolean
   /** Ping beside everyone's name. */
@@ -59,6 +64,13 @@ const KEY = 'pv.prefs'
  * went from on to off by default, so a saved `dtx` from before doesn't count.
  */
 const PREFS_REV = 1
+/**
+ * The gain control's settings revision. 1: it got a peak ceiling and a
+ * real limiter, and its default target went from −16 to −20 dBFS. A target
+ * saved before then was set against the old, clip-prone gain, so it goes
+ * back to the default once.
+ */
+const AGC_REV = 1
 
 export const DEFAULT_PREFS: Prefs = {
   rev: PREFS_REV,
@@ -76,8 +88,12 @@ export const DEFAULT_PREFS: Prefs = {
   noiseGate: 0.4,
   noiseGraceMs: 400,
   noiseLookahead: false,
-  agcTargetDb: -16,
+  agcTargetDb: -20,
   agcMaxDb: 30,
+  agcCeilingDb: -3,
+  agcRiseMs: 1000,
+  agcFallMs: 50,
+  agcRev: AGC_REV,
   showCode: false,
   showPing: true,
   showRoute: false,
@@ -100,8 +116,14 @@ export function loadPrefs(): Prefs {
     if (typeof raw.appOutputId === 'string') p.appOutputId = raw.appOutputId
     if (typeof raw.noiseGate === 'number' && raw.noiseGate >= 0 && raw.noiseGate <= 1) p.noiseGate = raw.noiseGate
     if (typeof raw.noiseGraceMs === 'number' && raw.noiseGraceMs >= 0 && raw.noiseGraceMs <= 2000) p.noiseGraceMs = raw.noiseGraceMs
-    if (typeof raw.agcTargetDb === 'number' && raw.agcTargetDb >= -30 && raw.agcTargetDb <= -6) p.agcTargetDb = raw.agcTargetDb
-    if (typeof raw.agcMaxDb === 'number' && raw.agcMaxDb >= 0 && raw.agcMaxDb <= 40) p.agcMaxDb = raw.agcMaxDb
+    // The gain control's settings, each kept if it's in range. (Saved before
+    // rev 2 it was louder by default, -16: that one goes back to the default.)
+    const inRange = (v: unknown, lo: number, hi: number): v is number => typeof v === 'number' && v >= lo && v <= hi
+    if (inRange(raw.agcTargetDb, -30, -6) && (raw.agcRev ?? 0) >= AGC_REV) p.agcTargetDb = raw.agcTargetDb
+    if (inRange(raw.agcMaxDb, 0, 40)) p.agcMaxDb = raw.agcMaxDb
+    if (inRange(raw.agcCeilingDb, -20, -1)) p.agcCeilingDb = raw.agcCeilingDb
+    if (inRange(raw.agcRiseMs, 50, 10000)) p.agcRiseMs = raw.agcRiseMs
+    if (inRange(raw.agcFallMs, 5, 2000)) p.agcFallMs = raw.agcFallMs
     for (const k of ['echoCancellation', 'noiseSuppression', 'autoGainControl', 'appExclusive', 'noiseLookahead', 'showCode', 'showPing', 'showRoute'] as const) {
       if (typeof raw[k] === 'boolean') p[k] = raw[k]
     }

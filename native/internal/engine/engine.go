@@ -236,7 +236,10 @@ func (e *Engine) setProcessing(p proto.Processing) {
 	s := dsp.Settings{
 		Echo: p.Echo, Noise: p.Noise, Gain: p.Gain,
 		GateThreshold: float32(p.GateThreshold), GateGraceMs: float32(p.GateGraceMs), NoiseLookahead: p.NoiseLookahead,
-		GainTargetDb: float32(p.GainTargetDb), GainMaxDb: float32(p.GainMaxDb),
+		GainTuning: dsp.AGCTuning{
+			TargetDb: p.GainTargetDb, MaxBoostDb: p.GainMaxDb, CeilingDb: p.GainCeilingDb,
+			Rise: p.GainRiseMs / 1000, Fall: p.GainFallMs / 1000,
+		},
 	}
 	if !s.Active() {
 		e.processing.Store(nil)

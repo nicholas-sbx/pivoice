@@ -85,8 +85,9 @@ try {
     const off = await alice.$$eval('.pill, .panel, .tip', els =>
       els
         .map(e => ({ e, r: e.getBoundingClientRect() }))
-        .filter(({ r }) => Math.abs(r.left - Math.round(r.left)) > 0.01 || Math.abs(r.top - Math.round(r.top)) > 0.01)
-        .map(({ e, r }) => `${e.className} at ${r.left.toFixed(2)}, ${r.top.toFixed(2)}`)
+        .filter(({ e, r }) => Math.abs(r.left - Math.round(r.left)) > 0.01 || Math.abs(r.top - Math.round(r.top)) > 0.01 || getComputedStyle(e).translate !== 'none')
+        // (A translate would put it there, but WebKit, the app's window, shifts a translated layer and smears it anyway.)
+        .map(({ e, r }) => `${e.className} at ${r.left.toFixed(2)}, ${r.top.toFixed(2)}, translate ${getComputedStyle(e).translate}`)
     )
     if (off.length) throw new Error(`blurry at ${w}px wide: ${off.join('; ')}`)
   }

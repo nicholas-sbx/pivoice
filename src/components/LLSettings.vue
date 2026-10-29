@@ -262,7 +262,7 @@ const buffer = computed(() => {
       :min="r.stretchPct[0]"
       :max="r.stretchPct[1]"
       :step="r.stretchPct[2]"
-      hint="How much playback may speed up or slow down to steer to the target. 0 = only resync between sentences."
+      hint="How much playback may speed up or slow down to steer to the target (the pitch moves with it). It does that in the pauses between words, and while someone talks only if a gap is coming. 0 = only resync between sentences."
       :model-value="c.stretchPct"
       @update:model-value="v => set('stretchPct', v)"
     />

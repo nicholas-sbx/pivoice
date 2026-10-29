@@ -192,6 +192,51 @@ func TestJitterCoversJitter(t *testing.T) {
 	}
 }
 
+func TestJitterRareGaps(t *testing.T) {
+	r := simulate(simOpts{seconds: 8, jitterMs: 15})
+	if r.stats.ConcealedPct >= 1 {
+		t.Fatalf("concealed %.2f%% on a jittery network", r.stats.ConcealedPct)
+	}
+}
+
+// Someone talking steadily; then the target drops by 10 ms. It waits for a
+// pause to shed that, rather than speed up (and pitch up) through speech.
+func TestJitterWaitsForAPauseToShed(t *testing.T) {
+	cfg := JitterConfig{SampleRate: 48000, MinMs: 30, MaxMs: 80, MarginMs: 2, Multiplier: 1.2, Stretch: 0.02, ConcealMs: 12, Percentile: 99, WindowSec: 2}
+	jb := NewJitterBuffer(cfg)
+	out := make([]float32, 128)
+	ts, now := 0.0, 1_000_000.0
+	run := func(seconds float64, level float32, watch func(float64)) {
+		for end := now + seconds*48000; now < end; now += 128 {
+			for ts < now-1_000_000+480 {
+				pcm := make([]float32, 240)
+				for i := range pcm {
+					pcm[i] = level
+				}
+				jb.Push(ts, pcm, 1_000_000+ts+240+96)
+				ts += 240
+			}
+			jb.Pull(out, now)
+			if watch != nil {
+				watch(jb.rate)
+			}
+		}
+	}
+	run(2, 0.3, nil)
+	cfg.MinMs = 20
+	jb.Configure(cfg)
+	most := 0.0
+	run(1, 0.3, func(r float64) { most = math.Max(most, math.Abs(r-1)) })
+	if most != 0 {
+		t.Fatalf("sped up by %.3f%% while someone was talking", most*100)
+	}
+	fastest := 1.0
+	run(1, 0.0005, func(r float64) { fastest = math.Max(fastest, r) })
+	if fastest <= 1.005 {
+		t.Fatalf("didn't shed the extra in a pause (fastest %v)", fastest)
+	}
+}
+
 func TestJitterInOrder(t *testing.T) {
 	r := simulate(simOpts{seconds: 4, jitterMs: 4})
 	tail := r.delays[len(r.delays)-48000:]

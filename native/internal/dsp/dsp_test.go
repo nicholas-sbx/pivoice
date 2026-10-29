@@ -55,14 +55,14 @@ func TestEchoCancels(t *testing.T) {
 }
 
 func TestAGCLevels(t *testing.T) {
-	target := dbToGain(AGCTargetDb)
+	target := dbToGain(DefaultAGC.TargetDb)
 	for _, c := range []struct {
 		name  string
 		level float64
 	}{{"quiet", 0.04}, {"loud", 0.6}} {
 		// Quiet is about −40 dBFS RMS (a soft voice a way off the mic), loud
 		// about −16 dBFS with peaks near full scale.
-		a := NewAGC(AGCTargetDb, AGCMaxGainDb)
+		a := NewAGC(DefaultAGC)
 		x := talker(2, SampleRate*8, c.level)
 		in := rmsOf(x)
 		peak := float32(0)
@@ -86,7 +86,7 @@ func TestAGCLevels(t *testing.T) {
 // A mic so quiet it's under −50 dBFS (where the old floor stopped counting
 // it as speech) still gets brought up, as far as the most it may boost.
 func TestAGCLiftsAQuietMic(t *testing.T) {
-	a := NewAGC(AGCTargetDb, AGCMaxGainDb)
+	a := NewAGC(DefaultAGC)
 	x := talker(6, SampleRate*6, 0.008) // about −52 dBFS RMS
 	in := rmsOf(x)
 	for k := 0; k+128 <= len(x); k += 128 {
@@ -94,14 +94,14 @@ func TestAGCLiftsAQuietMic(t *testing.T) {
 	}
 	got := rmsOf(x[len(x)-SampleRate:])
 	t.Logf("quiet mic: %.1f dBFS in, %.1f dBFS out (gain %+.1f dB)", 20*math.Log10(in), 20*math.Log10(got), 20*math.Log10(a.Gain()))
-	if g := 20 * math.Log10(a.Gain()); g < AGCMaxGainDb-1 {
-		t.Fatalf("a −52 dBFS mic only got %+.1f dB, of the %v it may", g, AGCMaxGainDb)
+	if g := 20 * math.Log10(a.Gain()); g < DefaultAGC.MaxBoostDb-1 {
+		t.Fatalf("a −52 dBFS mic only got %+.1f dB, of the %v it may", g, DefaultAGC.MaxBoostDb)
 	}
 }
 
 // The target set live: 10 dB lower, and a few seconds later it's 10 dB quieter.
 func TestAGCRetunes(t *testing.T) {
-	a := NewAGC(AGCTargetDb, AGCMaxGainDb)
+	a := NewAGC(DefaultAGC)
 	level := func(seed int64) float64 {
 		x := talker(seed, SampleRate*5, 0.04) // about −40 dBFS: the target's in reach
 		for k := 0; k+128 <= len(x); k += 128 {
@@ -110,11 +110,48 @@ func TestAGCRetunes(t *testing.T) {
 		return 20 * math.Log10(rmsOf(x[len(x)-SampleRate:]))
 	}
 	before := level(8)
-	a.Retune(AGCTargetDb-10, AGCMaxGainDb)
+	lower := DefaultAGC
+	lower.TargetDb -= 10
+	a.Retune(lower)
 	after := level(9)
-	t.Logf("target %v dBFS: %.1f; %v: %.1f", AGCTargetDb, before, AGCTargetDb-10, after)
+	t.Logf("target %v dBFS: %.1f; %v: %.1f", DefaultAGC.TargetDb, before, lower.TargetDb, after)
 	if d := before - after; d < 8 || d > 12 {
 		t.Fatalf("retuned 10 dB lower, came out %.1f dB lower", d)
+	}
+}
+
+// A loud, peaky talker pushed for a loud target: the peaks are held to the
+// ceiling by the gain itself, so the limiter only catches the odd surprise,
+// and nothing ever goes over it.
+func TestAGCKeepsPeaksUnderTheCeiling(t *testing.T) {
+	loud := DefaultAGC
+	loud.TargetDb = -12 // asks for more than the peaks allow
+	a := NewAGC(loud)
+	x := talker(10, SampleRate*8, 0.3)
+	for i := range x {
+		// Now and then a much louder syllable, as people do.
+		if (i/(SampleRate/2))%5 == 4 {
+			x[i] *= 2.5
+		}
+	}
+	for k := 0; k+128 <= len(x); k += 128 {
+		a.Process(x[k:k+128], false, false)
+	}
+	tail := x[SampleRate*2:]
+	var peak float64
+	over := 0
+	for _, v := range tail {
+		peak = max(peak, math.Abs(float64(v)))
+		if math.Abs(float64(v)) > dbToGain(loud.CeilingDb)*1.05 {
+			over++
+		}
+	}
+	t.Logf("peak %.1f dBFS, %.2f%% of samples past the ceiling (%v dBFS)", 20*math.Log10(peak), 100*float64(over)/float64(len(tail)), loud.CeilingDb)
+	if peak > limitAt+1e-6 {
+		t.Fatalf("peak %.3f: past the limiter", peak)
+	}
+	if share := float64(over) / float64(len(tail)); share > 0.005 {
+		t.Fatalf("%.2f%% of samples past the ceiling: the gain isn't holding the peaks", 100*share)
 	}
 }
 
@@ -205,7 +242,7 @@ func BenchmarkNoise(b *testing.B) {
 }
 
 func BenchmarkGain(b *testing.B) {
-	a := NewAGC(AGCTargetDb, AGCMaxGainDb)
+	a := NewAGC(DefaultAGC)
 	x := talker(1, 128, 0.1)
 	b.ResetTimer()
 	for range b.N {
