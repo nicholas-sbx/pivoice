@@ -169,6 +169,41 @@ describe('JitterBuffer', () => {
     expect(r.played).toBeGreaterThan(0.97)
   })
 
+  it('keeps the gaps rare on a jittery network', () => {
+    const r = simulate({ seconds: 8, jitterMs: 15 })
+    expect(r.stats.concealedPct).toBeLessThan(1)
+  })
+
+  it('waits for a pause to shed a little extra buffering, instead of speeding up through speech', () => {
+    // Someone talking steadily, on time; then the buffer's target drops by 10 ms (the network calmed down).
+    const cfg: JitterConfig = { sampleRate: 48000, minMs: 30, maxMs: 80, marginMs: 2, multiplier: 1.2, stretch: 0.02, concealMs: 12, percentile: 99, windowSec: 2 }
+    const jb = new JitterBuffer(cfg)
+    const rate = () => (jb as unknown as { rate: number }).rate
+    const out = new Float32Array(128)
+    let ts = 0
+    let now = 1_000_000
+    const run = (seconds: number, level: number, watch?: (r: number) => void) => {
+      for (const end = now + seconds * 48000; now < end; now += 128) {
+        while (ts < now - 1_000_000 + 480) {
+          jb.push(ts, new Float32Array(240).fill(level), 1_000_000 + ts + 240 + 96)
+          ts += 240
+        }
+        jb.pull(out, now)
+        watch?.(rate())
+      }
+    }
+    run(2, 0.3) // talking
+    jb.configure({ minMs: 20 })
+    let most = 0
+    run(1, 0.3, r => (most = Math.max(most, Math.abs(r - 1))))
+    // Still talking: the speed (and so the pitch) didn't move.
+    expect(most).toBe(0)
+    // A pause (room tone): now it sheds the extra, faster than real time.
+    let fastest = 1
+    run(1, 0.0005, r => (fastest = Math.max(fastest, r)))
+    expect(fastest).toBeGreaterThan(1.005)
+  })
+
   it('plays samples in order, without jumps, once settled', () => {
     const r = simulate({ seconds: 4, jitterMs: 4 })
     const tail = r.delays.slice(-48000)

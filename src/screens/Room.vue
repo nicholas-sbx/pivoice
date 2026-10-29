@@ -12,6 +12,7 @@ import {
   toggleShowCode,
   toggleSpatial
 } from '../call'
+import AppBanner from '../components/AppBanner.vue'
 import ControlButton from '../components/ControlButton.vue'
 import DisplayPanel from '../components/DisplayPanel.vue'
 import Icon from '../components/Icon.vue'
@@ -159,6 +160,7 @@ onBeforeUnmount(() => {
         </button>
       </div>
     </header>
+    <AppBanner />
 
     <main class="stage">
       <PeopleGrid

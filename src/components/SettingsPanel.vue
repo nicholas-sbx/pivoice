@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { AudioEngine, type SpatialMode } from '../audio/engine'
 import { applyMicPrefs, call, getEngine, getNative, llSupported, micLevel, setAppDevices, setDtx, setOutput, setSpatial, startMicTest, stopMicTest, type TestPath } from '../call'
+import { DEFAULT_PREFS } from '../lib/prefs'
 import { isNative, native } from '../native/bridge'
 import Segmented from './Segmented.vue'
 import Icon from './Icon.vue'
@@ -124,6 +125,10 @@ const appProcessing = computed(() => [
   }
 ])
 const gatePct = computed(() => Math.round(call.prefs.noiseGate * 100))
+function resetGain() {
+  const d = DEFAULT_PREFS
+  setAppDevices({ agcTargetDb: d.agcTargetDb, agcMaxDb: d.agcMaxDb, agcCeilingDb: d.agcCeilingDb, agcRiseMs: d.agcRiseMs, agcFallMs: d.agcFallMs })
+}
 
 function meter() {
   level.value = micLevel()
@@ -298,11 +303,21 @@ onBeforeUnmount(() => {
             label="Target level"
             unit=" dBFS"
             :min="-30"
-            :max="-6"
+            :max="-10"
             :step="1"
-            hint="How loud it brings you to (the average of your speech, not its peaks). Higher is louder; the loudest settings lean on the limiter for shouts."
+            hint="How loud it brings your speech on average. Higher is louder; the peak ceiling below keeps the peaks in check either way."
             :model-value="call.prefs.agcTargetDb"
             @update:model-value="v => setAppDevices({ agcTargetDb: v })"
+          />
+          <Slider
+            label="Peak ceiling"
+            unit=" dBFS"
+            :min="-12"
+            :max="-1"
+            :step="1"
+            hint="The loudest it lets your recent peaks get. It holds the gain back rather than squash them, so lower is cleaner, higher is louder. Anything sudden past −1 dBFS is caught by the limiter."
+            :model-value="call.prefs.agcCeilingDb"
+            @update:model-value="v => setAppDevices({ agcCeilingDb: v })"
           />
           <Slider
             label="Max boost"
@@ -314,6 +329,27 @@ onBeforeUnmount(() => {
             :model-value="call.prefs.agcMaxDb"
             @update:model-value="v => setAppDevices({ agcMaxDb: v })"
           />
+          <Slider
+            label="Rise time"
+            unit=" ms"
+            :min="100"
+            :max="5000"
+            :step="100"
+            hint="How long it takes to turn you up when you get quieter. Slower sounds steadier; faster catches up sooner."
+            :model-value="call.prefs.agcRiseMs"
+            @update:model-value="v => setAppDevices({ agcRiseMs: v })"
+          />
+          <Slider
+            label="Fall time"
+            unit=" ms"
+            :min="10"
+            :max="500"
+            :step="10"
+            hint="How long it takes to turn you down when you get loud. Fast keeps a sudden loud bit from blasting; too fast can pump."
+            :model-value="call.prefs.agcFallMs"
+            @update:model-value="v => setAppDevices({ agcFallMs: v })"
+          />
+          <button type="button" class="reset-gain" @click="resetGain">Reset gain control</button>
         </template>
         <p class="note spaced">All off, the app doesn’t touch your mic at all, and none of it costs anything.</p>
       </template>
@@ -561,6 +597,19 @@ select {
 }
 .note.bad {
   color: var(--red);
+}
+.reset-gain {
+  margin: 4px 0 8px;
+  border: 0;
+  padding: 0;
+  background: none;
+  color: var(--text-link);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+.reset-gain:hover {
+  text-decoration: underline;
 }
 .note.spaced {
   margin: 4px 0 12px;

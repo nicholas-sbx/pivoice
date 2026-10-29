@@ -17,8 +17,10 @@ allows. Everything is in samples:
 
 and the sample that should be playing at the start of a block is
 now − base − target − block. Playback steers toward that by changing speed
-by up to ±stretch, conceals gaps by fading a repeat of the last frame, and
-goes idle after an underrun so the next talkspurt starts fresh.
+by up to ±stretch (only in the quiet between words, or while someone's
+talking when it must: see jitter.ts), conceals gaps by fading a repeat of
+the last frame, and goes idle after an underrun so the next talkspurt
+starts fresh.
 
 Not safe for concurrent use: the audio callback owns it. Frames reach it
 through a channel (see engine).
@@ -61,6 +63,12 @@ type arrivalRec struct{ at, off float64 }
 
 const idleAfterMs = 80
 
+// QuietRMS: below this (about −50 dBFS) the last block played counts as quiet, where a change of speed can't be heard.
+const QuietRMS = 0.003
+
+// The most the playback speed moves in one block: ±2% takes about 50 ms to reach.
+const rateGlide = 0.001
+
 type JitterBuffer struct {
 	cfg JitterConfig
 	// By value, in a slice that's reused: Push and Pull allocate nothing once it's warm.
@@ -81,6 +89,9 @@ type JitterBuffer struct {
 	lastGoodEnd float64
 	emptySince  float64
 	empty       bool
+	// How loud the last block played was (RMS), and the speed now (1 is normal), gliding to what steering wants.
+	lastRMS float64
+	rate    float64
 	// Counters since the last Stats call.
 	late, concealed, played, underruns int
 	waitSum                            float64
@@ -90,7 +101,7 @@ type JitterBuffer struct {
 }
 
 func NewJitterBuffer(cfg JitterConfig) *JitterBuffer {
-	return &JitterBuffer{cfg: cfg, estimatedAt: math.Inf(-1)}
+	return &JitterBuffer{cfg: cfg, estimatedAt: math.Inf(-1), rate: 1}
 }
 
 func (j *JitterBuffer) Configure(cfg JitterConfig) { j.cfg = cfg }
@@ -165,6 +176,7 @@ func (j *JitterBuffer) Pull(out []float32, now float64) {
 	n := float64(len(out))
 	if !j.hasBase {
 		clear(out)
+		j.lastRMS = 0
 		return
 	}
 	desired := now - j.base - j.TargetSamples() - n
@@ -174,10 +186,12 @@ func (j *JitterBuffer) Pull(out []float32, now float64) {
 		j.dropOlderThan(desired - j.samples(j.cfg.MaxMs))
 		if len(j.frames) == 0 || j.frames[0].start > desired {
 			clear(out)
+			j.lastRMS = 0
 			return
 		}
 		first, last := j.frames[0], j.frames[len(j.frames)-1]
 		j.pos = math.Min(math.Max(first.start, desired), last.start)
+		j.rate = 1
 		j.playing = true
 		j.hasCursor = false
 		j.empty = false
@@ -190,7 +204,18 @@ func (j *JitterBuffer) Pull(out []float32, now float64) {
 		err = 0
 	}
 	k := j.samples(20)
-	rate := 1 - math.Max(-1, math.Min(1, err/k))*j.cfg.Stretch
+	stretch := j.cfg.Stretch
+	if j.lastRMS >= QuietRMS {
+		// Talking: too little buffered (a gap's coming) steers as ever; far too much at a quarter; a little too much waits.
+		if err < -k {
+			stretch /= 4
+		} else if err <= j.samples(1) {
+			stretch = 0
+		}
+	}
+	want := 1 - math.Max(-1, math.Min(1, err/k))*stretch
+	j.rate += math.Max(-rateGlide, math.Min(rateGlide, want-j.rate))
+	rate := j.rate
 
 	for i := range out {
 		if !j.playing {
@@ -211,6 +236,11 @@ func (j *JitterBuffer) Pull(out []float32, now float64) {
 			j.pos += rate
 		}
 	}
+	var sum float64
+	for _, v := range out {
+		sum += float64(v) * float64(v)
+	}
+	j.lastRMS = math.Sqrt(sum / n)
 	if j.playing {
 		j.dropOlderThan(j.pos - j.samples(5))
 	}

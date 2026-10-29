@@ -13,16 +13,25 @@ type Settings struct {
 	GateGraceMs   float32
 	// RNNoise's own lookahead: a frame (10 ms) more delay, for cleaner starts of words.
 	NoiseLookahead bool
-	// Automatic gain's target (dBFS RMS) and the most it may boost (dB); 0, 0 means the defaults.
-	GainTargetDb float32
-	GainMaxDb    float32
+	// Automatic gain's settings; any left at 0 is the default.
+	GainTuning AGCTuning
 }
 
-func (s Settings) gainTuning() (target, most float64) {
-	if s.GainTargetDb == 0 && s.GainMaxDb == 0 {
-		return AGCTargetDb, AGCMaxGainDb
+func (s Settings) gainTuning() AGCTuning {
+	t, d := s.GainTuning, DefaultAGC
+	pick := func(v, def float64) float64 {
+		if v == 0 {
+			return def
+		}
+		return v
 	}
-	return float64(s.GainTargetDb), float64(s.GainMaxDb)
+	return AGCTuning{
+		TargetDb:   pick(t.TargetDb, d.TargetDb),
+		MaxBoostDb: pick(t.MaxBoostDb, d.MaxBoostDb),
+		CeilingDb:  pick(t.CeilingDb, d.CeilingDb),
+		Rise:       pick(t.Rise, d.Rise),
+		Fall:       pick(t.Fall, d.Fall),
+	}
 }
 
 // Active: anything to do at all.
@@ -96,10 +105,10 @@ func NewChain(s Settings) (*Chain, error) {
 // chain when a stage goes on or off (see SameStages).
 func (c *Chain) Retune(s Settings) {
 	c.set.GateThreshold, c.set.GateGraceMs = s.GateThreshold, s.GateGraceMs
-	if c.agc != nil && (s.GainTargetDb != c.set.GainTargetDb || s.GainMaxDb != c.set.GainMaxDb) {
+	if c.agc != nil && s.GainTuning != c.set.GainTuning {
 		c.agc.Retune(s.gainTuning())
 	}
-	c.set.GainTargetDb, c.set.GainMaxDb = s.GainTargetDb, s.GainMaxDb
+	c.set.GainTuning = s.GainTuning
 }
 
 // SameStages: whether a chain made for a would do for b, retuned.

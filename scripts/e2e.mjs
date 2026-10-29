@@ -74,6 +74,14 @@ try {
   await alice.click('button[aria-label="Hide room code"]')
   if (!/^[A-Z0-9]{6}$/.test(code)) throw new Error('bad room code ' + code)
   ok(`Alice made room ${code}`)
+
+  // On a computer there's an app for, the website offers it under the top bar; the X puts that away for good.
+  await alice.waitForSelector('.banner:has-text("Pivoice app")', { timeout: 5_000 }).catch(() => {
+    throw new Error('no app banner on a desktop browser')
+  })
+  await alice.click('.banner button[aria-label="Dismiss"]')
+  if (await alice.$('.banner')) throw new Error('the app banner stayed after dismissing it')
+  ok('the website offers the app under the top bar, and the X dismisses it')
   await expectSeats(alice, 1, 'Alice alone')
 
   // Mic test, each path, while alone: it deafens her, plays her back, says how long it took.
@@ -85,8 +93,9 @@ try {
     const off = await alice.$$eval('.pill, .panel, .tip', els =>
       els
         .map(e => ({ e, r: e.getBoundingClientRect() }))
-        .filter(({ r }) => Math.abs(r.left - Math.round(r.left)) > 0.01 || Math.abs(r.top - Math.round(r.top)) > 0.01)
-        .map(({ e, r }) => `${e.className} at ${r.left.toFixed(2)}, ${r.top.toFixed(2)}`)
+        .filter(({ e, r }) => Math.abs(r.left - Math.round(r.left)) > 0.01 || Math.abs(r.top - Math.round(r.top)) > 0.01 || getComputedStyle(e).translate !== 'none')
+        // (A translate would put it there, but WebKit, the app's window, shifts a translated layer and smears it anyway.)
+        .map(({ e, r }) => `${e.className} at ${r.left.toFixed(2)}, ${r.top.toFixed(2)}, translate ${getComputedStyle(e).translate}`)
     )
     if (off.length) throw new Error(`blurry at ${w}px wide: ${off.join('; ')}`)
   }
@@ -448,6 +457,7 @@ try {
       throw new Error(`phone: expected ${n} tiles, saw ${await phone.$$eval('.tile', e => e.length)}`)
     })
     if (await phone.$('.table')) throw new Error('phone: the table showed with spatial audio off')
+    if (await phone.$('.banner')) throw new Error('phone: offered the desktop app on a phone')
     if (await phone.$('button[aria-label="Pop out table"]')) throw new Error('phone: offered a pop-out window on a phone')
     const wide = await phone.evaluate(() => document.documentElement.scrollWidth > innerWidth)
     if (wide) throw new Error('phone: the page is wider than the screen')
