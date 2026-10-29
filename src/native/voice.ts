@@ -1,4 +1,5 @@
-import { SPEAKING_HOLD_MS, SPEAKING_RMS, type MicProblem } from '../audio/engine'
+import { ActivityTracker, type Activity } from '../audio/activity'
+import type { MicProblem } from '../audio/engine'
 import type { Member } from '../net/protocol'
 import type { NativeBridge } from './bridge'
 import type { AppConfig, AppDevice, AppStats, AudioInfo } from './protocol'
@@ -14,7 +15,7 @@ export class NativeVoice {
   info: AudioInfo | null = null
   private micOn = true
   private self = 0
-  private loudAt = new Map<string, number>()
+  private activityOf = new ActivityTracker()
   private angles = new Map<string, number>()
   private off: () => void
 
@@ -23,8 +24,8 @@ export class NativeVoice {
       if (m.t === 'levels') {
         const now = performance.now()
         this.self = m.self
-        if (m.self > SPEAKING_RMS) this.loudAt.set('', now)
-        for (const [id, v] of Object.entries(m.remotes)) if (v > SPEAKING_RMS) this.loudAt.set(id, now)
+        this.activityOf.hear('', m.self, now)
+        for (const [id, v] of Object.entries(m.remotes)) this.activityOf.hear(id, v, now)
       } else if (m.t === 'audio' && m.on) this.info = m.info ?? null
     })
   }
@@ -71,16 +72,13 @@ export class NativeVoice {
     this.bridge.send({ t: 'peer', id, angle })
   }
 
-  /** Who's talking right now, the same way AudioEngine.speaking decides it. `selfId` counts only while your mic's on. */
-  speaking(selfId: string, now = performance.now()): Set<string> {
-    const out = new Set<string>()
-    for (const [id, at] of this.loudAt) {
-      if (now - at >= SPEAKING_HOLD_MS) continue
-      if (id === '') {
-        if (this.micOn) out.add(selfId)
-      } else out.add(id)
+  /** Who's talking, and who's making any sound at all, the same way AudioEngine.activity decides it. `selfId` counts only while your mic's on. */
+  activity(selfId: string, now = performance.now()): Activity {
+    const a = this.activityOf.read(now, id => id !== '' || this.micOn)
+    for (const s of [a.speaking, a.audible]) {
+      if (s.delete('')) s.add(selfId)
     }
-    return out
+    return a
   }
 
   /** Your microphone level, 0–1, for the meter (as AudioEngine.micLevel scales it). */

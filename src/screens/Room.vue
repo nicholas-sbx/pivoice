@@ -20,6 +20,7 @@ import SettingsPanel from '../components/SettingsPanel.vue'
 import UserMenu from '../components/UserMenu.vue'
 import { isNative } from '../native/bridge'
 import { useCompact } from '../lib/viewport'
+import { vSnap } from '../lib/snap'
 
 const settingsOpen = ref(false)
 const displayOpen = ref(false)
@@ -35,7 +36,7 @@ const spatialLabel = computed(() =>
   call.prefs.spatial === 'off'
     ? 'Spatial Audio: Off'
     : call.prefs.spatial === 'hrtf'
-      ? `Spatial Audio: ${isNative ? 'Stereo + ITD' : 'HRTF'}`
+      ? `Spatial Audio: ${isNative ? 'Binaural' : 'HRTF'}`
       : 'Spatial Audio: Stereo'
 )
 const isMac = /Mac|iPhone|iPad/.test(navigator.platform)
@@ -122,6 +123,7 @@ onBeforeUnmount(() => removeEventListener('keydown', onKey))
         :members="call.members"
         :self-id="call.selfId"
         :speaking="call.speaking"
+        :audible="call.audible"
         :self-muted="selfMuted"
         :self-deafened="call.deafened"
         :silenced="call.silenced"
@@ -135,6 +137,7 @@ onBeforeUnmount(() => removeEventListener('keydown', onKey))
         :members="call.members"
         :self-id="call.selfId"
         :speaking="call.speaking"
+        :audible="call.audible"
         :self-muted="selfMuted"
         :self-deafened="call.deafened"
         :code="call.prefs.showCode ? call.code : ''"
@@ -146,7 +149,7 @@ onBeforeUnmount(() => removeEventListener('keydown', onKey))
         @menu="(id, x, y) => (menu = { id, x, y })"
       />
 
-      <div class="pill" role="toolbar" aria-label="Call controls">
+      <div v-snap class="pill" role="toolbar" aria-label="Call controls">
         <ControlButton
           icon="mic"
           :label="selfMuted ? 'Unmute' : 'Mute'"

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import Icon from './Icon.vue'
 import type { IconName } from './icons'
+import { vSnap } from '../lib/snap'
 
 withDefaults(
   defineProps<{
@@ -29,7 +30,7 @@ defineEmits<{ click: [MouseEvent] }>()
   >
     <Icon :name="icon" :size="danger ? 26 : 22" :slash="off" />
     <span class="tip-wrap">
-      <span class="tip" role="tooltip">
+      <span v-snap class="tip" role="tooltip">
         {{ label }}
         <kbd v-if="shortcut">{{ shortcut }}</kbd>
       </span>

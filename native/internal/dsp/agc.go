@@ -7,29 +7,54 @@ import "math"
 // lookahead, so it adds no delay. Each block it:
 //
 //   - tracks the noise floor (falls at once, rises slowly) and, while
-//     you're talking, your speech level (about half a second's memory);
-//   - aims the gain at the target over that level, between −6 and +24 dB,
-//     cutting quickly when you get loud (50 ms) and lifting slowly (2 s),
-//     and only changing it while you talk, so silence isn't pumped up;
+//     you're talking, your speech level (a third of a second's memory);
+//   - aims the gain at the target over that level, from −6 dB up to the
+//     most it may boost, cutting quickly when you get loud (50 ms) and
+//     lifting within a second, and only changing it while you talk, so
+//     silence isn't pumped up;
 //   - soft-limits the result, so a sudden shout is rounded off rather
 //     than clipped.
+//
+// The target and the most it may boost are yours to set (Retune, live).
 type AGC struct {
 	noise  float64
 	speech float64
 	gain   float64
+	target float64
+	most   float64
 }
 
 const (
-	agcTarget  = 0.1   // −20 dBFS RMS: speech that sits well in the mix
-	agcMaxGain = 15.85 // +24 dB
-	agcMinGain = 0.5   // −6 dB
-	agcSpeech  = 0.4   // s, speech level memory
-	agcCut     = 0.05  // s
-	agcLift    = 2.0   // s
-	agcLimit   = 0.9
+	// Defaults: −16 dBFS RMS, about as loud as browsers' own gain control
+	// leaves people, and up to +30 dB for a quiet mic.
+	AGCTargetDb  = -16
+	AGCMaxGainDb = 30
+	agcMinGain   = 0.5 // −6 dB
+	agcSpeech    = 0.3 // s, speech level memory
+	agcCut       = 0.05
+	agcLift      = 0.8
+	agcLimit     = 0.9
+	// Without a voice detector, a block is speech when it's this far over the noise floor (10 dB)…
+	agcOverNoise = 3.16
+	// …and above digital near-silence (−66 dBFS), so a quiet mic still counts.
+	agcFloor = 0.0005
 )
 
-func NewAGC() *AGC { return &AGC{noise: 1e-4, speech: agcTarget, gain: 1} }
+func dbToGain(db float64) float64 { return math.Pow(10, db/20) }
+
+// NewAGC aims at targetDb (dBFS RMS), boosting by up to maxDb.
+func NewAGC(targetDb, maxDb float64) *AGC {
+	a := &AGC{noise: 1e-4, gain: 1}
+	a.Retune(targetDb, maxDb)
+	a.speech = a.target
+	return a
+}
+
+// Retune the target and the most it may boost, keeping where it's got to.
+func (a *AGC) Retune(targetDb, maxDb float64) {
+	a.target = dbToGain(max(-30, min(-6, targetDb)))
+	a.most = dbToGain(max(0, min(40, maxDb)))
+}
 
 func tc(n int, seconds float64) float64 { return 1 - math.Exp(-float64(n)/(seconds*SampleRate)) }
 
@@ -50,14 +75,14 @@ func (a *AGC) Process(x []float32, voice bool, know bool) {
 	} else {
 		a.noise += (r - a.noise) * tc(n, 5)
 	}
-	talking := r > 0.003 && r > 4*a.noise
+	talking := r > agcFloor && r > agcOverNoise*a.noise
 	if know {
-		talking = voice && r > 0.001
+		talking = voice && r > agcFloor
 	}
 	from := a.gain
 	if talking {
 		a.speech += (r - a.speech) * tc(n, agcSpeech)
-		want := min(agcMaxGain, max(agcMinGain, agcTarget/max(a.speech, 1e-6)))
+		want := min(a.most, max(agcMinGain, a.target/max(a.speech, 1e-6)))
 		if want < a.gain {
 			a.gain += (want - a.gain) * tc(n, agcCut)
 		} else {

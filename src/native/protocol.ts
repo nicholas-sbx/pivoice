@@ -39,6 +39,9 @@ export interface ProcessingConfig {
   gateGraceMs: number
   /** RNNoise's own lookahead: 10 ms more delay, for cleaner starts of words. */
   noiseLookahead: boolean
+  /** Automatic gain: the level it aims for (dBFS RMS) and the most it may boost (dB). */
+  gainTargetDb: number
+  gainMaxDb: number
 }
 
 /** One of our signals' bodies, as the app sends it: the page adds `kind` and `link` for the room. */

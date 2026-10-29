@@ -2,6 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { MAX_VOLUME } from '../audio/engine'
 import { call, setSilenced, setVolume } from '../call'
+import { vSnap } from '../lib/snap'
 
 /** Right-click on someone: Discord's user context menu, cut down to what a voice call needs. */
 
@@ -51,7 +52,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div ref="el" class="menu" role="menu" :style="{ left: pos.left + 'px', top: pos.top + 'px' }" @contextmenu.prevent>
+  <div ref="el" v-snap class="menu" role="menu" :style="{ left: pos.left + 'px', top: pos.top + 'px' }" @contextmenu.prevent>
     <div class="who">{{ member?.name ?? 'Left the call' }}</div>
     <div class="sep" />
     <div class="item slider">

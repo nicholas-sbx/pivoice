@@ -29,6 +29,9 @@ export interface Prefs {
   noiseGraceMs: number
   /** RNNoise's lookahead: off by default, since it's 10 ms more delay. */
   noiseLookahead: boolean
+  /** The app's automatic gain: the level it brings you to (dBFS RMS), and the most it may boost a quiet mic (dB). */
+  agcTargetDb: number
+  agcMaxDb: number
   /** The room code is hidden until you ask to see it (screen sharing, streaming). */
   showCode: boolean
   /** Ping beside everyone's name. */
@@ -73,6 +76,8 @@ export const DEFAULT_PREFS: Prefs = {
   noiseGate: 0.4,
   noiseGraceMs: 400,
   noiseLookahead: false,
+  agcTargetDb: -16,
+  agcMaxDb: 30,
   showCode: false,
   showPing: true,
   showRoute: false,
@@ -95,6 +100,8 @@ export function loadPrefs(): Prefs {
     if (typeof raw.appOutputId === 'string') p.appOutputId = raw.appOutputId
     if (typeof raw.noiseGate === 'number' && raw.noiseGate >= 0 && raw.noiseGate <= 1) p.noiseGate = raw.noiseGate
     if (typeof raw.noiseGraceMs === 'number' && raw.noiseGraceMs >= 0 && raw.noiseGraceMs <= 2000) p.noiseGraceMs = raw.noiseGraceMs
+    if (typeof raw.agcTargetDb === 'number' && raw.agcTargetDb >= -30 && raw.agcTargetDb <= -6) p.agcTargetDb = raw.agcTargetDb
+    if (typeof raw.agcMaxDb === 'number' && raw.agcMaxDb >= 0 && raw.agcMaxDb <= 40) p.agcMaxDb = raw.agcMaxDb
     for (const k of ['echoCancellation', 'noiseSuppression', 'autoGainControl', 'appExclusive', 'noiseLookahead', 'showCode', 'showPing', 'showRoute'] as const) {
       if (typeof raw[k] === 'boolean') p[k] = raw[k]
     }

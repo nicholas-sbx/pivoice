@@ -6,6 +6,7 @@ import type { Member } from '../net/protocol'
 import { pingLevel, routeLabel, type LinkStats } from '../net/stats'
 import Avatar from './Avatar.vue'
 import Icon from './Icon.vue'
+import { vSnap } from '../lib/snap'
 
 /**
  * Everyone as tiles, for small screens while spatial audio is off (seats
@@ -18,6 +19,8 @@ const props = defineProps<{
   members: Member[]
   selfId: string
   speaking: Set<string>
+  /** Making any sound at all: a thin edge, under the full one for speaking. */
+  audible: Set<string>
   selfMuted: boolean
   selfDeafened: boolean
   silenced: Record<string, boolean>
@@ -60,6 +63,7 @@ const isSelf = (id: string) => id === props.selfId
 const mutedOf = (m: Member) => (isSelf(m.id) ? props.selfMuted || props.selfDeafened : m.muted)
 const deafenedOf = (m: Member) => (isSelf(m.id) ? props.selfDeafened : m.deafened)
 const speakingOf = (m: Member) => props.speaking.has(m.id) && !mutedOf(m) && !props.silenced[m.id]
+const audibleOf = (m: Member) => props.audible.has(m.id) && !mutedOf(m) && !props.silenced[m.id]
 function moodOf(m: Member): 'idle' | 'talking' | 'deafened' | 'away' {
   if (m.away) return 'away'
   if (deafenedOf(m)) return 'deafened'
@@ -93,8 +97,9 @@ function mouthToEar(s: LinkStats): string {
     <div
       v-for="m in people"
       :key="m.id"
+      v-snap
       class="seat tile"
-      :class="{ self: isSelf(m.id), speaking: speakingOf(m), away: m.away, silenced: silenced[m.id], row: layout.row }"
+      :class="{ self: isSelf(m.id), speaking: speakingOf(m), audible: audibleOf(m) && !speakingOf(m), away: m.away, silenced: silenced[m.id], row: layout.row }"
       :style="{ width: layout.w + 'px', height: layout.h + 'px' }"
       :data-member="m.id"
       @contextmenu="onMenu(m.id, $event)"
@@ -163,6 +168,10 @@ function mouthToEar(s: LinkStats): string {
 }
 .tile:not(.self) {
   cursor: pointer;
+}
+/* Something's coming through, but not speech: a thin green edge. */
+.tile.audible {
+  box-shadow: inset 0 0 0 1px var(--green);
 }
 .tile.speaking {
   box-shadow: inset 0 0 0 2px var(--green);
