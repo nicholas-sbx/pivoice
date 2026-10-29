@@ -1,6 +1,7 @@
 import type { OutputBuffer, SpatialMode } from '../audio/engine'
 import { llDefaults, sanitizeLL, type LLConfig } from '../audio/ll/config'
 import { isNative } from '../native/bridge'
+import { onMobileDevice } from '../native/downloads'
 import type { OverlayAnchor } from '../native/protocol'
 
 /** The app's overlay: whether it's up during calls, where (see OverlayPlace), and how faded. */
@@ -31,7 +32,13 @@ export interface Prefs {
   appOutputId: string
   /** The app on Windows: WASAPI exclusive mode (smallest buffers; nothing else can play meanwhile). */
   appExclusive: boolean
-  // All off by default: they each add latency, and everyone's on headphones.
+  /**
+   * Noise suppression and gain control are on by default: on the website
+   * the browser's own, in the app ours (RNNoise and agc.go; the app never
+   * asks its webview for a mic). Echo cancellation is off on a computer,
+   * where it costs latency and people are on headphones, and on for a
+   * phone (MOBILE_MIC), which is usually on its speaker.
+   */
   echoCancellation: boolean
   noiseSuppression: boolean
   autoGainControl: boolean
@@ -82,8 +89,14 @@ const KEY = 'pv.prefs'
  * Bumped when a default changes for everyone who already has prefs saved
  * (which is everyone who's been in a call: all of them are saved). 1: DTX
  * went from on to off by default, so a saved `dtx` from before doesn't count.
+ * 2: noise suppression and gain control went on by default, and echo
+ * cancellation on phones. Every pref is saved, chosen or not, so a saved
+ * "off" from before can't be told from the old default: those don't count.
  */
-const PREFS_REV = 1
+const PREFS_REV = 2
+
+/** What a phone starts with on top of everyone's defaults (see Prefs). */
+const MOBILE_MIC = { echoCancellation: true } as const
 /**
  * The gain control's settings revision. 1: it got a peak ceiling and a
  * real limiter, and its default target went from −16 to −20 dBFS. A target
@@ -103,8 +116,8 @@ export const DEFAULT_PREFS: Prefs = {
   appOutputId: '',
   appExclusive: false,
   echoCancellation: false,
-  noiseSuppression: false,
-  autoGainControl: false,
+  noiseSuppression: true,
+  autoGainControl: true,
   noiseGate: 0.4,
   noiseGraceMs: 400,
   noiseLookahead: false,
@@ -143,7 +156,9 @@ function sanitizeOverlay(raw: unknown): OverlayPrefs {
 export function loadPrefs(): Prefs {
   try {
     const raw = JSON.parse(localStorage.getItem(KEY) ?? '{}') as Partial<Prefs>
-    const p = { ...DEFAULT_PREFS, ll: sanitizeLL(raw.ll, isNative), overlay: sanitizeOverlay(raw.overlay) }
+    const rev = typeof raw.rev === 'number' ? raw.rev : 0
+    const phone = onPhone()
+    const p = { ...DEFAULT_PREFS, ...(phone ? MOBILE_MIC : {}), ll: sanitizeLL(raw.ll, isNative), overlay: sanitizeOverlay(raw.overlay) }
     if (typeof raw.name === 'string') p.name = raw.name
     if (raw.spatial === 'off' || raw.spatial === 'stereo' || raw.spatial === 'hrtf') p.spatial = raw.spatial
     if (raw.lastSpatial === 'stereo' || raw.lastSpatial === 'hrtf') p.lastSpatial = raw.lastSpatial
@@ -162,14 +177,24 @@ export function loadPrefs(): Prefs {
     if (inRange(raw.agcCeilingDb, -20, -1)) p.agcCeilingDb = raw.agcCeilingDb
     if (inRange(raw.agcRiseMs, 50, 10000)) p.agcRiseMs = raw.agcRiseMs
     if (inRange(raw.agcFallMs, 5, 2000)) p.agcFallMs = raw.agcFallMs
-    for (const k of ['echoCancellation', 'noiseSuppression', 'autoGainControl', 'appExclusive', 'noiseLookahead', 'showCode', 'showPing', 'showRoute', 'keepAwake', 'appBannerDismissed'] as const) {
+    for (const k of ['appExclusive', 'noiseLookahead', 'showCode', 'showPing', 'showRoute', 'keepAwake', 'appBannerDismissed'] as const) {
       if (typeof raw[k] === 'boolean') p[k] = raw[k]
     }
-    if (typeof raw.dtx === 'boolean' && raw.rev === PREFS_REV) p.dtx = raw.dtx
+    // A saved choice only counts if it was made with the default it overrides in place.
+    for (const k of ['noiseSuppression', 'autoGainControl'] as const) {
+      if (rev >= 2 && typeof raw[k] === 'boolean') p[k] = raw[k]
+    }
+    if ((rev >= 2 || !phone) && typeof raw.echoCancellation === 'boolean') p.echoCancellation = raw.echoCancellation
+    if (typeof raw.dtx === 'boolean' && rev >= 1) p.dtx = raw.dtx
     return p
   } catch {
-    return { ...DEFAULT_PREFS, ll: llDefaults(isNative), overlay: { ...DEFAULT_PREFS.overlay } }
+    return { ...DEFAULT_PREFS, ...(onPhone() ? MOBILE_MIC : {}), ll: llDefaults(isNative), overlay: { ...DEFAULT_PREFS.overlay } }
   }
+}
+
+/** A phone or a tablet, on the website (the app only runs on computers). */
+function onPhone(): boolean {
+  return !isNative && onMobileDevice()
 }
 
 export function savePrefs(p: Prefs) {

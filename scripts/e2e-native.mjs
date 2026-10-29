@@ -155,10 +155,11 @@ try {
   ok("Bob's card for Ada: " + one(await cardFor(bob, 'Ada')))
   ok("Ada's card for Bob: " + one(await cardFor(ada, 'Bob')))
 
-  // Ada turns on the app's echo cancellation and gain control: Bob still hears her.
+  // The app's own noise suppression and gain control are on by default, echo cancellation off; Ada turns that on too: Bob still hears her.
   await ada.click('button[aria-label="Voice Settings"]')
+  const sw = label => ada.$eval(`.switch-row:has-text("${label}") input`, e => e.checked)
+  if (!(await sw('Automatic Gain Control')) || (await sw('Echo Cancellation'))) throw new Error("the app's processing should start with gain control on and echo cancellation off")
   await ada.click('text=Echo Cancellation')
-  await ada.click('text=Automatic Gain Control')
   await ada.click('button[aria-label="Voice Settings"]')
   await ada.click('button[aria-label="Mute"]')
   await ada.click('button[aria-label="Unmute"]')
@@ -167,7 +168,6 @@ try {
   ok("with Ada's processing on: " + one(await cardFor(bob, 'Ada')))
   await ada.click('button[aria-label="Voice Settings"]')
   await ada.click('text=Echo Cancellation')
-  await ada.click('text=Automatic Gain Control')
   await ada.click('button[aria-label="Voice Settings"]')
 
   // Ada turns spatial audio on (the app's Binaural: the spherical head): she still hears Bob.
