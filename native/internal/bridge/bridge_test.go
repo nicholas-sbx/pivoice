@@ -131,3 +131,59 @@ func TestOtherProtocolOnlyGetsHello(t *testing.T) {
 		t.Fatal("opened the sound card for a page on another protocol")
 	}
 }
+
+type fakeOverlay struct {
+	calls chan string
+}
+
+func (f *fakeOverlay) Supported() bool { return true }
+func (f *fakeOverlay) Show(p proto.OverlayPlace) error {
+	f.calls <- "show " + p.Anchor
+	return nil
+}
+func (f *fakeOverlay) Hide()                   { f.calls <- "hide" }
+func (f *fakeOverlay) Reset()                  { f.calls <- "reset" }
+func (f *fakeOverlay) State(r json.RawMessage) { f.calls <- "state " + string(r) }
+func (f *fakeOverlay) Look(r json.RawMessage)  { f.calls <- "look " + string(r) }
+func (f *fakeOverlay) Levels(proto.Levels)     {}
+func (f *fakeOverlay) Monitors() proto.Monitors {
+	return proto.Monitors{T: "monitors", Placeable: true}
+}
+
+// The page that said hello can show the overlay and tell it what to draw; it's told the overlay's there.
+func TestOverlay(t *testing.T) {
+	b, url := serve(t)
+	ov := &fakeOverlay{calls: make(chan string, 16)}
+	b.Overlay = ov
+	c, _, err := dial(t, url, site)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.CloseNow()
+	send(t, c, proto.In{T: "overlay", Op: "show", Place: &proto.OverlayPlace{Anchor: "top"}})
+	send(t, c, proto.In{T: "hello", Token: b.Token, Site: site, Protocol: proto.Protocol})
+	m, err := read(c)
+	if err != nil || m["t"] != "hello" || m["overlay"] != true {
+		t.Fatalf("hello: %v %v", m, err)
+	}
+	if got := <-ov.calls; got != "reset" {
+		t.Fatalf("a fresh page should reset the overlay first, got %q", got)
+	}
+	send(t, c, proto.In{T: "overlay", Op: "show", Place: &proto.OverlayPlace{Anchor: "bottom-left"}})
+	send(t, c, proto.In{T: "overlay", Op: "state", State: json.RawMessage(`{"selfId":"me"}`)})
+	send(t, c, proto.In{T: "monitors"})
+	for _, want := range []string{"show bottom-left", `state {"selfId":"me"}`} {
+		if got := <-ov.calls; got != want {
+			t.Fatalf("got %q, want %q (nothing before hello should have got through)", got, want)
+		}
+	}
+	for _, want := range []string{"overlay", "monitors"} {
+		m, err := read(c)
+		for err == nil && m["t"] != want {
+			m, err = read(c)
+		}
+		if err != nil {
+			t.Fatalf("no %s answer: %v", want, err)
+		}
+	}
+}

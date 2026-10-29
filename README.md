@@ -45,7 +45,8 @@ dev:worker` start just one half.
 The e2e run makes a room, has people join, checks everyone hears everyone
 (the fake mic beeps, which lights up speaking rings on the other screens),
 mutes, has whoever made the room leave and checks the call carries on, joins
-someone new after that, and fills the table to six. It needs Playwright
+someone new after that, fills the table to six and pops it out into its own
+window. It needs Playwright
 installed (`npm i -g playwright && npx playwright install chromium`).
 `SHOTS_DIR=docs/screenshots npm run e2e` retakes the screenshots above.
 
@@ -88,6 +89,18 @@ across the screen. The layout keeps clear of notches and the home bar, and
 nothing on the page is wider than the screen (a phone would zoom the whole
 page out to fit it).
 
+**Pop-out table.** The pop-out button in the top bar opens the table in its
+own small always-on-top window, so you can see where people sit and who's
+talking while you're in something else, with mute, deafen, spatial audio and
+hang up under it (and `Ctrl+Shift+M` / `D` working there too). It's a
+miniature of the same table: the same seats, from the same seating, so it's
+never out of step with what you hear. It uses the browser's Document
+Picture-in-Picture window, so it's there in Chrome and Edge 116+ and recent
+Firefox, on a desktop, and only in the website: not on a phone, and not in
+the app, which has a real overlay instead (see [The overlay](#the-overlay)).
+The window's own animation frames drive the seats while the page is hidden.
+Close it from its own window or with the button, or leave the call.
+
 **Call controls.** A floating pill at the bottom: mute (`Ctrl+Shift+M`),
 deafen (`Ctrl+Shift+D`), spatial audio, voice settings, disconnect. Like
 Discord, deafening mutes you too and unmuting undeafens you.
@@ -128,8 +141,11 @@ to show it and to copy it, so you can screen share without giving the room
 away. **Copy Invite** copies the link without showing it. The code shows in
 the middle of the table only while you have it revealed.
 
-**Display settings** (the gear in the top bar). **Show ping** (on) and **Show
-audio route** (off). The route card under each person shows how their audio
+**Display settings** (the gear in the top bar). **Show ping** (on), **Show
+audio route** (off) and **Keep screen awake** (on: while you're in a room the
+page asks the browser's Wake Lock for the screen, so a phone on speaker
+doesn't lock and cut the audio; it asks again when the page is shown after
+being hidden, and says nothing if the browser can't or won't). The route card under each person shows how their audio
 reaches you (same network, direct peer to peer, or relayed through a TURN
 server, and which one), the transport, codec and bitrate, a mouth-to-ear
 estimate with its breakdown (mic, codec, network, jitter buffer, playout),
@@ -166,9 +182,18 @@ The motion is done in JavaScript: each seat's angle is a critically damped
 spring, stepped every animation frame, and it moves along the table's edge,
 not in a straight line across it. A change halfway through a move keeps the
 seat's speed, so it bends toward its new spot instead of restarting. Because
-the angle is known every frame, the spatial audio reads it directly. The loop
-stops when everything is still. With reduced motion on, seats jump straight
-to where they're going.
+the angle is known every frame, the spatial audio reads it directly.
+
+The seating is one model for the whole call ([`src/lib/seating.ts`](src/lib/seating.ts)),
+not a part of the table you look at: it follows the roster, sends each angle
+to the audio itself whenever it changes, and the table (and the pop-out below)
+only draws what it says. It steps on animation frames from a window that's
+visible, and stops when everything is still. When none is (a hidden tab, a
+minimised window: browsers pause animation frames there), nobody could see
+the slide, so every seat jumps to where it's going and the final angles go
+out at once. Someone who joins while you're in another tab is heard from
+their seat straight away, not once you look back. With reduced motion on,
+seats jump straight to where they're going.
 
 ### Audio and latency
 
@@ -510,6 +535,68 @@ picks AVX2 or SSE4.1 when it starts, on x86-64.
   pinned sources (a checksum for RNNoise's release, a commit for
   SpeexDSP's tag) into the binary, as PortAudio and Opus are.
 
+### The overlay
+
+In the app, the button in the top bar puts the table over everything else on
+your screen instead: small, see-through, and with clicks going straight
+through it to whatever's underneath, so you can see where everyone sits
+(and who's talking) while you're in a game or anything else, and hear them
+from there. It stays switched on for later calls. **Voice Settings →
+Overlay** places it:
+
+- **Screen**: any of yours, or the one Pivoice is on (the default). Screens
+  are told apart by maker and model, so it finds the same one however
+  they're plugged in; if the one you picked isn't connected, it goes on the
+  one Pivoice is on until it is.
+- **Position**: a corner, the middle of an edge, or the middle, on a map of
+  that screen with the overlay drawn on it to scale. It's kept as a side and
+  a **distance from the edge**, not a position, so it stays in its corner
+  through a change of resolution or a moved panel, and that distance counts
+  from the part of the screen windows get, so it never sits under a taskbar.
+- **Size** (its width and height), **Scale** (how big the faces and names
+  are in it) and **Opacity**: the table (only its rim) and anyone quiet fade
+  back to that, and whoever's speaking always shows in full.
+
+While those settings are open the overlay shows its edges, and every change
+moves it there and then, so you place it by watching it.
+
+How it's made ([`native/internal/overlay`](native/internal/overlay)): a
+second webview on a window of the app's own, showing the site's
+[`overlay.html`](overlay.html), which is only the table (about 1 KB of its
+own code, and Vue).
+
+| | The window | Clicks through | Placed |
+| --- | --- | --- | --- |
+| **Wayland** (KDE, Sway, Hyprland, most but GNOME) | a layer-shell surface on the overlay layer, above full-screen windows too, never given the keyboard (gtk-layer-shell, loaded only if it's installed) | an empty input region | by the compositor, from a side and margins on the screen you chose, clear of panels |
+| **X11** | a window the window manager never sees, which raises itself whenever the stacking changes (an X event, nothing polled), so it's on top and on every workspace | an empty input shape | the app, in the screen's usable area |
+| **Windows** | a topmost popup that's never activated and isn't on the taskbar or in Alt+Tab, layered with no redirection bitmap, so WebView2's see-through background shows the desktop | WS_EX_TRANSPARENT | the app, in the screen's work area, at its own scaling |
+| **GNOME on Wayland** | an ordinary borderless window: GNOME lets no app keep a window on top or say where it goes | no, so you can reach its menu: pin it with Alt+Space, Always on Top, move it with Super and drag | by you |
+
+Not on macOS yet (the app isn't released there).
+
+Costs, and what isn't done:
+
+- **Nothing while it's off**: no window, no webview, and the levels aren't
+  looked at (one atomic load each).
+- **The rings come from the app**, worked out from the same levels and with
+  the same thresholds and hold as the page's, and sent to the overlay only
+  when someone's ring changes: a quiet call, or someone talking steadily,
+  wakes its page not at all. So a minimised main window, whose timers the
+  webview slows, doesn't slow them.
+- **The seats come from the page**, where it has them (the page's seats
+  depend on who came and went, so the overlay doesn't work them out again),
+  sent when they change; the overlay slides its faces there itself.
+- **Measured** on Linux (headless Sway, software rendering, one person
+  talking for 8 s): the overlay's web process used 10 ms of CPU, about 0.1%
+  of one core, and holds about 36 MB of its own, drawn without the GPU
+  (about 130 MB with it).
+- **Windows isn't tried on a real desktop yet**: the window styles are the
+  ones other apps use to put WebView2 over the desktop, and CI builds them,
+  but the see-through background and the clicks going through want a look
+  on a real machine.
+- A game in exclusive full screen still covers it on Windows (borderless
+  windowed doesn't).
+
 ### When it crackles
 
 The **Low Latency** tab in the app counts everything on the app's side
@@ -794,24 +881,29 @@ checks for them and has no environment:
 
 ```
 src/
-  lib/          seats (planning + the animated Table), tiles (the phone layout), spring,
-                room codes, prefs, viewport
+  lib/          seats (planning + the animated Table), seating (the call's one Table, and
+                who draws it), tableView (what the table and the pop-out share), tiles
+                (the phone layout), spring, room codes, prefs, viewport
   net/          protocol (+ validation, shared with the Worker), roomSocket (the
                 WebSocket to the room), peer (one peer connection), session
                 (joining, the call mesh), sdp, ICE config
   audio/        engine: mic, per-person channel strips, panning, speaking detection
   audio/ll/     the low-latency engine: worklets (capture, playback), worker
                 (encode, decode, network), jitter buffer, shared-memory ring, packet format, settings
-  components/   round table, call control buttons, settings, user menu, icons
+  components/   round table, its miniature for the pop-out and the overlay, call control
+                buttons, settings, user menu, icons
+  overlay/      the app's overlay page (overlay.html): only the table, drawn from what the app sends
   screens/      Home (make or join) and Room
   native/       the page's side of the app: finding it, the bridge, and the links and
                 voice that stand in for the page's own when the app does the audio
   call.ts       the call as reactive state, and everything the UI can do to it
+  pip.ts        the pop-out window (Document Picture-in-Picture)
 worker/         the Cloudflare Worker: static assets, the rooms (a Durable Object each), /api/ice
 scripts/        dev (app + Worker), e2e runs (website, and the app with the website)
 tests/          unit tests
 native/         the app (Go): main and the window, and in internal/: audio (the PortAudio
                 duplex stream, a fake one), engine (mixer, sending, pion links, stats), dsp
                 (echo cancellation, noise suppression, gain), ll (packets and jitter buffer,
-                ported), opus, bridge, proto (the bridge's messages)
+                ported), opus, bridge, proto (the bridge's messages), overlay (its window
+                on each desktop, and the rings)
 ```

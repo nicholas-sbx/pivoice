@@ -1,4 +1,4 @@
-import { reactive } from 'vue'
+import { reactive, watch } from 'vue'
 import { sameActivity } from './audio/activity'
 import { AudioEngine, type MicProblem, type SpatialMode } from './audio/engine'
 import { LOOP_ID, sanitizeLL, sendDelayMs, type LLConfig } from './audio/ll/config'
@@ -6,8 +6,11 @@ import { WebRTCLoopback } from './audio/loopback'
 import { LowLatencyEngine } from './audio/ll/engine'
 import { copyText } from './lib/copyText'
 import { loadPrefs, savePrefs, type Prefs } from './lib/prefs'
+import { Seating } from './lib/seating'
+import { createWakeLock } from './lib/wakeLock'
 import { NativeBridge, isNative } from './native/bridge'
 import { NativeLinks } from './native/link'
+import { driveOverlay } from './native/overlay'
 import type { AppConfig } from './native/protocol'
 import { NativeVoice } from './native/voice'
 import { fetchIceServers, publicUrl } from './net/config'
@@ -89,6 +92,35 @@ let nativeLinks: NativeLinks | null = null
 /** The audio, when the app is doing it. */
 let nv: NativeVoice | null = null
 
+/**
+ * Where everyone sits, for the audio and for every view of the table. It
+ * lives here, with the audio it feeds, so the angles are right whether or
+ * not anything is on screen (see lib/seating).
+ */
+export const seating = new Seating((id, angle) => {
+  engine?.setAngle(id, angle)
+  nv?.setAngle(id, angle)
+})
+
+// Whoever's in the call sits at the table; the seats move themselves from there.
+watch(
+  () => [call.selfId, ...call.members.map(m => m.id)].join(','),
+  () => {
+    if (!call.selfId || !call.members.length) return
+    const ids = call.members.map(m => m.id)
+    if (!ids.includes(call.selfId)) ids.unshift(call.selfId)
+    seating.sync(ids, call.selfId)
+  }
+)
+
+// The screen stays awake while you're in a room, if you let it. Says nothing either way.
+const wakeLock = createWakeLock()
+watch(
+  () => call.phase === 'room' && call.prefs.keepAwake,
+  on => wakeLock.set(on),
+  { immediate: true }
+)
+
 /** In the app: connected to it, and on versions that work together. */
 export const nativeReady: Promise<boolean> = isNative ? connectApp() : Promise.resolve(false)
 
@@ -96,7 +128,10 @@ function connectApp(): Promise<boolean> {
   const b = new NativeBridge(__APP_VERSION__, __NATIVE_VERSION__)
   bridge = b
   nativeLinks = new NativeLinks(b)
-  return b.connect()
+  return b.connect().then(ok => {
+    if (ok) driveOverlay(b, call, seating)
+    return ok
+  })
 }
 
 export function getNative(): NativeVoice | null {
@@ -236,6 +271,8 @@ async function connect(kind: 'create' | 'join', name: string, code: string, rejo
 
   const eng = new AudioEngine(call.prefs.outputBuffer)
   engine = eng
+  // A new engine hasn't been told where anyone sits (coming back after a rejoin, say).
+  seating.flush()
   const icePromise = fetchIceServers()
   await eng.openMic(micSettings())
   if (engine !== eng) return
@@ -333,6 +370,7 @@ async function connectNative(kind: 'create' | 'join', name: string, code: string
   }
   const v = new NativeVoice(bridge)
   nv = v
+  seating.flush()
   const icePromise = fetchIceServers()
   await v.start(appConfig())
   if (nv !== v) return
@@ -426,6 +464,7 @@ function cleanup() {
   snapshots.clear()
   // Coming straight back: keep the room on screen, everyone at the table.
   if (rejoining) return
+  seating.reset()
   call.phase = 'home'
   call.joining = null
   call.members = []
@@ -777,12 +816,6 @@ export function setSilenced(id: string, on: boolean) {
   call.silenced[id] = on
   engine?.setSilenced(id, on)
   nv?.setSilenced(id, on)
-}
-
-/** Where someone sits, for spatial audio. Cheap to call every frame. */
-export function setSeatAngle(id: string, angle: number) {
-  engine?.setAngle(id, angle)
-  nv?.setAngle(id, angle)
 }
 
 /** Your microphone level, 0–1, for the meters. */

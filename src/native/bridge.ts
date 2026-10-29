@@ -105,7 +105,7 @@ export class NativeBridge {
       }, HELLO_TIMEOUT_MS)
       const onHello = (m: FromApp) => {
         if (m.t !== 'hello') return
-        native.app = { version: m.version, protocol: m.protocol, os: m.os, arch: m.arch, noise: m.noise }
+        native.app = { version: m.version, protocol: m.protocol, os: m.os, arch: m.arch, noise: m.noise, overlay: m.overlay }
         native.verdict = judge(m, this.latest)
         native.state = native.verdict.ok ? 'ready' : 'mismatch'
         done(native.verdict.ok)

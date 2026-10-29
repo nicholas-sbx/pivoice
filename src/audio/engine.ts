@@ -80,6 +80,8 @@ export class AudioEngine {
   private micOn = true
   private volumes = new Map<string, number>()
   private silenced = new Set<string>()
+  /** Where everyone sits, kept for people whose voice isn't here yet (or comes and goes, switching engines). */
+  private angles = new Map<string, number>()
   private outputId = ''
   private buf = new Float32Array(1024)
   private activityOf = new ActivityTracker()
@@ -247,7 +249,7 @@ export class AudioEngine {
       coneInnerAngle: 360,
       coneOuterAngle: 360
     })
-    r = { media: null, ll: null, analyser, gain, panner, angle: Math.PI }
+    r = { media: null, ll: null, analyser, gain, panner, angle: this.angles.get(id) ?? Math.PI }
     this.remotes.set(id, r)
     return r
   }
@@ -311,6 +313,7 @@ export class AudioEngine {
 
   /** Where they sit, as a table angle (see lib/seats). Cheap to call every frame. */
   setAngle(id: string, angle: number) {
+    this.angles.set(id, angle)
     const r = this.remotes.get(id)
     if (!r || r.angle === angle) return
     r.angle = angle

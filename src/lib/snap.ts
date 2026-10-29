@@ -26,6 +26,10 @@ const SIDES = {
   y: ['marginTop', 'marginBottom']
 } as const
 
+function viewOf(el: HTMLElement): Window {
+  return el.ownerDocument.defaultView ?? window
+}
+
 function at(el: HTMLElement, axis: 'x' | 'y'): number {
   const r = el.getBoundingClientRect()
   return axis === 'x' ? r.left : r.top
@@ -35,7 +39,7 @@ function nudge(el: HTMLElement, axis: 'x' | 'y', delta: number) {
   const from = at(el, axis)
   for (const [i, side] of SIDES[axis].entries()) {
     const sign = i === 0 ? 1 : -1
-    const base = parseFloat(getComputedStyle(el)[side]) || 0
+    const base = parseFloat(viewOf(el).getComputedStyle(el)[side]) || 0
     el.style[side] = `${base + sign * delta}px`
     const moved = at(el, axis) - from
     if (Math.abs(moved) > 1e-4) {
@@ -49,7 +53,8 @@ function nudge(el: HTMLElement, axis: 'x' | 'y', delta: number) {
 
 export function snapNow(el: HTMLElement) {
   for (const side of [...SIDES.x, ...SIDES.y]) el.style[side] = ''
-  const dpr = window.devicePixelRatio || 1
+  // The window it's in: a pop-out's screen can have another scale than the page's.
+  const dpr = viewOf(el).devicePixelRatio || 1
   // Layout works in 1/64 px, so a nudge can land a hair off (a centred one
   // especially): a second pass from where it got to settles it.
   for (let pass = 0; pass < 3; pass++) {
