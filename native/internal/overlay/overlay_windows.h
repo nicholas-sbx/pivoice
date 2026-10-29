@@ -7,6 +7,8 @@ typedef struct {
 	// webview's own window inside ours, which it sizes only in windows of its own.
 	HWND widget;
 	webview_t view;
+	// Told when another app comes to the front, to go back on top of it.
+	HWINEVENTHOOK front;
 } pv_overlay;
 
 pv_overlay *pv_open(int debug, const char *url, const char *js);

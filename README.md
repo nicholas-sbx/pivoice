@@ -584,7 +584,7 @@ own code, and Vue).
 | --- | --- | --- | --- |
 | **Wayland** (KDE, Sway, Hyprland, most but GNOME) | a layer-shell surface on the overlay layer, above full-screen windows too, never given the keyboard (gtk-layer-shell, loaded only if it's installed) | an empty input region | by the compositor, from a side and margins on the screen you chose, clear of panels |
 | **X11** | a window the window manager never sees, which raises itself whenever the stacking changes (an X event, nothing polled), so it's on top and on every workspace | an empty input shape | the app, in the screen's usable area |
-| **Windows** | a topmost popup that's never activated and isn't on the taskbar or in Alt+Tab, layered with no redirection bitmap, so WebView2's see-through background shows the desktop | WS_EX_TRANSPARENT | the app, in the screen's work area, at its own scaling |
+| **Windows** | a topmost popup that's never activated and isn't on the taskbar or in Alt+Tab, layered with no redirection bitmap, so WebView2's see-through background shows the desktop; back on top whenever another app comes to the front (a game going full screen often makes itself topmost, and the last one wins) | WS_EX_TRANSPARENT | the app, in the screen's work area, at its own scaling |
 | **GNOME on Wayland** | an ordinary borderless window: GNOME lets no app keep a window on top or say where it goes | no, so you can reach its menu: pin it with Alt+Space, Always on Top, move it with Super and drag | by you |
 
 Not on macOS yet (the app isn't released there).
@@ -609,8 +609,16 @@ Costs, and what isn't done:
   ones other apps use to put WebView2 over the desktop, and CI builds them,
   but the see-through background and the clicks going through want a look
   on a real machine.
-- A game in exclusive full screen still covers it on Windows (borderless
-  windowed doesn't).
+- **Games on Windows**: it shows over borderless and windowed full screen,
+  and over most games that ask for exclusive full screen, since Windows runs
+  those through the compositor anyway (its fullscreen optimizations: most
+  DirectX 10–12 games), compositing the overlay on top at a small cost. A
+  game in true exclusive full screen (those optimizations turned off, much
+  of DirectX 9, some OpenGL and Vulkan) draws past the compositor, and
+  nothing but a hook into its own drawing could show over it, which is what
+  Discord's and Steam's overlays do and this doesn't. The overlay never takes
+  the focus, so it doesn't knock such a game out of full screen either; it's
+  just not seen there. The settings say so on Windows.
 
 ### When it crackles
 
