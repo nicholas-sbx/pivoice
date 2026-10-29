@@ -19,7 +19,8 @@ let listening = false
 export function snapNow(el: HTMLElement) {
   el.style.translate = ''
   const r = el.getBoundingClientRect()
-  const dpr = window.devicePixelRatio || 1
+  // The window it's in: a pop-out's screen can have another scale than the page's.
+  const dpr = (el.ownerDocument.defaultView ?? window).devicePixelRatio || 1
   const dx = Math.round(r.left * dpr) / dpr - r.left
   const dy = Math.round(r.top * dpr) / dpr - r.top
   const small = (v: number) => Math.abs(v) < 0.005

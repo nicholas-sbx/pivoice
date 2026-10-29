@@ -5,7 +5,6 @@ import {
   copyCode,
   copyInvite,
   leaveCall,
-  setSeatAngle,
   toggleDeafen,
   toggleMute,
   toggleShowCode,
@@ -41,10 +40,6 @@ const spatialLabel = computed(() =>
 )
 const isMac = /Mac|iPhone|iPad/.test(navigator.platform)
 const mod = isMac ? '⌘⇧' : 'Ctrl+Shift+'
-
-function onAngle(id: string, angle: number) {
-  setSeatAngle(id, angle)
-}
 
 function onKey(e: KeyboardEvent) {
   if (!(e.ctrlKey || e.metaKey) || !e.shiftKey) return
@@ -145,7 +140,6 @@ onBeforeUnmount(() => removeEventListener('keydown', onKey))
         :links="call.links"
         :show-ping="call.prefs.showPing"
         :show-route="call.prefs.showRoute"
-        @angle="onAngle"
         @menu="(id, x, y) => (menu = { id, x, y })"
       />
 
