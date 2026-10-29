@@ -134,7 +134,13 @@ back with the same code.
 **Flat and sharp.** No gradients and no blurred shadows: flat colours,
 hard 1px edges. Seats at rest sit on whole pixels with no scaling, and
 nothing is centred with a −50% transform, so faces and text are never
-resampled.
+resampled. What's centred by layout and lands on a half pixel anyway (the
+call controls, their tooltips, the panels) is nudged onto a whole one with
+a margin, not a transform: WebKit, the app's window, draws a transformed
+element into a layer of its own and smears it.
+
+**The app, offered.** On a computer there's an app for, the website shows
+a bar under the top bar offering it. Its X puts it away for good.
 
 **Room code, hidden by default.** The header shows `••••••` with buttons
 to show it and to copy it, so you can screen share without giving the room
@@ -311,8 +317,12 @@ mic → pv-capture AudioWorklet: frames of 2.5–20 ms on the audio clock (one 2
     and aims for jitter × multiplier + margin, clamped to a minimum and
     maximum.
   - It steers toward that target by changing playback speed by up to a few
-    %. Gaps are covered by fading out the last frame. After a silence it
-    starts the next sentence fresh at the target.
+    %. A speed change is a pitch change, so it does that in the pauses
+    between words: while someone's talking it only speeds up for a buffer
+    more than 20 ms too deep (and then gently), and only slows down when
+    the buffer is about to run dry. The speed glides, never jumps. Gaps are
+    covered by fading out the last frame. After a silence it starts the
+    next sentence fresh at the target.
   - Unit tests drive it with simulated streams: clean, jittery, lossy and
     silent ones.
 - **Our own DTX.** Chrome's encoder drops frames for DTX and then numbers the
@@ -499,7 +509,7 @@ on in **Voice Settings**:
 | --- | --- | --- | --- |
 | **Echo Cancellation** | [SpeexDSP](https://github.com/xiph/speexdsp)'s MDF adaptive filter (85 ms tail) and its residual echo suppressor, fed what the same duplex callback just played, so mic and reference are already lined up | up to one 2.7 ms block to fill its frame; none when the sound card works in 128-sample blocks, as it usually does | 51 µs per 2.7 ms frame: **1.9%** |
 | **Noise Suppression** | [RNNoise](https://github.com/xiph/rnnoise) 0.2, a small recurrent network, with a voice gate on top | 10 ms (its analysis window) + up to 10 ms to fill a frame; +10 ms with **Lookahead** | 61 µs per 10 ms frame: **0.6%** |
-| **Automatic Gain Control** | ours ([`native/internal/dsp/agc.go`](native/internal/dsp/agc.go)): tracks your speech level and the noise floor, brings speech to the **Target level** (−16 dBFS RMS by default, about where browsers' own gain control leaves people), between −6 dB and the **Max boost** (+30 dB by default), both adjustable. It cuts fast (50 ms), lifts within a second, only moves while you're talking, and rounds off peaks with a soft limiter. Even a mic too quiet to clear the old −50 dBFS floor counts as talking now. It changes its own gain, never your system's mic volume | none: no lookahead | 0.3 µs per block: **0.01%** |
+| **Automatic Gain Control** | ours ([`native/internal/dsp/agc.go`](native/internal/dsp/agc.go)): tracks your speech level and the noise floor, brings speech to the **Target level** (−20 dBFS RMS by default), between −6 dB and the **Max boost** (+30 dB by default). It also remembers your recent peaks and never lifts them past the **Peak ceiling** (−3 dBFS), so a loud target doesn't end up living in the limiter; what still gets through (a sudden shout) meets a limiter at −1 dBFS that turns the whole sound down for a moment rather than bending each sample. It cuts at the **Fall time** (50 ms), lifts at the **Rise time** (1 s), and only moves while you're talking. All five are sliders, with a reset. Even a mic too quiet to clear the old −50 dBFS floor counts as talking now. It changes its own gain, never your system's mic volume | none: no lookahead | 0.3 µs per block: **0.01%** |
 
 All three at once: 102 µs per 2.7 ms block, **3.8%** of one core. Measured
 by the **check** job's benchmarks on its Xeon Platinum 8370C (`go test

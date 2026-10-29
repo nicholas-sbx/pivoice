@@ -15,7 +15,9 @@ import type { Directive } from 'vue'
  * how it's placed (left or right, top or bottom, centred), so it tries one,
  * then the other, and scales the nudge if the element only moved part of
  * the way (centred things move half). Again whenever its size or the
- * window changes; snapped elements inside it are redone after it.
+ * window changes, or a transition around it ends (one measured mid-way, a
+ * pressed button's scale or a tooltip's slide-in, lands off); snapped
+ * elements inside it are redone after it.
  */
 
 const snapped = new Set<HTMLElement>()
@@ -87,6 +89,13 @@ function snapAll() {
   for (const el of snapped) if (!el.parentElement?.closest('[data-snap]')) snapNow(el)
 }
 
+// A transition on it or around it moved it: whatever was measured during it is off now.
+function settled(e: Event) {
+  const t = e.target
+  if (!(t instanceof HTMLElement)) return
+  for (const el of snapped) if (t === el || t.contains(el)) snapNow(el)
+}
+
 // A margin it sets itself doesn't resize the element, so this only fires for real changes.
 const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(entries => entries.forEach(e => snapNow(e.target as HTMLElement)))
 
@@ -97,6 +106,7 @@ export const vSnap: Directive<HTMLElement> = {
     if (!listening) {
       listening = true
       addEventListener('resize', snapAll)
+      addEventListener('transitionend', settled, true)
     }
     // After the first layout (and any panel opening around it) has settled.
     requestAnimationFrame(() => snapNow(el))

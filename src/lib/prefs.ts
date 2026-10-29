@@ -60,6 +60,8 @@ export interface Prefs {
   showRoute: boolean
   /** Ask the browser to keep the screen awake while you're in a call. */
   keepAwake: boolean
+  /** The website's offer of the app (on a computer there's one for), put away. */
+  appBannerDismissed: boolean
   /** Opus DTX for what people send you: less bandwidth in silence, ~9 ms more buffering. Off by default. */
   dtx: boolean
   /**
@@ -116,6 +118,7 @@ export const DEFAULT_PREFS: Prefs = {
   showPing: true,
   showRoute: false,
   keepAwake: true,
+  appBannerDismissed: false,
   dtx: false,
   outputBuffer: 'min',
   ll: llDefaults(isNative),
@@ -159,7 +162,7 @@ export function loadPrefs(): Prefs {
     if (inRange(raw.agcCeilingDb, -20, -1)) p.agcCeilingDb = raw.agcCeilingDb
     if (inRange(raw.agcRiseMs, 50, 10000)) p.agcRiseMs = raw.agcRiseMs
     if (inRange(raw.agcFallMs, 5, 2000)) p.agcFallMs = raw.agcFallMs
-    for (const k of ['echoCancellation', 'noiseSuppression', 'autoGainControl', 'appExclusive', 'noiseLookahead', 'showCode', 'showPing', 'showRoute', 'keepAwake'] as const) {
+    for (const k of ['echoCancellation', 'noiseSuppression', 'autoGainControl', 'appExclusive', 'noiseLookahead', 'showCode', 'showPing', 'showRoute', 'keepAwake', 'appBannerDismissed'] as const) {
       if (typeof raw[k] === 'boolean') p[k] = raw[k]
     }
     if (typeof raw.dtx === 'boolean' && raw.rev === PREFS_REV) p.dtx = raw.dtx
