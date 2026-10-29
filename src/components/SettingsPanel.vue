@@ -8,6 +8,7 @@ import Icon from './Icon.vue'
 import LLSettings from './LLSettings.vue'
 import Slider from './Slider.vue'
 import Switch from './Switch.vue'
+import { vSnap } from '../lib/snap'
 
 /** Voice settings, popping up over the call controls. */
 
@@ -61,12 +62,12 @@ function label(d: MediaDeviceInfo, i: number, kind: string) {
 
 const modes: { value: SpatialMode; label: string; hint: string }[] = [
   { value: 'off', label: 'Off', hint: 'Straight to your ears. Lowest latency.' },
-  { value: 'stereo', label: 'Stereo', hint: 'Panned left and right by where people sit.' },
+  { value: 'stereo', label: 'Stereo', hint: 'Louder on the side they sit: panned by level only.' },
   isNative
     ? {
         value: 'hrtf',
-        label: 'Stereo + ITD',
-        hint: 'Panned, and the ear further from them hears them a touch later (up to 0.66 ms, as a real head does), so they sound placed rather than just louder on one side. Only that ear waits.'
+        label: 'Binaural',
+        hint: 'A modelled head between your ears: the ear away from someone hears them up to 0.66 ms later and duller, the near one a little brighter, so voices sound placed around the table rather than just louder on one side. Only the far ear waits; the person across from you sounds just as with it off. On headphones.'
       }
     : { value: 'hrtf', label: 'HRTF', hint: 'Full 3D around your head, on headphones.' }
 ]
@@ -116,7 +117,7 @@ const appProcessing = computed(() => [
   {
     key: 'autoGainControl' as const,
     label: 'Automatic Gain Control',
-    hint: 'Evens out your level by changing the app’s own gain (never your system’s mic volume), from −6 to +24 dB. Adds no delay.',
+    hint: 'Brings your voice to a steady level by changing the app’s own gain (never your system’s mic volume): down for a loud mic, up for a quiet one. Adds no delay.',
     off: false
   }
 ])
@@ -152,7 +153,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div ref="el" class="panel" role="dialog" aria-label="Voice settings">
+  <div ref="el" v-snap class="panel" role="dialog" aria-label="Voice settings">
     <header>
       <h2>Voice Settings</h2>
       <button type="button" class="x" aria-label="Close" @click="emit('close')"><Icon name="close" :size="20" /></button>
@@ -277,6 +278,28 @@ onBeforeUnmount(() => {
             hint="How long the gate stays open after you stop, so word endings and pauses mid-sentence aren’t cut. It opens again the moment you speak; nothing is held back to look ahead."
             :model-value="call.prefs.noiseGraceMs"
             @update:model-value="v => setAppDevices({ noiseGraceMs: v })"
+          />
+        </template>
+        <template v-if="call.prefs.autoGainControl">
+          <Slider
+            label="Target level"
+            unit=" dBFS"
+            :min="-30"
+            :max="-6"
+            :step="1"
+            hint="How loud it brings you to (the average of your speech, not its peaks). Higher is louder; the loudest settings lean on the limiter for shouts."
+            :model-value="call.prefs.agcTargetDb"
+            @update:model-value="v => setAppDevices({ agcTargetDb: v })"
+          />
+          <Slider
+            label="Max boost"
+            unit=" dB"
+            :min="0"
+            :max="40"
+            :step="1"
+            hint="The most it will turn a quiet mic up. More reaches quieter mics, and lifts their background noise with them."
+            :model-value="call.prefs.agcMaxDb"
+            @update:model-value="v => setAppDevices({ agcMaxDb: v })"
           />
         </template>
         <p class="note spaced">All off, the app doesn’t touch your mic at all, and none of it costs anything.</p>

@@ -93,12 +93,19 @@ type remote struct {
 	// float32 bits: volume (0 while silenced), and left/right gains from where they sit.
 	gain       atomic.Uint32
 	panL, panR atomic.Uint32
-	// Interaural delay, samples, float32 bits: > 0 delays the right ear, < 0 the left.
-	itd atomic.Uint32
-	// Audio thread only: the last samples heard, for the far ear's delay, and the delay it's gliding from.
-	hist    [itdHistory]float32
-	histPos int
-	itdNow  float32
+	// Binaural (head.go): the interaural delay, samples (> 0 delays the
+	// right ear, < 0 the left), and each ear's head-shadow coefficient, all
+	// float32 bits. Neutral is 0 and shadowFront: then they cost nothing.
+	itd              atomic.Uint32
+	shadowL, shadowR atomic.Uint32
+	// Audio thread only: the last samples heard, for the far ear's delay;
+	// the delay and coefficients it's gliding from; each ear's filter.
+	hist       [itdHistory]float32
+	histPos    int
+	itdNow     float32
+	shadowLNow float32
+	shadowRNow float32
+	earL, earR ear
 	// Loudest block (RMS) since the levels were last read, float32 bits.
 	level atomic.Uint32
 }
@@ -108,6 +115,9 @@ func newRemote(id string) *remote {
 	storeF(&r.gain, 1)
 	storeF(&r.panL, 1)
 	storeF(&r.panR, 1)
+	storeF(&r.shadowL, shadowFront)
+	storeF(&r.shadowR, shadowFront)
+	r.shadowLNow, r.shadowRNow = shadowFront, shadowFront
 	return r
 }
 
@@ -127,26 +137,35 @@ func raiseLevel(a *atomic.Uint32, v float32) {
 // Room for the longest interaural delay (32 samples) and then some.
 const itdHistory = 64
 
-// mixITD mixes one person in with the far ear delayed: a fractional
-// delay read from a short history of what they just said, gliding to the
-// new delay over the block when their seat moves, so it never clicks.
-func (r *remote) mixITD(mix, out []float32, l, rr, target float32) {
-	from := r.itdNow
+// headActive: whether this person needs the head model this block (it's
+// set, or still gliding back to neutral).
+func (r *remote) headActive(itd, sl, sr float32) bool {
+	return itd != 0 || r.itdNow != 0 || sl != shadowFront || sr != shadowFront ||
+		r.shadowLNow != shadowFront || r.shadowRNow != shadowFront
+}
+
+// mixHead mixes one person in through the spherical head (head.go): the
+// far ear delayed (a fractional delay read from a short history of what
+// they just said) and each ear through its head-shadow filter. The delay
+// and both filters glide to their new settings across the block when a
+// seat moves, so it never clicks.
+func (r *remote) mixHead(mix, out []float32, l, rr, itd, sl, sr float32) {
+	fromD, fromL, fromR := r.itdNow, r.shadowLNow, r.shadowRNow
 	n := float32(len(mix))
 	for i, v := range mix {
 		r.hist[r.histPos] = v
-		d := from + (target-from)*float32(i+1)/n
+		f := float32(i+1) / n
+		d := fromD + (itd-fromD)*f
 		late := r.delayed(d)
+		left, right := late, v
 		if d > 0 {
-			out[2*i] += v * l
-			out[2*i+1] += late * rr
-		} else {
-			out[2*i] += late * l
-			out[2*i+1] += v * rr
+			left, right = v, late
 		}
+		out[2*i] += l * r.earL.step(left, fromL+(sl-fromL)*f)
+		out[2*i+1] += rr * r.earR.step(right, fromR+(sr-fromR)*f)
 		r.histPos = (r.histPos + 1) % itdHistory
 	}
-	r.itdNow = target
+	r.itdNow, r.shadowLNow, r.shadowRNow = itd, sl, sr
 }
 
 // delayed is the sample d (fractional, either sign) before the newest one in the history.
@@ -241,8 +260,8 @@ func (m *mixer) process(in, out []float32, t audio.Times) {
 		if g == 0 {
 			continue
 		}
-		if itd := loadF(&r.itd); itd != 0 || r.itdNow != 0 {
-			r.mixITD(mix, out, l, rr, itd)
+		if itd, sl, sr := loadF(&r.itd), loadF(&r.shadowL), loadF(&r.shadowR); r.headActive(itd, sl, sr) {
+			r.mixHead(mix, out, l, rr, itd, sl, sr)
 			continue
 		}
 		for i, v := range mix {

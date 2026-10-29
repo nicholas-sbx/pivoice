@@ -55,13 +55,14 @@ func TestEchoCancels(t *testing.T) {
 }
 
 func TestAGCLevels(t *testing.T) {
+	target := dbToGain(AGCTargetDb)
 	for _, c := range []struct {
 		name  string
 		level float64
 	}{{"quiet", 0.04}, {"loud", 0.6}} {
 		// Quiet is about −40 dBFS RMS (a soft voice a way off the mic), loud
 		// about −16 dBFS with peaks near full scale.
-		a := NewAGC()
+		a := NewAGC(AGCTargetDb, AGCMaxGainDb)
 		x := talker(2, SampleRate*8, c.level)
 		in := rmsOf(x)
 		peak := float32(0)
@@ -73,12 +74,47 @@ func TestAGCLevels(t *testing.T) {
 		}
 		got := rmsOf(x[len(x)-SampleRate*2:])
 		t.Logf("%s talker: %.4f in, %.4f out (gain %.1f dB), peak %.2f", c.name, in, got, 20*math.Log10(a.Gain()), peak)
-		if got < agcTarget/2.5 || got > agcTarget*2.5 {
-			t.Errorf("%s talker came out at %.4f RMS, want near %.2f", c.name, got, agcTarget)
+		if got < target/2 || got > target*2 {
+			t.Errorf("%s talker came out at %.4f RMS, want near %.3f", c.name, got, target)
 		}
 		if peak > 1 {
 			t.Errorf("%s talker clipped: peak %.2f", c.name, peak)
 		}
+	}
+}
+
+// A mic so quiet it's under −50 dBFS (where the old floor stopped counting
+// it as speech) still gets brought up, as far as the most it may boost.
+func TestAGCLiftsAQuietMic(t *testing.T) {
+	a := NewAGC(AGCTargetDb, AGCMaxGainDb)
+	x := talker(6, SampleRate*6, 0.008) // about −52 dBFS RMS
+	in := rmsOf(x)
+	for k := 0; k+128 <= len(x); k += 128 {
+		a.Process(x[k:k+128], false, false)
+	}
+	got := rmsOf(x[len(x)-SampleRate:])
+	t.Logf("quiet mic: %.1f dBFS in, %.1f dBFS out (gain %+.1f dB)", 20*math.Log10(in), 20*math.Log10(got), 20*math.Log10(a.Gain()))
+	if g := 20 * math.Log10(a.Gain()); g < AGCMaxGainDb-1 {
+		t.Fatalf("a −52 dBFS mic only got %+.1f dB, of the %v it may", g, AGCMaxGainDb)
+	}
+}
+
+// The target set live: 10 dB lower, and a few seconds later it's 10 dB quieter.
+func TestAGCRetunes(t *testing.T) {
+	a := NewAGC(AGCTargetDb, AGCMaxGainDb)
+	level := func(seed int64) float64 {
+		x := talker(seed, SampleRate*5, 0.04) // about −40 dBFS: the target's in reach
+		for k := 0; k+128 <= len(x); k += 128 {
+			a.Process(x[k:k+128], false, false)
+		}
+		return 20 * math.Log10(rmsOf(x[len(x)-SampleRate:]))
+	}
+	before := level(8)
+	a.Retune(AGCTargetDb-10, AGCMaxGainDb)
+	after := level(9)
+	t.Logf("target %v dBFS: %.1f; %v: %.1f", AGCTargetDb, before, AGCTargetDb-10, after)
+	if d := before - after; d < 8 || d > 12 {
+		t.Fatalf("retuned 10 dB lower, came out %.1f dB lower", d)
 	}
 }
 
@@ -169,7 +205,7 @@ func BenchmarkNoise(b *testing.B) {
 }
 
 func BenchmarkGain(b *testing.B) {
-	a := NewAGC()
+	a := NewAGC(AGCTargetDb, AGCMaxGainDb)
 	x := talker(1, 128, 0.1)
 	b.ResetTimer()
 	for range b.N {

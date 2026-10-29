@@ -13,6 +13,16 @@ type Settings struct {
 	GateGraceMs   float32
 	// RNNoise's own lookahead: a frame (10 ms) more delay, for cleaner starts of words.
 	NoiseLookahead bool
+	// Automatic gain's target (dBFS RMS) and the most it may boost (dB); 0, 0 means the defaults.
+	GainTargetDb float32
+	GainMaxDb    float32
+}
+
+func (s Settings) gainTuning() (target, most float64) {
+	if s.GainTargetDb == 0 && s.GainMaxDb == 0 {
+		return AGCTargetDb, AGCMaxGainDb
+	}
+	return float64(s.GainTargetDb), float64(s.GainMaxDb)
 }
 
 // Active: anything to do at all.
@@ -77,7 +87,7 @@ func NewChain(s Settings) (*Chain, error) {
 		c.preroll = c.noiseDelay
 	}
 	if s.Gain {
-		c.agc = NewAGC()
+		c.agc = NewAGC(s.gainTuning())
 	}
 	return c, nil
 }
@@ -86,6 +96,10 @@ func NewChain(s Settings) (*Chain, error) {
 // chain when a stage goes on or off (see SameStages).
 func (c *Chain) Retune(s Settings) {
 	c.set.GateThreshold, c.set.GateGraceMs = s.GateThreshold, s.GateGraceMs
+	if c.agc != nil && (s.GainTargetDb != c.set.GainTargetDb || s.GainMaxDb != c.set.GainMaxDb) {
+		c.agc.Retune(s.gainTuning())
+	}
+	c.set.GainTargetDb, c.set.GainMaxDb = s.GainTargetDb, s.GainMaxDb
 }
 
 // SameStages: whether a chain made for a would do for b, retuned.

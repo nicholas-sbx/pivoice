@@ -4,6 +4,7 @@ import { Table, seatOffset, tableRadius } from '../lib/seats'
 import { SEAT_SPRING, isSettled, settle, spring, stepSpring } from '../lib/spring'
 import type { Member } from '../net/protocol'
 import { pingLevel, routeLabel, type LinkStats } from '../net/stats'
+import { snapNow, vSnap } from '../lib/snap'
 import { touchFirst } from '../lib/viewport'
 import Avatar from './Avatar.vue'
 import Icon from './Icon.vue'
@@ -19,6 +20,8 @@ const props = defineProps<{
   members: Member[]
   selfId: string
   speaking: Set<string>
+  /** Making any sound at all: a thin ring, under the full one for speaking. */
+  audible: Set<string>
   /** Your own state, straight from the controls rather than waiting on the roster round trip. */
   selfMuted: boolean
   selfDeafened: boolean
@@ -146,6 +149,12 @@ function frame(now: number) {
   raf = moving ? requestAnimationFrame(frame) : 0
 }
 
+/** To the nearest whole device pixel (a CSS pixel is 1.25 of them at Windows' 125% scaling). */
+function px(v: number): number {
+  const dpr = window.devicePixelRatio || 1
+  return Math.round(v * dpr) / dpr
+}
+
 function paintSeat(id: string) {
   const seat = table.seats.get(id)
   const el = seatEls.get(id)
@@ -159,8 +168,12 @@ function paintSeat(id: string) {
   // crisp rather than resampled. Only while moving is it fractional.
   const still = seat.angle.v === 0 && seat.presence.v === 0 && p === 1 && radius.v === 0
   el.style.transform = still
-    ? `translate(${Math.round(left)}px, ${Math.round(top)}px)`
+    ? `translate(${px(left)}px, ${px(top)}px)`
     : `translate(${left.toFixed(2)}px, ${top.toFixed(2)}px) scale(${(0.55 + 0.45 * p).toFixed(4)})`
+  // Come to rest: its name tag onto whole pixels too (it's centred under the face, on a fractional width).
+  const tag = still && !el.dataset.still ? el.querySelector<HTMLElement>('.tag') : null
+  el.dataset.still = still ? '1' : ''
+  if (tag) snapNow(tag)
   el.style.opacity = p === 1 ? '' : p.toFixed(3)
 }
 
@@ -174,7 +187,7 @@ function paintTable() {
   const left = g.cx - d / 2
   const top = g.cy - d / 2
   el.style.width = el.style.height = d.toFixed(2) + 'px'
-  el.style.transform = still ? `translate(${Math.round(left)}px, ${Math.round(top)}px)` : `translate(${left.toFixed(2)}px, ${top.toFixed(2)}px)`
+  el.style.transform = still ? `translate(${px(left)}px, ${px(top)}px)` : `translate(${left.toFixed(2)}px, ${top.toFixed(2)}px)`
 }
 
 function paint() {
@@ -244,6 +257,9 @@ function deafenedOf(id: string) {
 function speakingOf(id: string) {
   return props.speaking.has(id) && !mutedOf(id) && !props.silenced[id]
 }
+function audibleOf(id: string) {
+  return props.audible.has(id) && !mutedOf(id) && !props.silenced[id]
+}
 
 function moodOf(id: string): 'idle' | 'talking' | 'deafened' | 'away' {
   if (member(id)?.away) return 'away'
@@ -301,6 +317,7 @@ const count = computed(() => props.members.filter(m => !m.away).length || 1)
       :class="{
         self: isSelf(id),
         speaking: speakingOf(id),
+        audible: audibleOf(id) && !speakingOf(id),
         away: member(id)?.away,
         silenced: silenced[id]
       }"
@@ -318,7 +335,7 @@ const count = computed(() => props.members.filter(m => !m.away).length || 1)
         />
       </div>
       <div class="under">
-        <div class="tag">
+        <div v-snap class="tag">
           <span class="name">{{ member(id)?.name }}</span>
           <span v-if="member(id)?.away" class="sub">reconnecting…</span>
           <Icon v-if="mutedOf(id)" name="mic" :size="16" slash class="state" />
@@ -436,6 +453,12 @@ const count = computed(() => props.members.filter(m => !m.away).length || 1)
   border-radius: 50%;
   box-shadow: 0 0 0 3px var(--bg-stage);
   transition: box-shadow 0.08s ease;
+}
+/* Something's coming through, but not speech: a thin line where the ring goes. */
+.seat.audible .ring {
+  box-shadow:
+    0 0 0 3px var(--bg-stage),
+    0 0 0 4px var(--green);
 }
 .seat.speaking .ring {
   box-shadow:

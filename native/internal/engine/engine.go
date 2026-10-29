@@ -233,7 +233,11 @@ func (e *Engine) configure(c proto.Config) {
 }
 
 func (e *Engine) setProcessing(p proto.Processing) {
-	s := dsp.Settings{Echo: p.Echo, Noise: p.Noise, Gain: p.Gain, GateThreshold: float32(p.GateThreshold), GateGraceMs: float32(p.GateGraceMs), NoiseLookahead: p.NoiseLookahead}
+	s := dsp.Settings{
+		Echo: p.Echo, Noise: p.Noise, Gain: p.Gain,
+		GateThreshold: float32(p.GateThreshold), GateGraceMs: float32(p.GateGraceMs), NoiseLookahead: p.NoiseLookahead,
+		GainTargetDb: float32(p.GainTargetDb), GainMaxDb: float32(p.GainMaxDb),
+	}
 	if !s.Active() {
 		e.processing.Store(nil)
 		e.echoRef.Store(false)
@@ -274,16 +278,20 @@ const (
 	soundMps    = 343.0
 )
 
-// applyPrefsLocked sets someone's gain and pan for the audio thread.
-// Panning is equal-power, from the direction of their seat (seatDirection
-// in src/lib/seats.ts), the same law as Web Audio's "equalpower" panner.
+// applyPrefsLocked sets someone's gain and where they sound from, for the
+// audio thread, from the direction of their seat (seatDirection in
+// src/lib/seats.ts).
 //
-// "hrtf" (shown as Stereo + ITD in the app) adds the time difference
-// between the ears on top: the far ear hears them a little later, by
-// Woodworth's formula, (a/c)(θ + sin θ) for a head of radius a and a
-// source θ off the midline, so at most 0.66 ms (32 samples) for someone
-// straight to one side. Only the far ear is delayed: what you hear first
-// is as early as it ever was.
+// "stereo" pans equal-power, the same law as Web Audio's "equalpower"
+// panner: level only.
+//
+// "hrtf" (shown as Binaural in the app) is a spherical head instead
+// (head.go): no level pan, but each ear's head-shadow filter (the far ear
+// loses treble, the near one gains a little), and the far ear hearing them
+// later by Woodworth's formula, (a/c)(θ + sin θ) for a head of radius a
+// and a source θ off the midline, so at most 0.66 ms (32 samples) for
+// someone straight to one side. Only the far ear is delayed: what you hear
+// first is as early as it ever was. Straight ahead is exactly as with it off.
 func (e *Engine) applyPrefsLocked(id string, r *remote) {
 	p := e.prefs[id]
 	if p == nil {
@@ -294,27 +302,31 @@ func (e *Engine) applyPrefsLocked(id string, r *remote) {
 		g = 0
 	}
 	storeF(&r.gain, g)
-	if e.spatial == "off" || r.test {
-		storeF(&r.panL, 1)
-		storeF(&r.panR, 1)
-		storeF(&r.itd, 0)
-		return
+	// Worked out first and stored once each: the audio thread reads them
+	// at any moment (seats move every frame while they slide).
+	panL, panR := float32(1), float32(1)
+	itd, sl, sr := float32(0), shadowFront, shadowFront
+	if e.spatial != "off" && !r.test {
+		x := -math.Sin(p.angle)
+		z := math.Cos(p.angle) - 1
+		if l := math.Hypot(x, z); l > 1e-9 {
+			x /= l
+		} else {
+			x = 0
+		}
+		if e.spatial == "hrtf" {
+			sl, sr = headCoefs(x)
+			itd = float32(woodworth(x))
+		} else {
+			pos := (math.Asin(max(-1, min(1, x)))/(math.Pi/2) + 1) / 2
+			panL, panR = float32(math.Cos(pos*math.Pi/2)), float32(math.Sin(pos*math.Pi/2))
+		}
 	}
-	x := -math.Sin(p.angle)
-	z := math.Cos(p.angle) - 1
-	if l := math.Hypot(x, z); l > 1e-9 {
-		x /= l
-	} else {
-		x = 0
-	}
-	pos := (math.Asin(max(-1, min(1, x)))/(math.Pi/2) + 1) / 2
-	storeF(&r.panL, float32(math.Cos(pos*math.Pi/2)))
-	storeF(&r.panR, float32(math.Sin(pos*math.Pi/2)))
-	itd := 0.0
-	if e.spatial == "hrtf" {
-		itd = woodworth(x)
-	}
-	storeF(&r.itd, float32(itd))
+	storeF(&r.panL, panL)
+	storeF(&r.panR, panR)
+	storeF(&r.itd, itd)
+	storeF(&r.shadowL, sl)
+	storeF(&r.shadowR, sr)
 }
 
 // woodworth is the interaural delay, samples, for a source whose direction

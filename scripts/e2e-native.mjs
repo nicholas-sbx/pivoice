@@ -170,6 +170,16 @@ try {
   await ada.click('text=Automatic Gain Control')
   await ada.click('button[aria-label="Voice Settings"]')
 
+  // Ada turns spatial audio on (the app's Binaural: the spherical head): she still hears Bob.
+  await ada.click('button[aria-label^="Spatial Audio"]')
+  const spatial = await ada.getAttribute('button[aria-label^="Spatial Audio"]', 'aria-label')
+  if (!/Binaural/.test(spatial ?? '')) throw new Error('spatial audio in the app should be Binaural, got ' + spatial)
+  await bob.click('button[aria-label="Mute"]')
+  await bob.click('button[aria-label="Unmute"]')
+  await hears(ada, 'Bob', 'Ada (app, Binaural)')
+  ok('Ada on Binaural: still hears Bob')
+  await ada.click('button[aria-label^="Spatial Audio"]')
+
   // A setting that needs a fresh connection: Ada drops and comes straight back, the app's sound card closed and reopened.
   await ada.click('button[aria-label="Voice Settings"]')
   await ada.click('text=Silence Suppression (DTX)')

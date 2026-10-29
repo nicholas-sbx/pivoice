@@ -1,4 +1,5 @@
 import { reactive } from 'vue'
+import { sameActivity } from './audio/activity'
 import { AudioEngine, type MicProblem, type SpatialMode } from './audio/engine'
 import { LOOP_ID, sanitizeLL, sendDelayMs, type LLConfig } from './audio/ll/config'
 import { WebRTCLoopback } from './audio/loopback'
@@ -44,6 +45,8 @@ export const call = reactive({
   selfId: '',
   members: [] as Member[],
   speaking: new Set<string>(),
+  /** Anyone making a sound at all (a thin ring), speaking or not. */
+  audible: new Set<string>(),
   /** Your choice. What you send is muted if this, deafened, or there's no mic. */
   muted: false,
   deafened: false,
@@ -116,7 +119,9 @@ function appConfig(): AppConfig {
       gain: p.autoGainControl,
       gateThreshold: p.noiseGate,
       gateGraceMs: p.noiseGraceMs,
-      noiseLookahead: p.noiseLookahead
+      noiseLookahead: p.noiseLookahead,
+      gainTargetDb: p.agcTargetDb,
+      gainMaxDb: p.agcMaxDb
     }
   }
 }
@@ -192,6 +197,7 @@ export async function startCall(kind: 'create' | 'join', name: string, code = ''
   call.error = ''
   call.members = []
   call.speaking = new Set()
+  call.audible = new Set()
   call.volumes = {}
   call.silenced = {}
   call.links = {}
@@ -421,6 +427,7 @@ function cleanup() {
   call.joining = null
   call.members = []
   call.speaking = new Set()
+  call.audible = new Set()
 }
 
 export function leaveCall() {
@@ -438,10 +445,10 @@ function startSpeakingPoll() {
   speakingTimer = setInterval(() => {
     const src = nv ?? engine
     if (!src) return
-    const now = src.speaking(call.selfId)
-    const prev = call.speaking
-    if (now.size === prev.size && [...now].every(id => prev.has(id))) return
-    call.speaking = now
+    const now = src.activity(call.selfId)
+    if (sameActivity(now, { speaking: call.speaking, audible: call.audible })) return
+    call.speaking = now.speaking
+    call.audible = now.audible
   }, 50)
 }
 
@@ -735,7 +742,9 @@ export async function setOutput(deviceId: string) {
 }
 
 /** In the app: its own devices and how it opens them (it reopens the sound card on the spot), and its processing. */
-export function setAppDevices(patch: Partial<Pick<Prefs, 'appInputId' | 'appOutputId' | 'appExclusive' | 'noiseGate' | 'noiseGraceMs' | 'noiseLookahead'>>) {
+export function setAppDevices(
+  patch: Partial<Pick<Prefs, 'appInputId' | 'appOutputId' | 'appExclusive' | 'noiseGate' | 'noiseGraceMs' | 'noiseLookahead' | 'agcTargetDb' | 'agcMaxDb'>>
+) {
   updatePrefs(patch)
   nv?.configure(appConfig())
 }

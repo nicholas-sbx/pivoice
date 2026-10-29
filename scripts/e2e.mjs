@@ -78,6 +78,19 @@ try {
 
   // Mic test, each path, while alone: it deafens her, plays her back, says how long it took.
   await alice.click('button[aria-label="Voice Settings"]')
+  // Popups on whole pixels, or their text is drawn blurry (the controls are centred, at any window width).
+  for (const w of [1281, 1440]) {
+    await alice.setViewportSize({ width: w, height: 900 })
+    await alice.waitForTimeout(300)
+    const off = await alice.$$eval('.pill, .panel, .tip', els =>
+      els
+        .map(e => ({ e, r: e.getBoundingClientRect() }))
+        .filter(({ r }) => Math.abs(r.left - Math.round(r.left)) > 0.01 || Math.abs(r.top - Math.round(r.top)) > 0.01)
+        .map(({ e, r }) => `${e.className} at ${r.left.toFixed(2)}, ${r.top.toFixed(2)}`)
+    )
+    if (off.length) throw new Error(`blurry at ${w}px wide: ${off.join('; ')}`)
+  }
+  ok('the call controls, the settings panel and the tooltips sit on whole pixels')
   for (const label of ['Raw', 'WebRTC audio', 'Low latency']) {
     await alice.click(`.seg button:has-text("${label}")`)
     if (!(await alice.$('.test-btn.stop'))) await alice.click('.test-btn')

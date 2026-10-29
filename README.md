@@ -66,7 +66,7 @@ from their name, so the same name is the same creature on everyone's screen.
 Faces smile while they talk, doze off while deafened and look puzzled while
 reconnecting. They're still pictures, not animations: animated blobatars
 restyle every face every frame on the main thread, which took a whole core
-with six at the table and showed up as wandering latency. A green ring shows who's talking, and mute and deafen show next to
+with six at the table and showed up as wandering latency. A green ring shows who's talking, and a thin one anyone whose mic is coming through at all (anything above about −80 dBFS: a room, a fan, someone talking very quietly), so you can tell a quiet mic from a dead one. Mute and deafen show next to
 their names, along with your ping to each of them (green under 80 ms, yellow
 under 160, red above). Right-click someone for **User Volume** (0–200%,
 sticking at 100% on the way past; **Reset** or a double-click puts it back)
@@ -143,7 +143,7 @@ engine comes from its own pings over its data channel instead. The mouth-to-ear 
 an estimate (`≈`) where it can't. Hover the estimate for what each part means.
 
 **Voice settings.** Input and output device, an input level meter,
-spatial audio (**Off**, **Stereo**, **HRTF**; in the app **Stereo + ITD**
+spatial audio (**Off**, **Stereo**, **HRTF**; in the app **Binaural**
 instead of HRTF), echo cancellation, noise suppression and automatic gain
 control (all **off** by default; in the app, its own: see below), and
 silence suppression (DTX, off). The **Low Latency** tab has the experimental
@@ -437,13 +437,22 @@ becomes just the UI.
   device for the app alone, for WASAPI's smallest buffers, at the cost of
   nothing else being able to use it meanwhile. The sound card line there
   says which one you got (exclusive, raw or shared).
-- **Stereo + ITD** instead of HRTF. The app pans equal-power and delays
-  only the far ear by the interaural time difference a real head would
-  give, from Woodworth's formula: (r/c)(θ + sin θ), with r = 8.75 cm and
-  c = 343 m/s, at most 0.66 ms (31.5 samples) for someone straight to one
-  side. The near ear is never delayed, so nobody arrives later than they
-  would with plain **Stereo**; the delay is fractional and glides when a
-  seat moves, so it never clicks.
+- **Binaural** instead of HRTF: Brown and Duda's spherical head model
+  ([`native/internal/engine/head.go`](native/internal/engine/head.go)).
+  Each person is heard from where their seat is, as seen from yours (90° −
+  θ/2 off straight ahead for a seat θ round the table from you, so evenly
+  spaced seats sound evenly spaced). Instead of a level pan, each ear gets
+  the model's head-shadow filter: bass goes round the head untouched, the
+  ear away from the voice loses treble (about −8 dB at 4 kHz in its
+  shadow) and the ear facing it gains a little. And the far ear hears them
+  later by Woodworth's interaural time difference, (r/c)(θ + sin θ) with r
+  = 8.75 cm and c = 343 m/s: at most 0.66 ms (31.5 samples), for someone
+  straight to one side. Two changes from the paper: only the far ear is
+  delayed (the near ear is never later than with spatial audio off), and
+  both ears are equalised to straight ahead, so the person across the
+  table sounds exactly as with it off. The delay and both filters glide
+  when a seat moves, so nothing clicks, and it's a few dozen operations a
+  sample per person. Plain **Stereo** stays a level-only equal-power pan.
 
 Measured on one machine, fake devices, website to app and back (`npm run
 e2e:native`):
@@ -465,7 +474,7 @@ on in **Voice Settings**:
 | --- | --- | --- | --- |
 | **Echo Cancellation** | [SpeexDSP](https://github.com/xiph/speexdsp)'s MDF adaptive filter (85 ms tail) and its residual echo suppressor, fed what the same duplex callback just played, so mic and reference are already lined up | up to one 2.7 ms block to fill its frame; none when the sound card works in 128-sample blocks, as it usually does | 51 µs per 2.7 ms frame: **1.9%** |
 | **Noise Suppression** | [RNNoise](https://github.com/xiph/rnnoise) 0.2, a small recurrent network, with a voice gate on top | 10 ms (its analysis window) + up to 10 ms to fill a frame; +10 ms with **Lookahead** | 61 µs per 10 ms frame: **0.6%** |
-| **Automatic Gain Control** | ours ([`native/internal/dsp/agc.go`](native/internal/dsp/agc.go)): tracks your speech level and the noise floor, brings speech to −20 dBFS between −6 and +24 dB, cuts fast (50 ms) and lifts slowly (2 s), only moves while you're talking, and rounds off peaks with a soft limiter. It changes its own gain, never your system's mic volume | none: no lookahead | 0.3 µs per block: **0.01%** |
+| **Automatic Gain Control** | ours ([`native/internal/dsp/agc.go`](native/internal/dsp/agc.go)): tracks your speech level and the noise floor, brings speech to the **Target level** (−16 dBFS RMS by default, about where browsers' own gain control leaves people), between −6 dB and the **Max boost** (+30 dB by default), both adjustable. It cuts fast (50 ms), lifts within a second, only moves while you're talking, and rounds off peaks with a soft limiter. Even a mic too quiet to clear the old −50 dBFS floor counts as talking now. It changes its own gain, never your system's mic volume | none: no lookahead | 0.3 µs per block: **0.01%** |
 
 All three at once: 102 µs per 2.7 ms block, **3.8%** of one core. Measured
 by the **check** job's benchmarks on its Xeon Platinum 8370C (`go test
@@ -595,8 +604,8 @@ only; ALSA is loaded at start-up), Opus, RNNoise and SpeexDSP statically, built 
 sources by [`native/build/deps.sh`](native/build/deps.sh), so the binary
 needs nothing but the system's webview and sound server.
 
-**Not yet in the app:** a real HRTF (**Stereo + ITD** is panning and the
-time difference, without the head's filtering); a measured mouth to ear on plain calls (no `abs-capture-time` from the app);
+**Not yet in the app:** a measured HRTF (**Binaural** is a spherical head:
+direction left to right, not up and down); a measured mouth to ear on plain calls (no `abs-capture-time` from the app);
 honouring a receiver's DTX request on calls; Linux on ARM; macOS releases
 (it builds, but CI has it switched off); signing (Windows warns before the
 first run).
