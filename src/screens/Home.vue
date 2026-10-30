@@ -168,7 +168,7 @@ onMounted(() => {
       </div>
 
       <div v-if="!isNative && downloads.length" class="get-app">
-        <span>Lowest latency in the app <small>v{{ appVersion }}</small></span>
+        <span>Less audio delay in the app <small>v{{ appVersion }}</small></span>
         <div class="get-app-buttons">
           <a
             v-for="d in downloads"

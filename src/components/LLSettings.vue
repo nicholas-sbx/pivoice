@@ -113,7 +113,7 @@ const buffer = computed(() => {
       label="Low-Latency Engine (Experimental)"
       :hint="
         llSupported
-          ? 'Replaces WebRTC’s audio with people who have it on too: the browser’s Opus at frame sizes WebRTC won’t do, our own jitter buffer, and packets that are never retransmitted.'
+          ? 'Replaces WebRTC audio between people who both have it on. It uses the browser’s Opus at frame sizes WebRTC doesn’t offer, its own jitter buffer, and packets that are never retransmitted.'
           : 'This browser doesn’t have WebCodecs audio, which the engine needs.'
       "
       :model-value="c.enabled && llSupported"

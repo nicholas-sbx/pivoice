@@ -20,7 +20,7 @@ const href = app ? downloadUrl(version, app.file(version)) : ''
 <template>
   <div v-if="show && app" class="banner" role="region" aria-label="Get the app">
     <span class="text">
-      Lower latency in the Pivoice app for {{ app.label }}: it does the audio itself, without the browser's buffers.
+      The Pivoice app adds less audio delay than the browser, because it plays and records sound itself.
     </span>
     <a class="get" :href="href" :download="app.file(version)" rel="noopener">Download for {{ app.label }}</a>
     <button type="button" class="x" aria-label="Dismiss" title="Dismiss" @click="updatePrefs({ appBannerDismissed: true })">

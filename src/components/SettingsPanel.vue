@@ -65,12 +65,12 @@ function label(d: MediaDeviceInfo, i: number, kind: string) {
 
 const modes: { value: SpatialMode; label: string; hint: string }[] = [
   { value: 'off', label: 'Off', hint: 'Straight to your ears. Lowest latency.' },
-  { value: 'stereo', label: 'Stereo', hint: 'Louder on the side they sit: panned by level only.' },
+  { value: 'stereo', label: 'Stereo', hint: 'Louder in the ear on their side. Panned by level only.' },
   isNative
     ? {
         value: 'hrtf',
         label: 'Binaural',
-        hint: 'A modelled head between your ears: the ear away from someone hears them up to 0.66 ms later and duller, the near one a little brighter, so voices sound placed around the table rather than just louder on one side. Only the far ear waits; the person across from you sounds just as with it off. On headphones.'
+        hint: 'Models a head between your ears. The far ear hears someone up to 0.66 ms later and duller, the near ear slightly brighter, so voices sit around the table. The person across from you sounds the same as with it off. Use headphones.'
       }
     : { value: 'hrtf', label: 'HRTF', hint: 'Full 3D around your head, on headphones.' }
 ]
@@ -351,7 +351,7 @@ onBeforeUnmount(() => {
           />
           <button type="button" class="reset-gain" @click="resetGain">Reset gain control</button>
         </template>
-        <p class="note spaced">All off, the app doesn’t touch your mic at all, and none of it costs anything.</p>
+        <p class="note spaced">With all three off, the app leaves your mic alone and adds no delay.</p>
       </template>
       <template v-else>
       <Switch
