@@ -95,7 +95,7 @@ onMounted(() => {
       </div>
       <h1>{{ fromInvite ? "You've been invited to a call" : 'Pull up a chair' }}</h1>
       <p class="sub">
-        {{ fromInvite ? 'Your friends are waiting for you.' : 'Make a room and share the code, or join one you were given.' }}
+        {{ fromInvite ? 'Enter a name to join.' : 'Make a room and share the code, or join one you were given.' }}
       </p>
 
       <div v-if="call.error" class="banner" role="alert">{{ call.error }}</div>
