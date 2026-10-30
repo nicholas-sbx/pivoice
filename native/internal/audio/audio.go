@@ -1,7 +1,7 @@
 // Package audio is the sound card: one full-duplex stream, microphone in
 // and speakers out in the same callback.
 //
-// That's the whole trick behind a pw-loopback-like round trip: one
+// That is what a pw-loopback-like round trip is made of: one
 // callback on one clock, with the smallest buffer the device will do
 // (PortAudio's "low latency" parameters), so nothing queues between
 // capture and playback, and we see each block of mic audio the moment the

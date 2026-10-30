@@ -261,7 +261,7 @@ reading of ~21 ms is a 1024-sample buffer. `pw-metadata -n settings 0
 clock.force-quantum 256` (0 puts it back), or starting Chrome with
 `PULSE_LATENCY_MSEC=5`, shrinks it.
 
-**Measured, not guessed.** The route card's mouth-to-ear figure is a real
+**How mouth to ear is measured.** The route card's figure is a real
 measurement whenever it can be (no `≈`):
 
 - WebRTC audio: our offers ask for the `abs-capture-time` RTP header
@@ -512,11 +512,11 @@ suppression and gain control are on by default, echo cancellation off
 
 | | What | Delay it adds | CPU (share of one core) |
 | --- | --- | --- | --- |
-| **Echo Cancellation** | [SpeexDSP](https://github.com/xiph/speexdsp)'s MDF adaptive filter (85 ms tail) and its residual echo suppressor, fed what the same duplex callback just played, so mic and reference are already lined up | up to one 2.7 ms block to fill its frame; none when the sound card works in 128-sample blocks, as it usually does | 51 µs per 2.7 ms frame: **1.9%** |
-| **Noise Suppression** | [RNNoise](https://github.com/xiph/rnnoise) 0.2, a small recurrent network, with a voice gate on top | 10 ms (its analysis window) + up to 10 ms to fill a frame; +10 ms with **Lookahead** | 61 µs per 10 ms frame: **0.6%** |
-| **Automatic Gain Control** | ours ([`native/internal/dsp/agc.go`](native/internal/dsp/agc.go)): tracks your speech level and the noise floor, brings speech to the **Target level** (−20 dBFS RMS by default), between −6 dB and the **Max boost** (+30 dB by default). It also remembers your recent peaks and never lifts them past the **Peak ceiling** (−3 dBFS), so a loud target doesn't end up living in the limiter; what still gets through (a sudden shout) meets a limiter at −1 dBFS that turns the whole sound down for a moment rather than bending each sample. It cuts at the **Fall time** (50 ms), lifts at the **Rise time** (1 s), and only moves while you're talking. All five are sliders, with a reset. Even a mic too quiet to clear the old −50 dBFS floor counts as talking now. It changes its own gain, never your system's mic volume | none: no lookahead | 0.3 µs per block: **0.01%** |
+| **Echo Cancellation** | [SpeexDSP](https://github.com/xiph/speexdsp)'s MDF adaptive filter (85 ms tail) and its residual echo suppressor, fed what the same duplex callback just played, so mic and reference are already lined up | up to one 2.7 ms block to fill its frame; none when the sound card works in 128-sample blocks, as it usually does | 51 µs per 2.7 ms frame: 1.9% |
+| **Noise Suppression** | [RNNoise](https://github.com/xiph/rnnoise) 0.2, a small recurrent network, with a voice gate on top | 10 ms (its analysis window) + up to 10 ms to fill a frame; +10 ms with **Lookahead** | 61 µs per 10 ms frame: 0.6% |
+| **Automatic Gain Control** | ours ([`native/internal/dsp/agc.go`](native/internal/dsp/agc.go)): tracks your speech level and the noise floor, brings speech to the **Target level** (−20 dBFS RMS by default), between −6 dB and the **Max boost** (+30 dB by default). It also remembers your recent peaks and never lifts them past the **Peak ceiling** (−3 dBFS), so a loud target doesn't end up living in the limiter; what still gets through (a sudden shout) meets a limiter at −1 dBFS that turns the whole sound down for a moment rather than bending each sample. It cuts at the **Fall time** (50 ms), lifts at the **Rise time** (1 s), and only moves while you're talking. All five are sliders, with a reset. Even a mic too quiet to clear the old −50 dBFS floor counts as talking now. It changes its own gain, never your system's mic volume | none: no lookahead | 0.3 µs per block: 0.01% |
 
-All three at once: 102 µs per 2.7 ms block, **3.8%** of one core. Measured
+All three at once: 102 µs per 2.7 ms block, 3.8% of one core. Measured
 by the **check** job's benchmarks on its Xeon Platinum 8370C (`go test
 -bench . ./internal/dsp/`, printed in the job's summary each run); RNNoise
 picks AVX2 or SSE4.1 when it starts, on x86-64.
@@ -545,7 +545,7 @@ picks AVX2 or SSE4.1 when it starts, on x86-64.
   mouth-to-ear figure) include the processing, and the mic test shows what
   it costs. In the app's own loop on the test's fake sound card: 10.3 ms
   with nothing on, 10.9 ms with echo cancellation and gain control.
-- **Safe.** Fixed-size frames in Go-owned buffers, no allocation per block
+- **Fixed buffers.** Fixed-size frames in Go-owned buffers, no allocation per block
   (a test holds the whole chain to zero), and both libraries built from
   pinned sources (a checksum for RNNoise's release, a commit for
   SpeexDSP's tag) into the binary, as PortAudio and Opus are.
@@ -889,8 +889,8 @@ checks for them and has no environment:
 ## Later
 
 - **Log in with Discord.** Eventually you'll sign in with Discord and the app
-  will take your username and avatar from there, instead of typing a name and
-  getting a blobatar. Not started: for now it's a typed name and a blobatar.
+  will take your username and avatar from there. Not started: for now it's a
+  typed name and a blobatar.
 
 ## Project map
 
