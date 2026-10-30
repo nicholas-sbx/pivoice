@@ -181,15 +181,17 @@ const icon = computed(() => Math.round(12 * (props.scale ?? 1)))
 .bare .felt {
   display: none;
 }
+/* No fades: the overlay draws without the GPU, where each frame of one is
+   painted again in full, and someone's ring changes several times a second
+   in a lively call. Snapping, each change is one frame. */
 .bare .seat .ring,
 .bare .seat .tag {
   opacity: var(--dim);
-  transition: opacity 0.2s ease;
+  transition: none;
 }
 .bare .seat.speaking .ring,
 .bare .seat.speaking .tag {
   opacity: 1;
-  transition-duration: 0.05s;
 }
 .bare .seat.away .ring {
   opacity: calc(var(--dim) * 0.45);
