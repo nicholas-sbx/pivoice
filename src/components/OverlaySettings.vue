@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { call, updatePrefs } from '../call'
 import type { OverlayPrefs } from '../lib/prefs'
+import { native } from '../native/bridge'
 import { listMonitors, overlayError, overlayPlacing } from '../native/overlay'
 import type { AppMonitor, OverlayAnchor } from '../native/protocol'
 import Slider from './Slider.vue'
@@ -80,6 +81,11 @@ const map = computed(() => {
     <p v-if="!onTop" class="note">
       This desktop (GNOME) doesn't let apps keep a window on top or say where it goes. Move the overlay with Super and drag, and pin it with
       Alt+Space, Always on Top. It takes clicks here, so you can.
+    </p>
+    <p v-if="native.app?.os === 'windows'" class="note">
+      Over games too: borderless or windowed full screen, and most that say exclusive (Windows runs them through the desktop anyway).
+      Not over a game in true exclusive full screen, which draws past the desktop altogether: if it doesn't show, set the game to
+      borderless, or leave Windows' fullscreen optimizations on for it.
     </p>
 
     <label class="field">
