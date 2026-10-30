@@ -601,10 +601,18 @@ Costs, and what isn't done:
 - **The seats come from the page**, where it has them (the page's seats
   depend on who came and went, so the overlay doesn't work them out again),
   sent when they change; the overlay slides its faces there itself.
-- **Measured** on Linux (headless Sway, software rendering, one person
-  talking for 8 s): the overlay's web process used 10 ms of CPU, about 0.1%
-  of one core, and holds about 36 MB of its own, drawn without the GPU
-  (about 130 MB with it).
+- **Measured** on Linux (headless Sway and X11, software rendering, over
+  8 s). One person talking steadily: the overlay's web process used 10 ms
+  of CPU, about 0.1% of one core. A call as busy as they get, someone's ring
+  coming on or going off every 250 ms the whole time: 340 ms in the
+  overlay's web process and 140 ms in the app, about 6% of one core all
+  told, since each change is one frame (it was three times that while the
+  rings faded in and out, every frame of a fade painted again in software,
+  so they don't fade in the overlay). It holds about 40 MB of its own,
+  drawn without the GPU (about 130 MB with it).
+- **Off is gone**: switched off (or out of a call), there's no overlay
+  window and its web process has exited, checked by counting both before
+  it's first shown, while it's up, and after it's taken down, twice over.
 - **Windows isn't tried on a real desktop yet**: the window styles are the
   ones other apps use to put WebView2 over the desktop, and CI builds them,
   but the see-through background and the clicks going through want a look
