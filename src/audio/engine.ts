@@ -6,13 +6,12 @@ import { seatDirection } from '../lib/seats'
  *
  * Built for the lowest latency first: the microphone comes in raw (no echo
  * cancellation, noise suppression or auto gain unless you turn them on;
- * everyone's on headphones), and with spatial audio off each person plays
- * straight out of a plain <audio> element, the shortest path the browser
- * has from the network to your ears.
+ * everyone's on headphones), and goes to the low-latency engine (audio/ll),
+ * which also brings everyone else in. Each voice plays through Web Audio:
  *
- * With spatial audio on, each voice goes through Web Audio instead:
+ *   their playback node → gain (their volume) → [PannerNode] → master → speakers
  *
- *   remote stream → gain (their volume) → PannerNode → master → speakers
+ * With spatial audio on, the panner places them:
  *
  * "Stereo" pans with the equal-power law; "HRTF" uses the browser's built-in
  * head-related transfer function, which makes voices sound like they're
@@ -20,10 +19,8 @@ import { seatDirection } from '../lib/seats'
  * you sit at the bottom facing the middle and everyone else is where their
  * seat is. No head tracking: the listener never turns.
  *
- * Each person has one channel strip (analyser, gain, panner) that either
- * engine can feed: the WebRTC stream above, or the low-latency engine's
- * playback node (audio/ll), which always plays through Web Audio. When both
- * are there the low-latency one wins and the WebRTC element stays muted.
+ * Each person has one channel strip (analyser, gain, panner), fed by the
+ * low-latency engine's playback node for them.
  */
 
 /** Per-person volume goes up to 200%, as Discord's does. */
@@ -49,8 +46,7 @@ export interface MicSettings {
 export type MicProblem = 'denied' | 'missing' | 'failed' | null
 
 interface Remote {
-  media: { stream: MediaStream; el: HTMLAudioElement; source: MediaStreamAudioSourceNode } | null
-  /** The low-latency engine's playback node for them, when that's what's carrying their voice. */
+  /** The low-latency engine's playback node for them. */
   ll: AudioNode | null
   analyser: AnalyserNode
   gain: GainNode
@@ -61,16 +57,10 @@ interface Remote {
 
 export class AudioEngine {
   readonly ctx: AudioContext
-  /** What every call sends. The track inside is swapped when you change microphone. */
-  readonly sendStream = new MediaStream()
   micProblem: MicProblem = null
   private master: GainNode
-  /**
-   * The mic as heard locally: a clone of the track we send, so muting what
-   * we send (track.enabled) doesn't silence the meter, the low-latency
-   * engine's own gate, or the mic test.
-   */
-  private mic: { stream: MediaStream; local: MediaStreamTrack; source: MediaStreamAudioSourceNode; analyser: AnalyserNode } | null = null
+  /** The mic. Muting is the low-latency engine's gate, so the meter and the mic test still hear it. */
+  private mic: { stream: MediaStream; source: MediaStreamAudioSourceNode; analyser: AnalyserNode } | null = null
   /** Straight to the speakers, past deafen: what the mic test plays through. */
   readonly testOut: GainNode
   private rawLoop = false
@@ -80,9 +70,8 @@ export class AudioEngine {
   private micOn = true
   private volumes = new Map<string, number>()
   private silenced = new Set<string>()
-  /** Where everyone sits, kept for people whose voice isn't here yet (or comes and goes, switching engines). */
+  /** Where everyone sits, kept for people whose voice isn't here yet (or comes and goes). */
   private angles = new Map<string, number>()
-  private outputId = ''
   private buf = new Float32Array(1024)
   private activityOf = new ActivityTracker()
 
@@ -90,9 +79,9 @@ export class AudioEngine {
     // Created from a click, so it starts running. A latency hint of 0 asks
     // for the smallest output buffer the device supports (Chrome: 128
     // frames), well under what 'interactive' gets (~10 ms + device).
-    // 48 kHz is what Opus and the low-latency engine run at, so nothing has
-    // to be resampled on the way in or out (the browser resamples to the
-    // hardware if it has to).
+    // 48 kHz is what the low-latency engine runs at, so nothing has to be
+    // resampled on the way in or out (the browser resamples to the hardware
+    // if it has to).
     this.ctx = new AudioContext({ latencyHint: LATENCY_HINT[buffer], sampleRate: 48_000 })
     this.master = this.ctx.createGain()
     this.master.connect(this.ctx.destination)
@@ -100,8 +89,8 @@ export class AudioEngine {
     this.testOut.connect(this.ctx.destination)
   }
 
-  /** Opens the microphone (or a silent stand-in if we can't have it) and returns the track to send. */
-  async openMic(settings: MicSettings): Promise<MediaStreamTrack> {
+  /** Opens the microphone, or notes why we can't have it (then you listen only). */
+  async openMic(settings: MicSettings): Promise<void> {
     if (this.ctx.state === 'suspended') void this.ctx.resume()
     let stream: MediaStream | null = null
     this.micProblem = null
@@ -133,31 +122,19 @@ export class AudioEngine {
     }
 
     this.mic?.source.disconnect()
-    this.mic?.local.stop()
     for (const t of this.mic?.stream.getTracks() ?? []) t.stop()
     this.mic = null
 
-    let track: MediaStreamTrack
     let source: MediaStreamAudioSourceNode | null = null
     if (stream) {
-      track = stream.getAudioTracks()[0]
-      const local = track.clone()
-      source = this.ctx.createMediaStreamSource(new MediaStream([local]))
+      source = this.ctx.createMediaStreamSource(stream)
       const analyser = this.ctx.createAnalyser()
       analyser.fftSize = 1024
       source.connect(analyser)
-      this.mic = { stream, local, source, analyser }
+      this.mic = { stream, source, analyser }
       if (this.rawLoop) source.connect(this.testOut)
-    } else {
-      // Listen-only: calls still need something to send.
-      track = this.ctx.createMediaStreamDestination().stream.getAudioTracks()[0]
     }
-    track.contentHint = 'speech'
-    track.enabled = this.micOn
-    for (const old of this.sendStream.getAudioTracks()) this.sendStream.removeTrack(old)
-    this.sendStream.addTrack(track)
     this.onMic?.(source)
-    return track
   }
 
   /** Told about every new microphone source (null when there's none), for the low-latency engine. */
@@ -189,11 +166,6 @@ export class AudioEngine {
     else this.mic.source.disconnect(this.testOut)
   }
 
-  /** A fresh copy of the mic, for the WebRTC mic test (stop it when done). */
-  micClone(): MediaStreamTrack | null {
-    return this.mic?.local.clone() ?? null
-  }
-
   /** The browser's own idea of the raw loop: mic latency + Web Audio's output buffer + the device's. */
   rawLoopbackMs(): number {
     return (this.captureLatencyMs() ?? 0) + (this.ctx.baseLatency + (this.ctx.outputLatency || 0)) * 1000
@@ -203,9 +175,9 @@ export class AudioEngine {
     return this.mic?.stream.getAudioTracks()[0]?.getSettings().deviceId ?? ''
   }
 
+  /** Whether you count as speaking (muted, you don't); what goes out is the low-latency engine's gate. */
   setMicEnabled(on: boolean) {
     this.micOn = on
-    for (const t of this.sendStream.getAudioTracks()) t.enabled = on
   }
 
   setDeafened(on: boolean) {
@@ -249,36 +221,12 @@ export class AudioEngine {
       coneInnerAngle: 360,
       coneOuterAngle: 360
     })
-    r = { media: null, ll: null, analyser, gain, panner, angle: this.angles.get(id) ?? Math.PI }
+    r = { ll: null, analyser, gain, panner, angle: this.angles.get(id) ?? Math.PI }
     this.remotes.set(id, r)
     return r
   }
 
-  addRemote(id: string, stream: MediaStream) {
-    const r = this.strip(id)
-    if (r.media?.stream === stream) return
-    this.dropMedia(r)
-    // Chrome only feeds a remote WebRTC stream into Web Audio while a media
-    // element is playing it, so there's always one (muted when Web Audio is
-    // doing the playing).
-    const el = new Audio()
-    el.autoplay = true
-    el.srcObject = stream
-    if (this.outputId) void el.setSinkId?.(this.outputId).catch(() => {})
-    r.media = { stream, el, source: this.ctx.createMediaStreamSource(stream) }
-    this.apply(id, r)
-    void el.play().catch(() => {})
-  }
-
-  removeRemote(id: string) {
-    const r = this.remotes.get(id)
-    if (!r) return
-    this.dropMedia(r)
-    if (!r.ll) this.forget(id, r)
-    else this.apply(id, r)
-  }
-
-  /** The low-latency engine has a voice for them: play that instead. */
+  /** The low-latency engine has a voice for them: play it. */
   attachLL(id: string, node: AudioNode) {
     const r = this.strip(id)
     if (r.ll === node) return
@@ -292,16 +240,7 @@ export class AudioEngine {
     if (!r?.ll) return
     r.ll.disconnect()
     r.ll = null
-    if (!r.media) this.forget(id, r)
-    else this.apply(id, r)
-  }
-
-  private dropMedia(r: Remote) {
-    if (!r.media) return
-    r.media.el.pause()
-    r.media.el.srcObject = null
-    r.media.source.disconnect()
-    r.media = null
+    this.forget(id, r)
   }
 
   private forget(id: string, r: Remote) {
@@ -334,24 +273,13 @@ export class AudioEngine {
 
   private apply(id: string, r: Remote) {
     const volume = this.silenced.has(id) ? 0 : (this.volumes.get(id) ?? 1)
-    // Which source feeds the strip.
-    const input: AudioNode | null = r.ll ?? r.media?.source ?? null
-    r.media?.source.disconnect()
     r.ll?.disconnect()
-    if (input) {
-      input.connect(r.analyser)
-      input.connect(r.gain)
+    if (r.ll) {
+      r.ll.connect(r.analyser)
+      r.ll.connect(r.gain)
     }
     r.gain.disconnect()
     r.panner.disconnect()
-    if (r.media) {
-      // The element plays only in the lowest-latency case: WebRTC audio, no
-      // panning, and no louder than they are (an element can't go past 1).
-      const direct = !r.ll && this.mode === 'off' && volume <= 1
-      r.media.el.muted = !direct || this.deafened
-      r.media.el.volume = Math.min(1, volume)
-      if (direct) return
-    }
     r.gain.gain.value = volume
     if (this.mode === 'off') {
       r.gain.connect(this.master)
@@ -364,14 +292,13 @@ export class AudioEngine {
   }
 
   async setOutputDevice(deviceId: string) {
-    this.outputId = deviceId
     const ctx = this.ctx as AudioContext & { setSinkId?: (id: string) => Promise<void> }
     await ctx.setSinkId?.(deviceId).catch(() => {})
-    for (const r of this.remotes.values()) await r.media?.el.setSinkId?.(deviceId).catch(() => {})
   }
 
+  /** Everyone plays through the audio context, so it's the context that has to be able to switch. */
   static canPickOutput(): boolean {
-    return typeof HTMLMediaElement !== 'undefined' && 'setSinkId' in HTMLMediaElement.prototype
+    return typeof AudioContext !== 'undefined' && 'setSinkId' in AudioContext.prototype
   }
 
   private rms(analyser: AnalyserNode): number {
@@ -396,13 +323,10 @@ export class AudioEngine {
 
   close() {
     for (const [id, r] of [...this.remotes]) {
-      this.dropMedia(r)
       r.ll?.disconnect()
       this.forget(id, r)
     }
-    this.mic?.local.stop()
     for (const t of this.mic?.stream.getTracks() ?? []) t.stop()
-    for (const t of this.sendStream.getTracks()) t.stop()
     this.mic = null
     void this.ctx.close().catch(() => {})
   }

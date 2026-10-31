@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { LL_DEFAULTS, frameSamples, llDefaults, sanitizeLL } from '../src/audio/ll/config'
+import { LL_DEFAULTS, llDefaults, sanitizeLL } from '../src/audio/ll/config'
 import { JitterBuffer, type JitterConfig } from '../src/audio/ll/jitter'
 import { PING, PONG, Unwrapper, bytesToPcm, decodePacket, decodePing, encodePacket, encodePing, pcmToBytes } from '../src/audio/ll/packet'
 
@@ -54,27 +54,20 @@ describe('packets', () => {
 
 describe('config', () => {
   it('fills in defaults and clamps', () => {
-    expect(sanitizeLL(null, true)).toEqual(LL_DEFAULTS)
-    // On in a browser and in the app, with redundancy and silence suppression off.
-    expect(sanitizeLL(null, false)).toEqual(LL_DEFAULTS)
-    expect(LL_DEFAULTS).toMatchObject({ enabled: true, codec: 'pcm', redundancy: 0, dtx: false })
-    expect(llDefaults(true).enabled).toBe(true)
-    // Settings saved before rev 3 reset to the defaults.
-    expect(sanitizeLL({ enabled: true, frameMs: 2.5, dtxThresholdDb: -55 }, true)).toEqual(LL_DEFAULTS)
-    // In the app, on by default since rev 3: an "off" saved before then was just the old default.
-    expect(sanitizeLL({ rev: 2, enabled: false }, true).enabled).toBe(true)
-    expect(sanitizeLL({ rev: 3, enabled: false }, true).enabled).toBe(false)
-    // Tuning saved before rev 5 (redundancy, silence suppression) resets; a browser's "off" saved at rev 4 was the old default.
-    const old = sanitizeLL({ rev: 4, enabled: false, frameMs: 10, redundancy: 1, dtx: true }, false)
-    expect(old).toEqual(LL_DEFAULTS)
-    expect(sanitizeLL({ rev: LL_DEFAULTS.rev, enabled: true }, false).enabled).toBe(true)
-    const c = sanitizeLL({ rev: LL_DEFAULTS.rev, frameMs: 2.5, bitrateKbps: 9999, minBufferMs: 50, maxBufferMs: 20, redundancy: 7, application: 'nope' }, true)
-    expect(c.frameMs).toBe(2.5)
-    expect(c.bitrateKbps).toBe(256)
+    expect(sanitizeLL(null)).toEqual(LL_DEFAULTS)
+    expect(LL_DEFAULTS).toMatchObject({ redundancy: 0, dtx: false })
+    expect(llDefaults()).toEqual(LL_DEFAULTS)
+    // Settings saved before rev 5 reset to the defaults.
+    expect(sanitizeLL({ rev: 4, redundancy: 1, dtx: true, dtxThresholdDb: -55 })).toEqual(LL_DEFAULTS)
+    // Tuning from rev 5 (before Opus went) carries over; what's gone with it is dropped.
+    const kept = sanitizeLL({ rev: 5, enabled: false, codec: 'opus', frameMs: 10, redundancy: 1, dtx: true })
+    expect(kept).toEqual({ ...LL_DEFAULTS, redundancy: 1, dtx: true })
+    expect(kept).not.toHaveProperty('codec')
+    expect(kept).not.toHaveProperty('enabled')
+    const c = sanitizeLL({ rev: LL_DEFAULTS.rev, minBufferMs: 50, maxBufferMs: 20, redundancy: 7, concealMs: 9999 })
     expect(c.maxBufferMs).toBe(50)
     expect(c.redundancy).toBe(LL_DEFAULTS.redundancy)
-    expect(c.application).toBe('lowdelay')
-    expect(frameSamples(2.5)).toBe(120)
+    expect(c.concealMs).toBe(60)
   })
 })
 

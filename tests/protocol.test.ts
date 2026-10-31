@@ -19,13 +19,12 @@ const member = (n: number, extra: Partial<Member> = {}): Member => ({
   joinedAt: n * 10,
   muted: false,
   deafened: false,
-  ll: false,
   away: false,
   ...extra
 })
 
 const KEY = 'A'.repeat(43)
-const hello = (extra: Record<string, unknown> = {}) => ({ t: 'hello', v: 2, key: KEY, name: 'Ada', muted: false, deafened: false, ll: false, resume: null, ...extra })
+const hello = (extra: Record<string, unknown> = {}) => ({ t: 'hello', v: 3, key: KEY, name: 'Ada', muted: false, deafened: false, resume: null, ...extra })
 
 describe('room codes', () => {
   it('generates valid codes', () => {
@@ -66,7 +65,7 @@ describe('messages', () => {
     expect(parseClientMsg(hello({ name: '   ' }))).toBeNull()
     expect(parseClientMsg(hello({ key: 'not-a-key' }))).toBeNull()
     expect(parseClientMsg(hello({ resume: 'yesterday' }))).toBeNull()
-    expect(parseClientMsg({ t: 'state', muted: 'yes', deafened: false, ll: false })).toBeNull()
+    expect(parseClientMsg({ t: 'state', muted: 'yes', deafened: false })).toBeNull()
     expect(parseClientMsg('hello')).toBeNull()
     expect(parseClientMsg({ t: 'nope' })).toBeNull()
   })
@@ -88,28 +87,26 @@ describe('messages', () => {
 describe('signals', () => {
   const link = '0123456789abcdef'
   it('passes descriptions, candidates and goodbyes', () => {
-    expect(parseSignal({ kind: 'voice', link, sdp: { type: 'offer', sdp: 'v=0' } })).toEqual({ kind: 'voice', link, sdp: { type: 'offer', sdp: 'v=0' } })
-    expect(parseSignal({ kind: 'll', link, ice: { candidate: 'candidate:1', sdpMid: '0', sdpMLineIndex: 0 } })).toEqual({
-      kind: 'll',
+    expect(parseSignal({ link, sdp: { type: 'offer', sdp: 'v=0' } })).toEqual({ link, sdp: { type: 'offer', sdp: 'v=0' } })
+    expect(parseSignal({ link, ice: { candidate: 'candidate:1', sdpMid: '0', sdpMLineIndex: 0 } })).toEqual({
       link,
       ice: { candidate: 'candidate:1', sdpMid: '0', sdpMLineIndex: 0, usernameFragment: null }
     })
-    expect(parseSignal({ kind: 'voice', link, bye: true })).toEqual({ kind: 'voice', link, bye: true })
+    expect(parseSignal({ link, bye: true })).toEqual({ link, bye: true })
   })
   it('keeps only the fields it knows', () => {
-    const s = parseSignal({ kind: 'voice', link, sdp: { type: 'answer', sdp: 'v=0', extra: 1 }, from: 'someone else' })
-    expect(s).toEqual({ kind: 'voice', link, sdp: { type: 'answer', sdp: 'v=0' } })
+    const s = parseSignal({ link, sdp: { type: 'answer', sdp: 'v=0', extra: 1 }, from: 'someone else' })
+    expect(s).toEqual({ link, sdp: { type: 'answer', sdp: 'v=0' } })
   })
   it('rejects anything off', () => {
-    expect(parseSignal({ kind: 'video', link, bye: true })).toBeNull()
-    expect(parseSignal({ kind: 'voice', link: 'x', bye: true })).toBeNull()
-    expect(parseSignal({ kind: 'voice', link, sdp: { type: 'pranswer', sdp: 'v=0' } })).toBeNull()
-    expect(parseSignal({ kind: 'voice', link, sdp: { type: 'offer', sdp: 'x'.repeat(20_000) } })).toBeNull()
-    expect(parseSignal({ kind: 'voice', link, ice: { candidate: 'c', sdpMLineIndex: -1 } })).toBeNull()
-    expect(parseSignal({ kind: 'voice', link })).toBeNull()
+    expect(parseSignal({ link: 'x', bye: true })).toBeNull()
+    expect(parseSignal({ link, sdp: { type: 'pranswer', sdp: 'v=0' } })).toBeNull()
+    expect(parseSignal({ link, sdp: { type: 'offer', sdp: 'x'.repeat(20_000) } })).toBeNull()
+    expect(parseSignal({ link, ice: { candidate: 'c', sdpMLineIndex: -1 } })).toBeNull()
+    expect(parseSignal({ link })).toBeNull()
   })
   it('only lets a member signal another member', () => {
-    expect(parseClientMsg({ t: 'signal', to: member(1).id, signal: { kind: 'voice', link, bye: true } })).not.toBeNull()
-    expect(parseClientMsg({ t: 'signal', to: 'everyone', signal: { kind: 'voice', link, bye: true } })).toBeNull()
+    expect(parseClientMsg({ t: 'signal', to: member(1).id, signal: { link, bye: true } })).not.toBeNull()
+    expect(parseClientMsg({ t: 'signal', to: 'everyone', signal: { link, bye: true } })).toBeNull()
   })
 })

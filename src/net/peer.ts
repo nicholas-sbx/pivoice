@@ -1,8 +1,9 @@
-import type { IceCandidate, LinkKind, Signal } from './protocol'
+import type { IceCandidate, Signal } from './protocol'
 
 /**
- * One RTCPeerConnection to one person, set up through the room. The one
- * with the smaller id always makes the offer, so two never cross. ICE
+ * One RTCPeerConnection to one person, set up through the room, carrying
+ * only the low-latency engine's data channel (no media: see session.ts).
+ * The one with the smaller id always makes the offer, so two never cross. ICE
  * candidates trickle both ways as they're found; any that arrive before
  * the other side's description wait for it.
  */
@@ -13,17 +14,16 @@ import type { IceCandidate, LinkKind, Signal } from './protocol'
  */
 export interface Link {
   readonly peer: string
-  readonly kind: LinkKind
   /** Picked by the offerer; ties every signal to this one connection. */
   readonly id: string
   readonly offerer: boolean
   readonly closed: boolean
   /** Called once, however it ended. */
   onClose: (() => void) | null
-  /** Offerer: once whatever this link carries has been added. */
+  /** Offerer: once the data channel has been added. */
   offer(): Promise<void> | void
-  /** Answerer: their offer. `prepare` runs after it's set and before we answer, to attach what we send. */
-  answer(sdp: string, prepare?: () => void): Promise<void> | void
+  /** Answerer: their offer. */
+  answer(sdp: string): Promise<void> | void
   /** The rest of the conversation: their answer, their candidates, their goodbye. */
   onSignal(signal: Signal): Promise<void> | void
   /** `sayBye`: tell the other end, so they don't wait to notice. */
@@ -32,8 +32,6 @@ export interface Link {
 
 export interface PeerLinkOptions {
   iceServers: RTCIceServer[]
-  /** Applied to our own descriptions before they're set and sent (see sdp.ts). */
-  sdpTransform?: (sdp: string) => string
   /** Hand a signal to the room for the other end. */
   signal(signal: Signal): void
 }
@@ -51,7 +49,6 @@ export class PeerLink implements Link {
 
   constructor(
     readonly peer: string,
-    readonly kind: LinkKind,
     /** Picked by the offerer; ties every signal to this one connection. */
     readonly id: string,
     readonly offerer: boolean,
@@ -69,11 +66,11 @@ export class PeerLink implements Link {
     }
   }
 
-  /** Offerer: once whatever this link carries has been added. */
+  /** Offerer: once the data channel has been added. */
   async offer() {
     try {
       const offer = await this.pc.createOffer()
-      const sdp = this.transform(offer.sdp)
+      const sdp = offer.sdp ?? ''
       await this.pc.setLocalDescription({ type: 'offer', sdp })
       this.send({ sdp: { type: 'offer', sdp } })
     } catch (e) {
@@ -81,15 +78,14 @@ export class PeerLink implements Link {
     }
   }
 
-  /** Answerer: their offer. `prepare` runs after it's set and before we answer, to attach what we send. */
-  async answer(sdp: string, prepare?: () => void) {
+  /** Answerer: their offer. */
+  async answer(sdp: string) {
     try {
       await this.pc.setRemoteDescription({ type: 'offer', sdp })
       await this.flush()
       if (this.closed) return
-      prepare?.()
       const answer = await this.pc.createAnswer()
-      const ours = this.transform(answer.sdp)
+      const ours = answer.sdp ?? ''
       await this.pc.setLocalDescription({ type: 'answer', sdp: ours })
       this.send({ sdp: { type: 'answer', sdp: ours } })
     } catch (e) {
@@ -130,17 +126,13 @@ export class PeerLink implements Link {
     for (const c of pending) await this.pc.addIceCandidate(c).catch(() => {})
   }
 
-  private transform(sdp: string | undefined): string {
-    return this.opts.sdpTransform ? this.opts.sdpTransform(sdp ?? '') : (sdp ?? '')
-  }
-
   private send(body: SignalBody) {
-    if (!this.closed) this.opts.signal({ kind: this.kind, link: this.id, ...body } as Signal)
+    if (!this.closed) this.opts.signal({ link: this.id, ...body } as Signal)
   }
 
   private fail(what: string, e: unknown) {
     if (this.closed) return
-    console.warn(`${this.kind} link ${what} failed`, e)
+    console.warn(`link ${what} failed`, e)
     this.close()
   }
 }

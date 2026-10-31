@@ -7,7 +7,7 @@ import { driveOverlay, overlayPlacing, type OverlayCall } from '../src/native/ov
 import type { FromApp, ToApp } from '../src/native/protocol'
 import type { Member } from '../src/net/protocol'
 
-const member = (id: string): Member => ({ id, name: id.toUpperCase(), joinedAt: 0, muted: false, deafened: false, ll: false, away: false })
+const member = (id: string): Member => ({ id, name: id.toUpperCase(), joinedAt: 0, muted: false, deafened: false, away: false })
 
 /** Stands in for the app: remembers what it's sent, says yes to showing the overlay. */
 function fakeApp() {

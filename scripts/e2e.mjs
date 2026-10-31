@@ -76,7 +76,7 @@ try {
   ok(`Alice made room ${code}`)
 
   // On a computer there's an app for, the website offers it under the top bar; the X puts that away for good.
-  await alice.waitForSelector('.banner:has-text("Pivoice app")', { timeout: 5_000 }).catch(() => {
+  await alice.waitForSelector('.banner[aria-label="Get the app"]', { timeout: 5_000 }).catch(() => {
     throw new Error('no app banner on a desktop browser')
   })
   await alice.click('.banner button[aria-label="Dismiss"]')
@@ -100,7 +100,7 @@ try {
     if (off.length) throw new Error(`blurry at ${w}px wide: ${off.join('; ')}`)
   }
   ok('the call controls, the settings panel and the tooltips sit on whole pixels')
-  for (const label of ['Raw', 'WebRTC audio', 'Low latency']) {
+  for (const label of ['Raw', 'As in a call']) {
     await alice.click(`.seg button:has-text("${label}")`)
     if (!(await alice.$('.test-btn.stop'))) await alice.click('.test-btn')
     await alice.waitForFunction(() => /\d+ ms/.test(document.querySelector('.test-out strong')?.textContent ?? ''), null, { timeout: 15_000 }).catch(() => {
@@ -336,47 +336,34 @@ try {
   await expectSeats(dan, 5, 'Dan after Finn left')
   ok('Finn left, five remain')
 
-  // In a browser the low-latency engine is off by default (the app has it on),
-  // so everyone's on WebRTC audio; then they all turn it on, Eve turns it back
-  // off, and only the pairs with her go back to WebRTC audio.
+  // Everyone hears everyone through the low-latency engine, raw PCM over a
+  // data channel and nothing else: the route card shows a PCM bitrate.
   const eve = extra[0]
-  const toggleLL = async p => {
-    await p.click('button[aria-label="Voice Settings"]')
-    await p.click('button[role="tab"]:has-text("Low Latency")')
-    await p.click('text=Low-Latency Engine (Experimental)')
-    await p.click('button[aria-label="Voice Settings"]')
-  }
   const cardFor = (page, name) =>
     page.$$eval(
       '.seat',
       (els, name) => els.find(e => e.querySelector('.name')?.textContent.trim() === name)?.querySelector('.route')?.innerText ?? '',
       name
     )
-  const engineOf = (page, name, re) =>
-    page.waitForFunction(
-      ([name, src]) => {
-        const seat = [...document.querySelectorAll('.seat')].find(e => e.querySelector('.name')?.textContent.trim() === name)
-        return new RegExp(src, 'i').test(seat?.querySelector('.route')?.textContent ?? '')
-      },
-      [name, re.source],
-      { timeout: 20_000 }
-    )
-  await engineOf(dan, 'Eve', /webrtc audio/).catch(() => {
-    throw new Error('in a browser, the low-latency engine should be off by default')
+  await dan.waitForFunction(
+    name => {
+      const seat = [...document.querySelectorAll('.seat')].find(e => e.querySelector('.name')?.textContent.trim() === name)
+      const kbps = /(\d+) kbps/.exec(seat?.querySelector('.route')?.textContent ?? '')
+      return kbps && Number(kbps[1]) > 300
+    },
+    'Eve',
+    { timeout: 20_000 }
+  ).catch(async () => {
+    throw new Error('Eve should reach Dan as raw PCM (hundreds of kbps): ' + (await cardFor(dan, 'Eve')))
   })
-  ok('low-latency engine off by default in a browser')
-  for (const p of [bob, cara, dan, eve, extra[2]]) await toggleLL(p)
-  await engineOf(dan, 'Eve', /low-latency engine/).catch(() => {
-    throw new Error('everyone turned the low-latency engine on but it never took over')
-  })
-  await dan.waitForTimeout(3000)
-  const llCard = await cardFor(dan, 'Eve')
-  if (!/pcm/i.test(llCard)) throw new Error('the low-latency engine should send raw PCM by default: ' + llCard)
-  await toggleLL(eve)
-  await engineOf(dan, 'Eve', /webrtc audio/).catch(() => {
-    throw new Error('Eve turned the low-latency engine off but Dan still has her on it')
-  })
-  // Still hearing her, now over WebRTC audio.
+  // And no media at all: every peer connection carries only the data channel.
+  const media = await dan.evaluate(() =>
+    window.__pv
+      .session()
+      .getLLStats()
+      .then(m => [...m.values()].flatMap(r => [...r.values()]).filter(s => s.type === 'inbound-rtp' || s.type === 'outbound-rtp').length)
+  )
+  if (media) throw new Error(`Dan's connections carry ${media} RTP streams; there should be none`)
   await eve.click('button[aria-label="Mute"]')
   await eve.click('button[aria-label="Unmute"]')
   await dan.waitForFunction(
@@ -384,26 +371,16 @@ try {
     null,
     { timeout: 15_000 }
   ).catch(() => {
-    throw new Error('Eve back on WebRTC audio, but Dan never heard her')
+    throw new Error('Eve muted and unmuted, but Dan never heard her again')
   })
-  await dan.waitForTimeout(4000)
   const one = s => s.replace(/\s*\n\s*/g, ' | ')
-  ok('Eve on low-latency engine: ' + one(llCard))
-  ok('Eve on WebRTC audio:       ' + one(await cardFor(dan, 'Eve')))
-  // Everyone else stays on the engine, and still works.
-  if (!/low-latency engine/i.test(await cardFor(dan, 'Bob'))) throw new Error('Bob should still be on the low-latency engine')
-  ok('the others stay on the low-latency engine')
-  await toggleLL(eve)
-  await engineOf(dan, 'Eve', /low-latency engine/).catch(() => {
-    throw new Error('Eve turned the low-latency engine back on but it never took over')
-  })
-  ok('Eve back on the low-latency engine')
+  ok('Eve to Dan, raw PCM, no RTP: ' + one(await cardFor(dan, 'Eve')))
   if (SHOTS) {
     await dan.mouse.move(5, 300)
     await dan.waitForTimeout(500)
     await dan.screenshot({ path: `${SHOTS}/ll-route.png` })
     await dan.click('button[aria-label="Voice Settings"]')
-    await dan.click('button[role="tab"]:has-text("Low Latency")')
+    await dan.click('button[role="tab"]:has-text("Latency")')
     await dan.waitForTimeout(300)
     await dan.screenshot({ path: `${SHOTS}/ll-settings.png` })
     await dan.click('button[aria-label="Voice Settings"]')
@@ -412,7 +389,7 @@ try {
   // A setting that needs a fresh connection reconnects on the spot: Dan stays in the room, as himself.
   const before = await seats(dan)
   await dan.click('button[aria-label="Voice Settings"]')
-  await dan.click('button[role="tab"]:has-text("Low Latency")')
+  await dan.click('button[role="tab"]:has-text("Latency")')
   await dan.click('button:has-text("Browser default")')
   await dan.click('button[aria-label="Voice Settings"]')
   await dan.waitForSelector('.status:has-text("Reconnecting")', { timeout: 5_000 }).catch(() => {})

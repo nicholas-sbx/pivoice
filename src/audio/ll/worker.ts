@@ -2,10 +2,11 @@
  * The low-latency engine's network half, in a dedicated worker so nothing
  * the page does (rendering, layout, Vue) can delay a packet:
  *
- *   pv-capture worklet ──frames──▶ here: our silence gate, WebCodecs encode,
- *                                  packet (+ redundancy) ──▶ data channels
- *   data channels ──packets──▶ here: WebCodecs decode ──pcm──▶ each person's
- *                                  pv-playback worklet
+ *   pv-capture worklet ──frames──▶ here: our silence gate, raw PCM packet
+ *                                  (+ redundancy) ──▶ data channels
+ *   data channels ──packets──▶ here ──pcm──▶ each person's pv-playback worklet
+ *
+ * No codec: the samples go out as they are (see the README, "Why no Opus").
  *
  * The data channels are transferred in at creation (Chrome allows that
  * only then). Where a browser can't transfer them the page relays packets
@@ -13,7 +14,7 @@
  */
 /// <reference lib="webworker" />
 import { LOOP_ID, type LLConfig } from './config'
-import { PING, PONG, Unwrapper, bytesToPcm, decodePacket, decodePing, encodePacket, encodePing, pcmToBytes, type Frame } from './packet'
+import { MAX_FRAME_BYTES, MAX_PACKET_FRAMES, PING, PONG, Unwrapper, bytesToPcm, decodePacket, decodePing, encodePacket, encodePing, pcmToBytes, type Frame } from './packet'
 import { FrameRing, RING_MAX_FRAME, RING_SLOTS } from './ring'
 import type { CaptureFrame, PlaybackMessage } from './worklet'
 
@@ -39,8 +40,6 @@ export type ToWorker =
 
 export interface WorkerRemoteStats {
   kbps: number | null
-  /** What they're sending: from the newest packet's flag. */
-  codec: 'opus' | 'pcm' | null
   /** Their newest capture stamp: their sample clock and wall-clock ms. */
   stamp: { ts: number; ms: number } | null
   /** Round trip over this channel, ms: the median of the last few pings. */
@@ -68,14 +67,12 @@ const RTT_SAMPLES = 5
 interface Remote {
   port: MessagePort | null
   ring: FrameRing | null
-  decoder: AudioDecoder | null
-  decoding: number[]
   unwrap: Unwrapper
-  lastDecoded: number
+  /** Where the last frame we took ends, on their clock: the next must start there or later. */
+  nextTs: number
   bytes: number
   bytesAt: number
   stamp: { ts: number; ms: number } | null
-  codec: 'opus' | 'pcm' | null
   rtts: number[]
 }
 
@@ -90,59 +87,12 @@ const remotes = new Map<string, Remote>()
 
 // ---- sending ---------------------------------------------------------------
 
-/**
- * Chrome's encoder (like its decoder) numbers its output itself, counting
- * frames from the first input and ignoring any gap in the timestamps we
- * give it. So we remember which capture time went in as its n-th frame,
- * and never use its own DTX (which drops frames from that count).
- */
-let encoder: AudioEncoder | null = null
-let encStartUs: number | null = null
-let encCount = 0
-let encFrameUs = 0
-const encPending = new Map<number, number>()
 let history: Frame[] = []
 let sent = 0
 let quietFor = 0
 
 function post(msg: FromWorker, transfer: Transferable[] = []) {
   self.postMessage(msg, transfer)
-}
-
-function makeEncoder(): AudioEncoder {
-  const enc = new AudioEncoder({
-    output: chunk => onEncoded(chunk),
-    error: e => {
-      console.warn('low-latency encoder failed', e)
-      if (encoder === enc) closeEncoder()
-    }
-  })
-  enc.configure({
-    codec: 'opus',
-    sampleRate: SR,
-    numberOfChannels: 1,
-    bitrate: cfg.bitrateKbps * 1000,
-    opus: {
-      frameDuration: cfg.frameMs * 1000,
-      complexity: cfg.complexity,
-      usedtx: false,
-      useinbandfec: false,
-      packetlossperc: 0,
-      // In the spec and in Chrome, not yet in every TypeScript lib.
-      ...({ application: cfg.application, signal: 'voice' } as object)
-    }
-  } as AudioEncoderConfig)
-  return enc
-}
-
-function closeEncoder() {
-  const enc = encoder
-  encoder = null
-  if (enc && enc.state !== 'closed') enc.close()
-  encStartUs = null
-  encCount = 0
-  encPending.clear()
-  history = []
 }
 
 /**
@@ -166,47 +116,17 @@ function isSilence(pcm: Float32Array): boolean {
 function encode(f: CaptureFrame) {
   if (!active || !cfg || (muted && !loop)) return
   if (cfg.dtx && isSilence(f.pcm)) return
-  if (cfg.codec === 'pcm') {
-    // No encoder: the samples go out as they are, the moment they're captured.
-    emit({ ts: f.ts, data: pcmToBytes(f.pcm) }, true)
-    return
-  }
-  encoder ??= makeEncoder()
-  const us = Math.round((f.ts * 1e6) / SR)
-  if (encStartUs === null) {
-    encStartUs = us
-    encFrameUs = (f.pcm.length * 1e6) / SR
-  }
-  encPending.set(encCount++, f.ts)
-  const data = new AudioData({ format: 'f32-planar', sampleRate: SR, numberOfFrames: f.pcm.length, numberOfChannels: 1, timestamp: us, data: f.pcm })
-  try {
-    encoder.encode(data)
-  } finally {
-    data.close()
-  }
-}
-
-function onEncoded(chunk: EncodedAudioChunk) {
-  if (!active || encStartUs === null) return
-  const n = Math.round((chunk.timestamp - encStartUs) / encFrameUs)
-  const ts = encPending.get(n)
-  for (const k of encPending.keys()) {
-    if (k > n) break
-    encPending.delete(k)
-  }
-  if (ts === undefined) return
-  const data = new Uint8Array(chunk.byteLength)
-  chunk.copyTo(data)
-  emit({ ts, data }, false)
+  // The samples go out as they are, the moment they're captured.
+  emit({ ts: f.ts, data: pcmToBytes(f.pcm) })
 }
 
 /** A finished frame: add the repeats of the ones before it, now and then a capture stamp, and send. */
-function emit(frame: Frame, pcm: boolean) {
+function emit(frame: Frame) {
   const frames = [...history.slice(history.length - cfg.redundancy), frame]
   history.push(frame)
   if (history.length > 2) history.shift()
   const stamp = sent++ % STAMP_EVERY === 0 ? captureEpoch(frame.ts) : null
-  send(encodePacket(frames, stamp, pcm))
+  send(encodePacket(frames, stamp, true))
 }
 
 /** Wall-clock time a sample on our audio clock was captured at the mic. */
@@ -241,35 +161,13 @@ function send(buf: ArrayBuffer) {
 function remote(id: string): Remote {
   let r = remotes.get(id)
   if (!r) {
-    r = { port: null, ring: null, decoder: null, decoding: [], unwrap: new Unwrapper(), lastDecoded: -Infinity, bytes: 0, bytesAt: performance.now(), stamp: null, codec: null, rtts: [] }
+    r = { port: null, ring: null, unwrap: new Unwrapper(), nextTs: -Infinity, bytes: 0, bytesAt: performance.now(), stamp: null, rtts: [] }
     remotes.set(id, r)
   }
   return r
 }
 
-function makeDecoder(r: Remote): AudioDecoder {
-  const dec = new AudioDecoder({
-    output: a => {
-      const pcm = new Float32Array(a.numberOfFrames)
-      a.copyTo(pcm, { planeIndex: 0, format: 'f32-planar' })
-      a.close()
-      // Its own timestamps count frames from the first and ignore gaps; ours don't.
-      const ts = r.decoding.shift()
-      if (ts !== undefined) deliver(r, ts, pcm)
-    },
-    error: e => {
-      console.warn('low-latency decoder failed', e)
-      if (r.decoder === dec) {
-        r.decoder = null
-        r.decoding = []
-      }
-    }
-  })
-  dec.configure({ codec: 'opus', sampleRate: SR, numberOfChannels: 1 })
-  return dec
-}
-
-/** Decoded audio to their playback worklet: shared memory if we have it, a message if not. */
+/** Their audio to their playback worklet: shared memory if we have it, a message if not. */
 function deliver(r: Remote, ts: number, pcm: Float32Array<ArrayBuffer>) {
   if (r.ring) {
     if (pcm.length <= RING_MAX_FRAME) r.ring.push(ts, pcm)
@@ -318,28 +216,22 @@ function receive(id: string, buf: ArrayBuffer) {
     onPing(id, ping.kind, ping.sentMs)
     return
   }
+  // Only raw PCM, a few frames a packet, none too long (as the app takes them, receiveLL in link.go).
   const pkt = decodePacket(buf)
-  if (!pkt) return
+  if (!pkt || !pkt.pcm || pkt.frames.length > MAX_PACKET_FRAMES) return
+  if (pkt.frames.some(f => f.data.byteLength < 2 || f.data.byteLength > MAX_FRAME_BYTES)) return
   const r = remote(id)
   r.bytes += buf.byteLength
-  r.codec = pkt.pcm ? 'pcm' : 'opus'
   const frames = pkt.frames.map(f => ({ ts: r.unwrap.unwrap(f.ts), data: f.data }))
   if (pkt.captureMs !== null && frames.length) r.stamp = { ts: frames[frames.length - 1].ts, ms: pkt.captureMs }
-  if (pkt.pcm) {
-    for (const f of frames) {
-      if (f.ts <= r.lastDecoded) continue
-      r.lastDecoded = f.ts
-      deliver(r, f.ts, bytesToPcm(f.data))
-    }
-    return
-  }
-  r.decoder ??= makeDecoder(r)
-  // Oldest first: a repeat of a frame we missed goes in before the new one.
+  // Oldest first: a repeat of a frame we missed goes in before the new one. A
+  // frame that starts before the last one we took ended is a repeat, or an
+  // overlap meant to pile frames up in the jitter buffer: skipped.
   for (const f of frames) {
-    if (f.ts <= r.lastDecoded) continue
-    r.lastDecoded = f.ts
-    r.decoding.push(f.ts)
-    r.decoder.decode(new EncodedAudioChunk({ type: 'key', timestamp: Math.round((f.ts * 1e6) / SR), data: f.data }))
+    if (f.ts < r.nextTs) continue
+    const pcm = bytesToPcm(f.data)
+    r.nextTs = f.ts + pcm.length
+    deliver(r, f.ts, pcm)
   }
 }
 
@@ -367,7 +259,6 @@ function drop(id: string) {
   if (ch && ch !== 'relayed') ch.close()
   const r = remotes.get(id)
   remotes.delete(id)
-  if (r?.decoder && r.decoder.state !== 'closed') r.decoder.close()
   r?.port?.close()
 }
 
@@ -397,29 +288,21 @@ self.onmessage = (e: MessageEvent<ToWorker>) => {
       m.capture.onmessage = (ev: MessageEvent<CaptureFrame>) => encode(ev.data)
       if (m.ring) void pumpCapture(FrameRing.from(m.ring, RING_SLOTS, RING_MAX_FRAME))
       return
-    case 'config': {
-      const prev = cfg
+    case 'config':
+      if (cfg && m.cfg.redundancy !== cfg.redundancy) history = []
       cfg = m.cfg
-      if (
-        prev.frameMs !== cfg.frameMs ||
-        prev.application !== cfg.application ||
-        prev.bitrateKbps !== cfg.bitrateKbps ||
-        prev.complexity !== cfg.complexity
-      )
-        closeEncoder()
       return
-    }
     case 'active':
       if (active === m.on) return
       active = m.on
-      // A fresh encoder each time we start, so its numbering starts with us.
-      if (!active) closeEncoder()
+      // A fresh start each time: no repeats of frames from before.
+      if (!active) history = []
       return
     case 'loop':
       loop = m.on
       return
     case 'gate':
-      if (m.muted && !muted && !loop) closeEncoder()
+      if (m.muted && !muted && !loop) history = []
       muted = m.muted
       deafened = new Set(m.deafened)
       return
@@ -450,7 +333,7 @@ self.onmessage = (e: MessageEvent<ToWorker>) => {
       const out: Record<string, WorkerRemoteStats> = {}
       for (const [id, r] of remotes) {
         const seconds = (now - r.bytesAt) / 1000
-        out[id] = { kbps: seconds > 0 ? (r.bytes * 8) / 1000 / seconds : null, stamp: r.stamp, codec: r.codec, rttMs: median(r.rtts) }
+        out[id] = { kbps: seconds > 0 ? (r.bytes * 8) / 1000 / seconds : null, stamp: r.stamp, rttMs: median(r.rtts) }
         r.bytes = 0
         r.bytesAt = now
       }

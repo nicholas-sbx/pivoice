@@ -132,8 +132,8 @@ export class Room extends DurableObject<Env> {
 
     switch (msg.t) {
       case 'state': {
-        if (me.muted === msg.muted && me.deafened === msg.deafened && me.ll === msg.ll) return
-        ws.serializeAttachment({ ...att, member: { ...me, muted: msg.muted, deafened: msg.deafened, ll: msg.ll } } satisfies Attachment)
+        if (me.muted === msg.muted && me.deafened === msg.deafened) return
+        ws.serializeAttachment({ ...att, member: { ...me, muted: msg.muted, deafened: msg.deafened } } satisfies Attachment)
         return this.broadcastRoster()
       }
       case 'signal': {
@@ -175,8 +175,7 @@ export class Room extends DurableObject<Env> {
       name: msg.name,
       joinedAt: known?.joinedAt ?? (msg.resume !== null ? Math.min(msg.resume, now) : nextJoinedAt(live, away, now)),
       muted: msg.muted,
-      deafened: msg.deafened,
-      ll: msg.ll
+      deafened: msg.deafened
     }
     ws.serializeAttachment({ ...att, member } satisfies Attachment)
     if (prev) this.retire(prev.ws, CLOSE.replaced, 'replaced')

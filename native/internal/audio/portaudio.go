@@ -224,8 +224,7 @@ func find(a *paAPI, id string, input bool) *paDevice {
 
 // ---- streams --------------------------------------------------------------
 
-// Blocks bigger than this (samples) get silence rather than an allocation on the audio thread.
-const maxBlock = 8192
+// Blocks bigger than MaxBlock (samples) get silence rather than an allocation on the audio thread.
 
 type paStream struct {
 	s     unsafe.Pointer // *C.PaStream
@@ -266,7 +265,7 @@ func pvCallback(id C.uintptr_t, in, out *C.float, frames C.ulong, adc, now, dac 
 	if out != nil {
 		outBuf = unsafe.Slice((*float32)(unsafe.Pointer(out)), n*st.outCh)
 	}
-	if n > maxBlock {
+	if n > MaxBlock {
 		clear(outBuf)
 		return
 	}
@@ -360,7 +359,7 @@ func open(a *paAPI, inputID, outputID string, cb Callback, exclusive, raw bool) 
 	if id < 0 {
 		return nil, errors.New("too many audio streams")
 	}
-	st := &paStream{id: id, cb: cb, stereo: make([]float32, 2*maxBlock), silence: make([]float32, maxBlock)}
+	st := &paStream{id: id, cb: cb, stereo: make([]float32, 2*MaxBlock), silence: make([]float32, MaxBlock)}
 	inIdx, outIdx := C.int(-1), C.int(-1)
 	var inLat, outLat float64
 	if in != nil {

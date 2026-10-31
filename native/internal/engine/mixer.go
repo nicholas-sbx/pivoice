@@ -7,7 +7,6 @@ import (
 
 	"github.com/nicholas-sbx/pivoice/native/internal/audio"
 	"github.com/nicholas-sbx/pivoice/native/internal/ll"
-	"github.com/nicholas-sbx/pivoice/native/internal/opus"
 )
 
 /*
@@ -40,8 +39,7 @@ type frame struct {
 
 type stamp struct{ ts, ms float64 }
 
-// source is one incoming stream of someone's voice: over the low-latency
-// channel, or over the call's RTP.
+// source is one incoming stream of someone's voice: their low-latency packets.
 type source struct {
 	inbox chan frame
 
@@ -53,15 +51,14 @@ type source struct {
 	scratch   []float32
 	published atomic.Pointer[sourceStats]
 
-	// Network side (one goroutine per source).
-	unwrap      ll.Unwrapper
-	lastDecoded int64
-	dec         *opus.Decoder
-	stamp       atomic.Pointer[stamp]
+	// Network side: one goroutine per source (the data channel's own, which
+	// hands us one message at a time; or the sender's, for the mic test).
+	unwrap ll.Unwrapper
+	// Where the last frame we took ends, on their clock: the next must start there or later.
+	nextTS int64
+	stamp  atomic.Pointer[stamp]
 	// Frames thrown away because the audio thread hadn't taken the last 64 yet.
 	dropped  atomic.Int64
-	pcm      atomic.Bool
-	gotCodec atomic.Bool
 	bytes    atomic.Int64
 }
 
@@ -71,7 +68,8 @@ type sourceStats struct {
 }
 
 func newSource() *source {
-	return &source{inbox: make(chan frame, inboxFrames), lastDecoded: math.MinInt64, scratch: make([]float32, 4096)}
+	// Room for the biggest block the sound card may hand us, so pull never slices past it.
+	return &source{inbox: make(chan frame, inboxFrames), nextTS: math.MinInt64, scratch: make([]float32, audio.MaxBlock)}
 }
 
 // deliver hands a decoded frame to the audio thread, or drops it if it's backed up.
@@ -83,11 +81,10 @@ func (s *source) deliver(ts float64, pcm []float32) {
 	}
 }
 
-// remote is one person: their sources, and how loud and where they are for you.
+// remote is one person: what they send, and how loud and where they are for you.
 type remote struct {
-	id    string
-	ll    atomic.Pointer[source]
-	voice atomic.Pointer[source]
+	id  string
+	src atomic.Pointer[source]
 	// The mic test's loop: plays past deafen, unpanned.
 	test bool
 	// float32 bits: volume (0 while silenced), and left/right gains from where they sit.
@@ -239,18 +236,12 @@ func (m *mixer) process(in, out []float32, t audio.Times) {
 	deafened := e.deafened.Load()
 	jc := e.jitter.Load()
 	for _, r := range *e.remotes.Load() {
-		clear(mix)
-		heard := false
-		for _, s := range [2]*source{r.ll.Load(), r.voice.Load()} {
-			if s == nil {
-				continue
-			}
-			m.pull(s, mix, clock, jc, t)
-			heard = true
-		}
-		if !heard {
+		s := r.src.Load()
+		if s == nil {
 			continue
 		}
+		clear(mix)
+		m.pull(s, mix, clock, jc, t)
 		raiseLevel(&r.level, rms(mix))
 		if deafened && !r.test {
 			continue

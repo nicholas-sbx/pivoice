@@ -63,6 +63,10 @@ type arrivalRec struct{ at, off float64 }
 
 const idleAfterMs = 80
 
+// MaxFrames is the most frames the buffer holds: 256 of the 128-sample
+// frames everyone sends is 680 ms, more than twice the longest target.
+const MaxFrames = 256
+
 // QuietRMS: below this (about −50 dBFS) the last block played counts as quiet, where a change of speed can't be heard.
 const QuietRMS = 0.003
 
@@ -119,6 +123,10 @@ func (j *JitterBuffer) Push(ts float64, pcm []float32, arrival float64) {
 	}
 	if j.playing && ts+float64(len(pcm)) <= j.pos {
 		j.late++
+		return
+	}
+	// A full buffer takes nothing more: far more than any target needs, so only a flood gets here.
+	if len(j.frames) >= MaxFrames {
 		return
 	}
 	// Keep them sorted by start; nearly always this is an append.

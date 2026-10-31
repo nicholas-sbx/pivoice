@@ -13,6 +13,11 @@ import "time"
 
 const SampleRate = 48000
 
+// MaxBlock is the biggest block (samples) a stream hands its callback;
+// anything bigger plays silence. What the callback keeps per block is
+// sized to it, so a big block never means an allocation on the audio thread.
+const MaxBlock = 8192
+
 // Times says when a callback's audio meets the air, as wall-clock ms since
 // the epoch: when its first input sample was captured, and when its first
 // output sample will be heard. That's how the app measures mouth to ear.

@@ -79,6 +79,8 @@ interface Stored {
 }
 
 const IDLE_AFTER_MS = 80
+/** The most frames the buffer holds: 256 of the 128-sample frames everyone sends is 680 ms, more than twice the longest target (MaxFrames in jitter.go). */
+export const MAX_FRAMES = 256
 
 export class JitterBuffer {
   private frames: Stored[] = []
@@ -127,6 +129,8 @@ export class JitterBuffer {
       this.late++
       return
     }
+    // A full buffer takes nothing more: far more than any target needs, so only a flood gets here.
+    if (this.frames.length >= MAX_FRAMES) return
     // Keep them sorted by start; nearly always this is an append.
     let i = this.frames.length
     while (i > 0 && this.frames[i - 1].start > ts) i--

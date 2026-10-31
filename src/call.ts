@@ -1,8 +1,7 @@
 import { reactive, watch } from 'vue'
 import { sameActivity } from './audio/activity'
 import { AudioEngine, type MicProblem, type SpatialMode } from './audio/engine'
-import { LOOP_ID, sanitizeLL, sendDelayMs, type LLConfig } from './audio/ll/config'
-import { WebRTCLoopback } from './audio/loopback'
+import { LOOP_ID, SEND_DELAY_MS, sanitizeLL, type LLConfig } from './audio/ll/config'
 import { LowLatencyEngine } from './audio/ll/engine'
 import { copyText } from './lib/copyText'
 import { loadPrefs, savePrefs, type Prefs } from './lib/prefs'
@@ -16,17 +15,17 @@ import { NativeVoice } from './native/voice'
 import { fetchIceServers, publicUrl } from './net/config'
 import type { Member } from './net/protocol'
 import { Session, type SessionFailure, type SessionStatus } from './net/session'
-import { captureToSpeakerMs, summarise, type LinkStats, type Snapshot } from './net/stats'
+import { routeOf, type LinkStats } from './net/stats'
 
 /**
  * The one call this tab can be in, as reactive state for the UI, plus
  * everything the UI can do to it.
  *
  * Two ways to do the audio. In a browser, the page does it all (AudioEngine,
- * the low-latency engine, WebRTC). In the app (native/), the page is only
- * the UI and the app does the audio: NativeVoice stands in for the engines
- * and NativeLinks for the peer connections, and the session above them is
- * the same either way.
+ * the low-latency engine, the peer connections). In the app (native/), the
+ * page is only the UI and the app does the audio: NativeVoice stands in for
+ * the engines and NativeLinks for the peer connections, and the session
+ * above them is the same either way.
  */
 
 export type Phase = 'home' | 'joining' | 'room'
@@ -74,15 +73,10 @@ export const call = reactive({
   }
 })
 
-export type TestPath = 'raw' | 'webrtc' | 'll'
+export type TestPath = 'raw' | 'll'
 
 let engine: AudioEngine | null = null
 let ll: LowLatencyEngine | null = null
-/** Recent measured mouth-to-ear samples on the WebRTC path, per person. */
-const measured = new Map<string, number[]>()
-
-/** The app always has the low-latency engine. */
-export const llSupported = isNative || LowLatencyEngine.supported()
 let session: Session | null = null
 
 // ---- the app ---------------------------------------------------------------------
@@ -144,7 +138,6 @@ function appConfig(): AppConfig {
   return {
     ll: { ...p.ll },
     spatial: p.spatial,
-    dtx: p.dtx,
     inputId: p.appInputId,
     outputId: p.appOutputId,
     exclusive: p.appExclusive,
@@ -165,7 +158,6 @@ function appConfig(): AppConfig {
 }
 let speakingTimer: ReturnType<typeof setInterval> | null = null
 let statsTimer: ReturnType<typeof setInterval> | null = null
-const snapshots = new Map<string, Snapshot>()
 let toastSeq = 0
 
 export function getEngine(): AudioEngine | null {
@@ -209,10 +201,6 @@ function pushSelfState() {
   updateLLActive()
 }
 
-function llOn(): boolean {
-  return llSupported && call.prefs.ll.enabled
-}
-
 /** The low-latency engine only encodes while someone's listening on it and you're not muted. */
 function updateLLActive() {
   if (!ll) return
@@ -239,7 +227,6 @@ export async function startCall(kind: 'create' | 'join', name: string, code = ''
   call.volumes = {}
   call.silenced = {}
   call.links = {}
-  snapshots.clear()
   await connect(kind, name, code)
 }
 
@@ -265,7 +252,6 @@ export async function rejoinCall() {
 }
 
 async function connect(kind: 'create' | 'join', name: string, code: string, rejoin?: { key: string; joinedAt: number }) {
-  snapshots.clear()
   call.links = {}
   if (isNative) return connectNative(kind, name, code, rejoin)
 
@@ -285,17 +271,21 @@ async function connect(kind: 'create' | 'join', name: string, code: string, rejo
   if (call.prefs.outputId) void eng.setOutputDevice(call.prefs.outputId)
   eng.setMicEnabled(!effectiveMuted())
   eng.setDeafened(call.deafened)
-  measured.clear()
-  if (llSupported && eng.ctx.sampleRate === 48_000) {
-    const engLL = new LowLatencyEngine(eng.ctx, call.prefs.ll, {
-      link: (id, up) => session?.llState(id, up),
-      relay: (to, buf) => session?.sendLL(to, buf)
-    })
-    engLL.inputLatencyMs = () => eng.captureLatencyMs() ?? 0
-    engLL.setMic(eng.micSource)
-    eng.onMic = src => engLL.setMic(src)
-    ll = engLL
+  // The low-latency engine is how everyone hears everyone: no engine, no call.
+  if (!LowLatencyEngine.supported() || eng.ctx.sampleRate !== 48_000) {
+    rejoining = false
+    cleanup()
+    call.error = FAILURES.unsupported
+    return
   }
+  const engLL = new LowLatencyEngine(eng.ctx, call.prefs.ll, {
+    link: (id, up) => session?.llState(id, up),
+    relay: (to, buf) => session?.sendLL(to, buf)
+  })
+  engLL.inputLatencyMs = () => eng.captureLatencyMs() ?? 0
+  engLL.setMic(eng.micSource)
+  eng.onMic = src => engLL.setMic(src)
+  ll = engLL
 
   const iceServers = await icePromise
   if (engine !== eng) return
@@ -304,10 +294,7 @@ async function connect(kind: 'create' | 'join', name: string, code: string, rejo
       name,
       muted: effectiveMuted(),
       deafened: call.deafened,
-      stream: eng.sendStream,
       iceServers,
-      dtx: call.prefs.dtx,
-      ll: llOn() && !!ll,
       rejoin
     },
     {
@@ -320,15 +307,6 @@ async function connect(kind: 'create' | 'join', name: string, code: string, rejo
         call.selfId = s.selfId
         call.members = members
         updateLLActive()
-      },
-      stream: (id, stream) => {
-        if (session !== s) return
-        eng.addRemote(id, stream)
-        if (call.volumes[id] !== undefined) eng.setVolume(id, call.volumes[id])
-        if (call.silenced[id]) eng.setSilenced(id, true)
-      },
-      streamEnd: id => {
-        if (session === s) eng.removeRemote(id)
       },
       llLink: (id, up) => {
         if (session !== s || !ll) return
@@ -352,10 +330,7 @@ async function connect(kind: 'create' | 'join', name: string, code: string, rejo
     }
   )
   session = s
-  if (ll) {
-    const engLL = ll
-    s.adoptLL = (id, ch) => engLL.adoptChannel(id, ch)
-  }
+  s.adoptLL = (id, ch) => engLL.adoptChannel(id, ch)
   if (kind === 'create') await s.create()
   else await s.join(code)
 }
@@ -379,7 +354,6 @@ async function connectNative(kind: 'create' | 'join', name: string, code: string
   v.setSelf(effectiveMuted(), call.deafened)
   for (const [id, volume] of Object.entries(call.volumes)) v.setVolume(id, volume)
   for (const [id, on] of Object.entries(call.silenced)) if (on) v.setSilenced(id, true)
-  measured.clear()
 
   const iceServers = await icePromise
   if (nv !== v) return
@@ -388,10 +362,7 @@ async function connectNative(kind: 'create' | 'join', name: string, code: string
       name,
       muted: effectiveMuted(),
       deafened: call.deafened,
-      stream: null,
       iceServers,
-      dtx: call.prefs.dtx,
-      ll: llOn(),
       rejoin,
       links: nativeLinks
     },
@@ -406,8 +377,6 @@ async function connectNative(kind: 'create' | 'join', name: string, code: string
         v.setMembers(members)
       },
       // The app plays everyone itself.
-      stream: () => {},
-      streamEnd: () => {},
       llLink: () => {},
       llPacket: () => {}
     }
@@ -455,13 +424,11 @@ function cleanup() {
   ll = null
   engine?.close()
   engine = null
-  measured.clear()
   if (speakingTimer) clearInterval(speakingTimer)
   speakingTimer = null
   if (statsTimer) clearInterval(statsTimer)
   statsTimer = null
   call.links = {}
-  snapshots.clear()
   // Coming straight back: keep the room on screen, everyone at the table.
   if (rejoining) return
   seating.reset()
@@ -510,55 +477,36 @@ function startStatsPoll() {
       }
       ll?.refresh()
       // getStats() stalls Chrome's network thread, which is where the
-      // low-latency engine's packets come in, and its jitter buffer grows
-      // to cover the hiccup. So people on that engine get their ping from
-      // its own pings, and the full stats are only read for the route card.
-      const full = call.prefs.showRoute
-      const onLL = (id: string) => !!ll && s.isLL(id)
-      const [reports, llReports] = await Promise.all([
-        s.getStats(id => full || !onLL(id)),
-        full ? s.getLLStats() : Promise.resolve(new Map<string, RTCStatsReport>())
-      ])
+      // engine's packets come in, and its jitter buffer grows to cover the
+      // hiccup. So ping comes from the engine's own pings, and the
+      // connection's stats (the route) are only read for the route card.
+      const llReports = call.prefs.showRoute ? await s.getLLStats() : new Map<string, RTCStatsReport>()
       if (session !== s) return
       const next: Record<string, LinkStats> = {}
       const captureMs = engine?.captureLatencyMs() ?? null
-      for (const [id, report] of reports) {
-        const { stats, snapshot } = summarise(report.values() as Iterable<Record<string, unknown>>, snapshots.get(id), { captureMs })
-        if (snapshot) snapshots.set(id, snapshot)
-        stats.measuredMs = measureWebRTC(s, id, stats.playoutMs)
-        next[id] = stats
-      }
+      const outMs = engine ? (engine.ctx.baseLatency + (engine.ctx.outputLatency || 0)) * 1000 : null
       for (const m of call.members) {
         const id = m.id
-        const llStats = onLL(id) ? ll?.stats(id) : null
+        const llStats = s.isLL(id) ? ll?.stats(id) : null
         if (!llStats) continue
-        // Route from the low-latency connection (route card only), ping from the engine's pings if
-        // that's all we have; everything else from the engine.
-        const report = llReports.get(id)
-        const { stats } = summarise((report?.values() ?? []) as Iterable<Record<string, unknown>>, null, { captureMs })
-        stats.rttMs ??= llStats.rttMs
-        const cfg = call.prefs.ll
-        const outMs = engine ? (engine.ctx.baseLatency + (engine.ctx.outputLatency || 0)) * 1000 : null
-        const codecMs = sendDelayMs({ ...cfg, codec: llStats.codec ?? cfg.codec }) // their frame size isn't sent; ours is the best guess
+        const route = routeOf((llReports.get(id)?.values() ?? []) as Iterable<Record<string, unknown>>)
+        const rttMs = route.rttMs ?? llStats.rttMs
         next[id] = {
-          ...stats,
-          engine: 'll',
+          ...route,
+          rttMs,
           bufferMs: llStats.bufferMs,
           jitterMs: llStats.jitterMs,
           lossPct: llStats.concealedPct,
           kbps: llStats.kbps,
-          codec: llStats.codec ?? cfg.codec,
           playoutMs: outMs,
-          codecMs,
+          captureMs,
+          sendMs: SEND_DELAY_MS,
           mouthToEarMs:
-            stats.rttMs !== null && llStats.bufferMs !== null
-              ? (captureMs ?? 0) + codecMs + stats.rttMs / 2 + llStats.bufferMs + (outMs ?? 0)
-              : null,
+            rttMs !== null && llStats.bufferMs !== null ? (captureMs ?? 0) + SEND_DELAY_MS + rttMs / 2 + llStats.bufferMs + (outMs ?? 0) : null,
           measuredMs: llStats.measuredMs,
           ll: llStats
         }
       }
-      for (const id of [...snapshots.keys()]) if (!reports.has(id)) snapshots.delete(id)
       call.links = next
     } finally {
       busy = false
@@ -566,28 +514,6 @@ function startStatsPoll() {
   }
   void poll()
   statsTimer = setInterval(poll, 1000)
-}
-
-/**
- * Mouth to ear on the WebRTC path, from the abs-capture-time header: when
- * their newest played frame was captured, when it was handed to our audio
- * output, plus Chrome's own figure for the output's delay.
- */
-function measureWebRTC(s: Session, id: string, playoutMs: number | null): number | null {
-  const sample = captureToSpeakerMs(s.syncSource(id), playoutMs)
-  const list = measured.get(id) ?? []
-  if (sample !== null) {
-    list.push(sample)
-    if (list.length > 5) list.shift()
-    measured.set(id, list)
-  }
-  return median(list)
-}
-
-function median(xs: number[] | undefined): number | null {
-  if (!xs?.length) return null
-  const s = [...xs].sort((a, b) => a - b)
-  return s[Math.floor(s.length / 2)]
 }
 
 /** Web Audio's output buffer is fixed when the audio context is made, so changing it reconnects you. */
@@ -605,17 +531,15 @@ export function setOutputBuffer(v: Prefs['outputBuffer']) {
 // ---- mic test ----------------------------------------------------------------
 
 let testTimer: ReturnType<typeof setInterval> | null = null
-let testLoop: WebRTCLoopback | null = null
 /** Whether we deafened you for the test (and so undeafen you after). */
 let testDeafened = false
 
 /**
  * Hear yourself, like Discord's mic test, through one path with no
  * network: raw (mic straight to the speakers: your device and the
- * browser's buffers, the floor everything else sits on), WebRTC audio (its
- * encoder, jitter buffer and playout, between two connections in this
- * tab), or the low-latency engine (its gate, encoder, packets, decoder and
- * jitter buffer). You're deafened while it runs, so you only hear yourself.
+ * browser's buffers, the floor everything else sits on), or as in a call
+ * (the low-latency engine's gate, packets and jitter buffer). You're
+ * deafened while it runs, so you only hear yourself.
  */
 export async function startMicTest(path: TestPath) {
   if (nv) return startNativeMicTest(path)
@@ -630,11 +554,6 @@ export async function startMicTest(path: TestPath) {
   }
   if (path === 'raw') {
     eng.setRawLoopback(true)
-  } else if (path === 'webrtc') {
-    const track = eng.micClone()
-    if (!track) return
-    testLoop = new WebRTCLoopback(track, call.prefs.dtx, call.prefs.outputId)
-    await testLoop.start()
   } else if (ll) {
     await ll.startLoop(eng.testOut)
   }
@@ -646,11 +565,6 @@ export async function startMicTest(path: TestPath) {
       t.ms = eng.rawLoopbackMs()
       t.measured = false
       t.detail = `mic ${Math.round(eng.captureLatencyMs() ?? 0)} + output ${Math.round(out)} ms, as the browser reports them`
-    } else if (t.path === 'webrtc' && testLoop) {
-      const m = await testLoop.measure()
-      t.ms = m.ms
-      t.measured = m.ms !== null
-      t.detail = m.bufferMs === null ? '' : `jitter buffer ${Math.round(m.bufferMs)} ms`
     } else if (t.path === 'll' && ll) {
       ll.refresh()
       const s = ll.stats(LOOP_ID)
@@ -667,21 +581,20 @@ export async function startMicTest(path: TestPath) {
 
 /**
  * In the app: raw is the mic straight to the speakers inside the sound
- * card's own callback (like pw-loopback), and low latency is the app's
- * whole engine looped back. There's no WebRTC audio stack to test.
+ * card's own callback (like pw-loopback), and as in a call is the app's
+ * whole engine looped back.
  */
 function startNativeMicTest(path: TestPath) {
   const v = nv
   if (!v || call.phase !== 'room') return
   stopMicTest()
-  const p = path === 'webrtc' ? 'll' : path
-  Object.assign(call.test, { on: true, path: p, ms: null, measured: false, detail: '' })
+  Object.assign(call.test, { on: true, path, ms: null, measured: false, detail: '' })
   if (!call.deafened) {
     testDeafened = true
     call.deafened = true
     pushSelfState()
   }
-  v.test(p)
+  v.test(path)
   const tick = async () => {
     const st = await v.stats()
     if (!call.test.on || nv !== v || !st?.test) return
@@ -695,8 +608,6 @@ export function stopMicTest() {
   if (testTimer) clearInterval(testTimer)
   testTimer = null
   nv?.test('')
-  testLoop?.stop()
-  testLoop = null
   engine?.setRawLoopback(false)
   ll?.stopLoop()
   if (call.test.on && testDeafened) {
@@ -707,21 +618,12 @@ export function stopMicTest() {
   call.test.on = false
 }
 
-/** What we ask senders for (DTX) is in the SDP of each call, so changing it reconnects you. */
-export function setDtx(on: boolean) {
-  if (on === call.prefs.dtx) return
-  updatePrefs({ dtx: on })
-  void rejoinCall()
-}
-
 /** Change low-latency engine settings; everything applies live. */
 export function updateLL(patch: Partial<LLConfig>) {
-  const next = sanitizeLL({ ...call.prefs.ll, ...patch }, isNative)
-  const toggled = next.enabled !== call.prefs.ll.enabled
+  const next = sanitizeLL({ ...call.prefs.ll, ...patch })
   updatePrefs({ ll: next })
   ll?.configure(next)
   nv?.configure(appConfig())
-  if (toggled) session?.setSelf({ ll: llOn() && (!!ll || !!nv) })
   updateLLActive()
 }
 
@@ -765,16 +667,15 @@ function micSettings() {
   }
 }
 
-/** Reopen the microphone with new settings and swap it into every call. */
+/** Reopen the microphone with new settings (the engine follows it, see eng.onMic). */
 export async function applyMicPrefs(patch: Partial<Pick<Prefs, 'inputId' | 'echoCancellation' | 'noiseSuppression' | 'autoGainControl'>>) {
   updatePrefs(patch)
   nv?.configure(appConfig())
   const eng = engine
   if (!eng) return
-  const track = await eng.openMic(micSettings())
+  await eng.openMic(micSettings())
   if (engine !== eng) return
   call.micProblem = eng.micProblem
-  session?.replaceTrack(track)
   pushSelfState()
 }
 

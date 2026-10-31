@@ -2,13 +2,17 @@ package engine
 
 import (
 	"encoding/json"
+	"fmt"
 	"math"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/nicholas-sbx/pivoice/native/internal/audio"
+	"github.com/nicholas-sbx/pivoice/native/internal/ll"
 	"github.com/nicholas-sbx/pivoice/native/internal/proto"
+	"github.com/pion/webrtc/v4"
 )
 
 // A pretend page for one engine: it passes the engine's signals to the
@@ -81,27 +85,27 @@ func waitFor(t *testing.T, what string, cond func() bool) {
 	t.Fatalf("timed out waiting for %s", what)
 }
 
-// Two people, one link of this kind between them: each should hear the other's beeps.
-func call(t *testing.T, kind string) (a, b *page) {
+// Two people, one link between them: each should hear the other's beeps.
+func call(t *testing.T) (a, b *page) {
 	a, b = newPage(t, "a"), newPage(t, "b")
 	a.peer, b.peer = b, a
 	a.e.Handle(proto.In{T: "members", Members: []proto.Member{{ID: "b"}}})
 	b.e.Handle(proto.In{T: "members", Members: []proto.Member{{ID: "a"}}})
-	b.e.Handle(proto.In{T: "link", Op: "open", Link: "L", Peer: "a", Kind: kind})
-	a.e.Handle(proto.In{T: "link", Op: "open", Link: "L", Peer: "b", Kind: kind, Offerer: true})
+	b.e.Handle(proto.In{T: "link", Op: "open", Link: "L", Peer: "a"})
+	a.e.Handle(proto.In{T: "link", Op: "open", Link: "L", Peer: "b", Offerer: true})
 	return a, b
 }
 
 func TestLowLatencyLink(t *testing.T) {
-	a, b := call(t, "ll")
-	waitFor(t, "the channel to open", func() bool { return a.has("L", "ll-up") && b.has("L", "ll-up") })
+	a, b := call(t)
+	waitFor(t, "the channel to open", func() bool { return a.has("L", "up") && b.has("L", "up") })
 	waitFor(t, "b to hear a", func() bool { return b.loudest("a") > 0.05 })
 	waitFor(t, "a to hear b", func() bool { return a.loudest("b") > 0.05 })
 
-	// The route card's numbers: raw PCM by default, ping from the engine's own pings, and a measured mouth to ear.
+	// The route card's numbers: raw PCM's bitrate, ping from the engine's own pings, and a measured mouth to ear.
 	waitFor(t, "stats", func() bool {
 		st := b.e.stats().Peers["a"]
-		return st.Engine == "ll" && st.Codec != nil && *st.Codec == "pcm" && st.RttMs != nil && st.MeasuredMs != nil
+		return st.Kbps != nil && *st.Kbps > 100 && st.RttMs != nil && st.MeasuredMs != nil
 	})
 	st := b.e.stats().Peers["a"]
 	t.Logf("ll: measured %.1f ms, buffer %v, rtt %.2f ms, route %v", *st.MeasuredMs, deref(st.BufferMs), *st.RttMs, deref(st.Route))
@@ -110,31 +114,101 @@ func TestLowLatencyLink(t *testing.T) {
 	}
 }
 
-func TestOpusOverLowLatencyLink(t *testing.T) {
-	a, b := call(t, "ll")
-	c := proto.Config{LL: proto.DefaultLL, Spatial: "off"}
-	c.LL.Codec = "opus"
-	c.LL.FrameMs = 2.5
-	a.e.Handle(proto.In{T: "config", Config: &c})
-	waitFor(t, "b to hear a in Opus", func() bool {
-		st := b.e.stats().Peers["a"]
-		return st.Codec != nil && *st.Codec == "opus" && b.loudest("a") > 0.05
-	})
-}
-
-func TestCall(t *testing.T) {
-	a, b := call(t, "voice")
-	waitFor(t, "the call to connect", func() bool { return a.has("L", "connected") && b.has("L", "connected") })
-	waitFor(t, "b to hear a over RTP", func() bool { return b.loudest("a") > 0.05 })
-	waitFor(t, "a to hear b over RTP", func() bool { return a.loudest("b") > 0.05 })
-	st := b.e.stats().Peers["a"]
-	if st.Engine != "webrtc" {
-		t.Fatalf("engine %q", st.Engine)
+// What a link takes in: raw PCM, a few frames a packet, each starting
+// where the last ended. Opus, packets of many frames, and frames piled on
+// top of each other (to fill the jitter buffer) go nowhere.
+func TestReceiveTakesOnlyWhatWeSend(t *testing.T) {
+	pcm := func(n int) []byte { return ll.PCMToBytes(make([]float32, n)) }
+	got := func(buf []byte) int {
+		e := New(Options{Backend: audio.Fake{}})
+		s := newSource()
+		e.receiveLL(s, buf)
+		return len(s.inbox)
+	}
+	cases := []struct {
+		name string
+		buf  []byte
+		want int
+	}{
+		{"one frame", ll.EncodePacket([]ll.Frame{{TS: 0, Data: pcm(128)}}, 0, false, true), 1},
+		{"a repeat and the new one", ll.EncodePacket([]ll.Frame{{TS: 0, Data: pcm(128)}, {TS: 128, Data: pcm(128)}}, 0, false, true), 2},
+		{"opus", ll.EncodePacket([]ll.Frame{{TS: 0, Data: []byte{0xfc, 0xff, 0xfe}}}, 0, false, false), 0},
+		{"too many frames", ll.EncodePacket([]ll.Frame{{TS: 0, Data: pcm(1)}, {TS: 1, Data: pcm(1)}, {TS: 2, Data: pcm(1)}, {TS: 3, Data: pcm(1)}}, 0, false, true), 0},
+		{"a frame too long", ll.EncodePacket([]ll.Frame{{TS: 0, Data: pcm(8*pcmFrame + 1)}}, 0, false, true), 0},
+		{"an empty frame", ll.EncodePacket([]ll.Frame{{TS: 0, Data: nil}}, 0, false, true), 0},
+		{"overlapping frames", ll.EncodePacket([]ll.Frame{{TS: 0, Data: pcm(128)}, {TS: 1, Data: pcm(128)}, {TS: 2, Data: pcm(128)}}, 0, false, true), 1},
+	}
+	for _, c := range cases {
+		if n := got(c.buf); n != c.want {
+			t.Errorf("%s: %d frames delivered, want %d", c.name, n, c.want)
+		}
 	}
 }
 
+// A peer that offers audio tracks gets them turned down: the link knows no
+// codecs, so nothing a peer sends is ever decoded but our own packets.
+func TestNoMediaAccepted(t *testing.T) {
+	p := newPage(t, "b")
+	var answer string
+	var mu sync.Mutex
+	p.e.SetEmitter(func(msg any) {
+		if m, ok := msg.(proto.SignalOut); ok {
+			if sdp, ok := m.Signal.(map[string]any)["sdp"].(map[string]any); ok {
+				mu.Lock()
+				answer, _ = sdp["sdp"].(string)
+				mu.Unlock()
+			}
+		}
+	})
+	p.e.Handle(proto.In{T: "link", Op: "open", Link: "L", Peer: "a"})
+	offer := offerWithAudio(t)
+	raw, _ := json.Marshal(map[string]any{"sdp": map[string]any{"type": "offer", "sdp": offer}})
+	p.e.Handle(proto.In{T: "link", Op: "signal", Link: "L", Signal: raw})
+	waitFor(t, "an answer", func() bool { mu.Lock(); defer mu.Unlock(); return answer != "" })
+	t.Logf("answer m-lines: %q", mlines(answer))
+	for _, line := range strings.Split(answer, "\r\n") {
+		if strings.HasPrefix(line, "m=audio") && !strings.HasPrefix(line, "m=audio 0 ") {
+			t.Fatalf("audio accepted: %q\n%s", line, answer)
+		}
+		if strings.HasPrefix(line, "a=rtpmap:") {
+			t.Fatalf("a codec in the answer: %q", line)
+		}
+	}
+}
+
+// offerWithAudio is what a peer that wants to send us Opus would offer: two audio tracks and our data channel.
+func offerWithAudio(t *testing.T) string {
+	m := &webrtc.MediaEngine{}
+	if err := m.RegisterDefaultCodecs(); err != nil {
+		t.Fatal(err)
+	}
+	pc, err := webrtc.NewAPI(webrtc.WithMediaEngine(m)).NewPeerConnection(webrtc.Configuration{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = pc.Close() })
+	for i := range 2 {
+		tr, err := webrtc.NewTrackLocalStaticSample(webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeOpus, ClockRate: 48000, Channels: 2}, fmt.Sprint("a", i), "s")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := pc.AddTrack(tr); err != nil {
+			t.Fatal(err)
+		}
+	}
+	yes, id := true, uint16(llChannelID)
+	if _, err := pc.CreateDataChannel("pv-audio", &webrtc.DataChannelInit{Negotiated: &yes, ID: &id}); err != nil {
+		t.Fatal(err)
+	}
+	o, err := pc.CreateOffer(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return o.SDP
+}
+
 func TestMutedSendsNothing(t *testing.T) {
-	a, b := call(t, "ll")
+	a, b := call(t)
 	waitFor(t, "b to hear a", func() bool { return b.loudest("a") > 0.05 })
 	a.e.Handle(proto.In{T: "self", Muted: true})
 	time.Sleep(300 * time.Millisecond)
@@ -158,7 +232,7 @@ func TestMicTestLoop(t *testing.T) {
 // With the mic's processing on (no gate: a beep isn't a voice), the other
 // side still hears us, and the mic test's mouth to ear counts the processing.
 func TestProcessedMic(t *testing.T) {
-	a, b := call(t, "ll")
+	a, b := call(t)
 	cfg := proto.Config{LL: proto.DefaultLL, Spatial: "off", Processing: proto.Processing{Echo: true, Noise: true, Gain: true}}
 	a.e.Handle(proto.In{T: "config", Config: &cfg})
 	waitFor(t, "b to hear a", func() bool { return b.loudest("a") > 0.02 })
@@ -184,7 +258,7 @@ func TestMixerDoesNotAllocate(t *testing.T) {
 	e := New(Options{Backend: audio.Fake{}})
 	r := newRemote("someone")
 	src := newSource()
-	r.ll.Store(src)
+	r.src.Store(src)
 	e.people["someone"] = r
 	e.publishLocked()
 	in := make([]float32, 128)
@@ -258,4 +332,14 @@ func TestITDDelaysOnlyTheFarEar(t *testing.T) {
 	if a := testing.AllocsPerRun(100, func() { r.mixHead(mix, out, 1, 1, itd, shadowFront, shadowFront) }); a > 0 {
 		t.Fatalf("%v allocations", a)
 	}
+}
+
+func mlines(sdp string) []string {
+	var out []string
+	for _, l := range strings.Split(sdp, "\r\n") {
+		if strings.HasPrefix(l, "m=") {
+			out = append(out, l)
+		}
+	}
+	return out
 }

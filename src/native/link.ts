@@ -1,5 +1,5 @@
 import type { ExternalLink, ExternalLinks } from '../net/session'
-import type { LinkKind, Signal } from '../net/protocol'
+import type { Signal } from '../net/protocol'
 import type { NativeBridge } from './bridge'
 import type { AppSignal, FromApp } from './protocol'
 
@@ -17,8 +17,8 @@ export class NativeLinks implements ExternalLinks {
     bridge.on(m => this.fromApp(m))
   }
 
-  make(peer: string, kind: LinkKind, id: string, offerer: boolean, iceServers: RTCIceServer[], signal: (s: Signal) => void): ExternalLink {
-    const link = new NativeLink(this, peer, kind, id, offerer, iceServers, signal)
+  make(peer: string, id: string, offerer: boolean, iceServers: RTCIceServer[], signal: (s: Signal) => void): ExternalLink {
+    const link = new NativeLink(this, peer, id, offerer, iceServers, signal)
     this.links.set(link.key, link)
     return link
   }
@@ -34,27 +34,25 @@ export class NativeLinks implements ExternalLinks {
 
 class NativeLink implements ExternalLink {
   /**
-   * The app knows it by who, what and which: link ids are picked by whoever
+   * The app knows it by who and which: link ids are picked by whoever
    * offers, so on their own they could collide with (or be made to collide
    * with) someone else's.
    */
   readonly key: string
   closed = false
   onClose: (() => void) | null = null
-  onConnected: (() => void) | null = null
   onChannel: ((up: boolean) => void) | null = null
 
   constructor(
     private owner: NativeLinks,
     readonly peer: string,
-    readonly kind: LinkKind,
     readonly id: string,
     readonly offerer: boolean,
     iceServers: RTCIceServer[],
     private signal: (s: Signal) => void
   ) {
-    this.key = `${peer}:${kind}:${id}`
-    owner.bridge.send({ t: 'link', op: 'open', link: this.key, peer, kind, offerer, iceServers: plain(iceServers) })
+    this.key = `${peer}:${id}`
+    owner.bridge.send({ t: 'link', op: 'open', link: this.key, peer, offerer, iceServers: plain(iceServers) })
   }
 
   /** The app makes its offer as soon as it has the link. */
@@ -74,7 +72,7 @@ class NativeLink implements ExternalLink {
 
   close(sayBye = true) {
     if (this.closed) return
-    if (sayBye) this.signal({ kind: this.kind, link: this.id, bye: true })
+    if (sayBye) this.signal({ link: this.id, bye: true })
     this.closed = true
     this.owner.bridge.send({ t: 'link', op: 'close', link: this.key })
     this.owner.forget(this.key)
@@ -84,17 +82,14 @@ class NativeLink implements ExternalLink {
   fromApp(m: Extract<FromApp, { t: 'signal' | 'link' }>) {
     if (this.closed) return
     if (m.t === 'signal') {
-      this.signal({ kind: this.kind, link: this.id, ...m.signal } as Signal)
+      this.signal({ link: this.id, ...m.signal } as Signal)
       return
     }
     switch (m.state) {
-      case 'connected':
-        this.onConnected?.()
-        break
-      case 'll-up':
+      case 'up':
         this.onChannel?.(true)
         break
-      case 'll-down':
+      case 'down':
         this.onChannel?.(false)
         break
       case 'closed':

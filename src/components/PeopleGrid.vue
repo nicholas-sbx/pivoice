@@ -120,8 +120,7 @@ function mouthToEar(s: LinkStats): string {
         <span v-if="layout.row && pingOf(m.id) != null" class="ping" :class="pingLevel(pingOf(m.id)!)">{{ pingOf(m.id) }} ms</span>
         <div v-if="showRoute && !isSelf(m.id)" class="route">
           <template v-if="links[m.id]">
-            <span class="engine" :class="links[m.id].engine">{{ links[m.id].engine === 'll' ? 'Low latency' : 'WebRTC' }}</span>
-            · {{ routeLabel(links[m.id]) }}<template v-if="mouthToEar(links[m.id])"> · {{ mouthToEar(links[m.id]) }}</template>
+            {{ routeLabel(links[m.id]) }}<template v-if="mouthToEar(links[m.id])"> · {{ mouthToEar(links[m.id]) }}</template>
           </template>
           <template v-else>Connecting…</template>
         </div>
@@ -287,12 +286,5 @@ function mouthToEar(s: LinkStats): string {
   line-height: 16px;
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
-}
-.engine {
-  font-weight: 700;
-  color: var(--text-normal);
-}
-.engine.ll {
-  color: var(--brand-soft);
 }
 </style>

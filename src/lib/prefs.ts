@@ -69,8 +69,6 @@ export interface Prefs {
   keepAwake: boolean
   /** The website's offer of the app (on a computer there's one for), put away. */
   appBannerDismissed: boolean
-  /** Opus DTX for what people send you: less bandwidth in silence, ~9 ms more buffering. Off by default. */
-  dtx: boolean
   /**
    * Web Audio's output buffer. 'min' asks for the smallest the device will
    * do (128 frames, 2.7 ms): far less output delay, and the audio thread
@@ -79,7 +77,7 @@ export interface Prefs {
    * default, for machines that crackle on 'min'.
    */
   outputBuffer: OutputBuffer
-  /** The experimental low-latency engine and all its knobs. */
+  /** The low-latency engine (how everyone hears everyone) and all its knobs. */
   ll: LLConfig
   overlay: OverlayPrefs
 }
@@ -132,9 +130,8 @@ export const DEFAULT_PREFS: Prefs = {
   showRoute: false,
   keepAwake: true,
   appBannerDismissed: false,
-  dtx: false,
   outputBuffer: 'min',
-  ll: llDefaults(isNative),
+  ll: llDefaults(),
   // Top right, out of the way of most things, a little in from the edge.
   overlay: { on: false, monitor: '', anchor: 'top-right', margin: 24, size: 260, scale: 1, opacity: 0.8 }
 }
@@ -158,7 +155,7 @@ export function loadPrefs(): Prefs {
     const raw = JSON.parse(localStorage.getItem(KEY) ?? '{}') as Partial<Prefs>
     const rev = typeof raw.rev === 'number' ? raw.rev : 0
     const phone = onPhone()
-    const p = { ...DEFAULT_PREFS, ...(phone ? MOBILE_MIC : {}), ll: sanitizeLL(raw.ll, isNative), overlay: sanitizeOverlay(raw.overlay) }
+    const p = { ...DEFAULT_PREFS, ...(phone ? MOBILE_MIC : {}), ll: sanitizeLL(raw.ll), overlay: sanitizeOverlay(raw.overlay) }
     if (typeof raw.name === 'string') p.name = raw.name
     if (raw.spatial === 'off' || raw.spatial === 'stereo' || raw.spatial === 'hrtf') p.spatial = raw.spatial
     if (raw.lastSpatial === 'stereo' || raw.lastSpatial === 'hrtf') p.lastSpatial = raw.lastSpatial
@@ -185,10 +182,9 @@ export function loadPrefs(): Prefs {
       if (rev >= 2 && typeof raw[k] === 'boolean') p[k] = raw[k]
     }
     if ((rev >= 2 || !phone) && typeof raw.echoCancellation === 'boolean') p.echoCancellation = raw.echoCancellation
-    if (typeof raw.dtx === 'boolean' && rev >= 1) p.dtx = raw.dtx
     return p
   } catch {
-    return { ...DEFAULT_PREFS, ...(onPhone() ? MOBILE_MIC : {}), ll: llDefaults(isNative), overlay: { ...DEFAULT_PREFS.overlay } }
+    return { ...DEFAULT_PREFS, ...(onPhone() ? MOBILE_MIC : {}), ll: llDefaults(), overlay: { ...DEFAULT_PREFS.overlay } }
   }
 }
 
