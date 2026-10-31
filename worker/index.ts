@@ -12,14 +12,14 @@ import type { Env } from './env'
  *
  *   POST /api/rooms           →  { code }   a new room, its code held for a minute
  *   GET  /api/rooms/CODE/ws   →  WebSocket  into that room (a Durable Object, see room.ts)
- *   GET  /api/ice             →  { iceServers: RTCIceServer[] }
+ *   GET  /api/ice             →  { iceServers: RTCIceServer[] }  (empty without TURN)
  *
  * The rooms keep the roster and pass WebRTC signalling between members; the
  * audio itself is peer to peer and never comes through here. /api/ice mints
  * short-lived Cloudflare TURN credentials, so calls still connect when STUN
  * can't get through a NAT. It's optional: without TURN_KEY_ID and
- * TURN_KEY_API_TOKEN set (as secrets) it answers 404 and the app uses public
- * STUN only.
+ * TURN_KEY_API_TOKEN set (as secrets) it answers with no servers and the app
+ * uses public STUN only.
  */
 
 export { Room } from './room'
@@ -42,7 +42,8 @@ export default {
 
 async function ice(request: Request, env: Env, url: URL): Promise<Response> {
   if (request.method !== 'GET') return json({ error: 'Method not allowed' }, 405)
-  if (!env.TURN_KEY_ID || !env.TURN_KEY_API_TOKEN) return json({ error: 'TURN is not configured' }, 404)
+  // Not an error: STUN alone is a fine way to run, and a 404 would show up in every console.
+  if (!env.TURN_KEY_ID || !env.TURN_KEY_API_TOKEN) return json({ iceServers: [] }, 200)
 
   // Relay credentials cost money per GB, so they're not for anyone who finds the URL.
   const refused = refuseOthers(request, env, url) ?? (await limit(env.RATE_LIMITER, request, 'ice'))

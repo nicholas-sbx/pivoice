@@ -783,7 +783,7 @@ each other:
 1. **Cloudflare TURN through the Worker.** The Worker's `/api/ice` mints
    short-lived Cloudflare Realtime TURN credentials, and the app asks for them
    when a call starts. Set `TURN_KEY_ID` and `TURN_KEY_API_TOKEN` (see
-   Releasing). Without them, `/api/ice` answers 404 and the app quietly falls
+   Releasing). Without them, `/api/ice` answers with no servers and the app quietly falls
    back. It only answers same-origin requests from browsers (and any
    `ALLOWED_ORIGINS`), but that stops browsers on other sites, not a
    determined script. If relay bandwidth costs matter, turn on the rate

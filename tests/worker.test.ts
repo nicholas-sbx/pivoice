@@ -38,9 +38,10 @@ describe('worker', () => {
     expect(res.headers.get('content-type')).toBe('text/html')
   })
 
-  it('says 404 for /api/ice without TURN configured', async () => {
+  it('answers /api/ice with no servers without TURN configured', async () => {
     const res = await worker.fetch(get('/api/ice'), env())
-    expect(res.status).toBe(404)
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ iceServers: [] })
   })
 
   it('mints credentials for our own pages', async () => {
