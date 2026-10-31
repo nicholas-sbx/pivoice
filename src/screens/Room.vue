@@ -21,6 +21,7 @@ import PeopleGrid from '../components/PeopleGrid.vue'
 import RoundTable from '../components/RoundTable.vue'
 import SettingsPanel from '../components/SettingsPanel.vue'
 import UserMenu from '../components/UserMenu.vue'
+import { t } from '../i18n'
 import { isNative } from '../native/bridge'
 import { useCompact } from '../lib/viewport'
 import { vSnap } from '../lib/snap'
@@ -39,10 +40,8 @@ const selfMuted = computed(() => call.muted || call.deafened || !!call.micProble
 const present = computed(() => call.members.filter(m => !m.away).length || 1)
 const spatialLabel = computed(() =>
   call.prefs.spatial === 'off'
-    ? 'Spatial Audio: Off'
-    : call.prefs.spatial === 'hrtf'
-      ? `Spatial Audio: ${isNative ? 'Binaural' : 'HRTF'}`
-      : 'Spatial Audio: Stereo'
+    ? t('spatial.labelOff')
+    : t('spatial.label', { mode: t(call.prefs.spatial === 'hrtf' ? (isNative ? 'spatial.binaural' : 'spatial.hrtf') : 'spatial.stereo') })
 )
 /** The app's overlay, on or off: it stays that way for later calls too. */
 function toggleOverlay() {
@@ -87,32 +86,32 @@ onBeforeUnmount(() => {
     <header class="bar">
       <div class="left">
         <Icon name="speaker" :size="24" class="muted-icon" />
-        <h1>Voice Room</h1>
+        <h1>{{ t('room.title') }}</h1>
         <div class="code" :class="{ hidden: !call.prefs.showCode }">
-          <span class="code-text" :aria-label="call.prefs.showCode ? `Room code ${call.code}` : 'Room code hidden'">
+          <span class="code-text" :aria-label="call.prefs.showCode ? t('room.codeAria', { code: call.code }) : t('room.codeHidden')">
             {{ call.prefs.showCode ? call.code : '••••••' }}
           </span>
           <button
             type="button"
             class="code-btn"
-            :title="call.prefs.showCode ? 'Hide code' : 'Show code'"
-            :aria-label="call.prefs.showCode ? 'Hide room code' : 'Show room code'"
+            :title="call.prefs.showCode ? t('room.hideCode') : t('room.showCode')"
+            :aria-label="call.prefs.showCode ? t('room.hideCodeAria') : t('room.showCodeAria')"
             @click="toggleShowCode"
           >
             <Icon name="eye" :size="16" :slash="call.prefs.showCode" />
           </button>
-          <button type="button" class="code-btn" title="Copy room code" aria-label="Copy room code" @click="copyCode">
+          <button type="button" class="code-btn" :title="t('room.copyCode')" :aria-label="t('room.copyCode')" @click="copyCode">
             <Icon name="copy" :size="14" />
           </button>
         </div>
         <div class="divider" />
-        <div class="status" :class="call.status" :title="call.status === 'connected' ? 'Voice Connected' : 'Reconnecting…'">
+        <div class="status" :class="call.status" :title="call.status === 'connected' ? t('room.connected') : t('common.reconnecting')">
           <Icon name="signal" :size="16" />
-          <span class="status-text">{{ call.status === 'connected' ? 'Voice Connected' : 'Reconnecting…' }}</span>
+          <span class="status-text">{{ call.status === 'connected' ? t('room.connected') : t('common.reconnecting') }}</span>
         </div>
       </div>
       <div class="right">
-        <div class="people" :title="`${present} in the call`">
+        <div class="people" :title="t('room.inCall', { count: present })">
           <Icon name="people" :size="20" />
           <span>{{ present }}</span>
         </div>
@@ -121,8 +120,8 @@ onBeforeUnmount(() => {
           type="button"
           class="bar-btn"
           :class="{ active: !!pipRoot }"
-          :title="pipRoot ? 'Close pop-out table' : 'Pop out table'"
-          :aria-label="pipRoot ? 'Close pop-out table' : 'Pop out table'"
+          :title="pipRoot ? t('room.popOutClose') : t('room.popOut')"
+          :aria-label="pipRoot ? t('room.popOutClose') : t('room.popOut')"
           :aria-pressed="!!pipRoot"
           @click="togglePip"
         >
@@ -133,8 +132,8 @@ onBeforeUnmount(() => {
           type="button"
           class="bar-btn"
           :class="{ active: overlayOn }"
-          :title="overlayOn ? 'Hide overlay' : 'Show overlay'"
-          :aria-label="overlayOn ? 'Hide overlay' : 'Show overlay'"
+          :title="overlayOn ? t('room.overlayHide') : t('room.overlayShow')"
+          :aria-label="overlayOn ? t('room.overlayHide') : t('room.overlayShow')"
           :aria-pressed="overlayOn"
           @click="toggleOverlay"
         >
@@ -145,8 +144,8 @@ onBeforeUnmount(() => {
             type="button"
             class="bar-btn"
             :class="{ active: displayOpen }"
-            title="Display settings"
-            aria-label="Display settings"
+            :title="t('room.displaySettings')"
+            :aria-label="t('room.displaySettings')"
             data-display-toggle
             @click="displayOpen = !displayOpen"
           >
@@ -154,9 +153,9 @@ onBeforeUnmount(() => {
           </button>
           <DisplayPanel v-if="displayOpen" @close="displayOpen = false" />
         </div>
-        <button type="button" class="invite" title="Copy invite link" @click="copyInvite">
+        <button type="button" class="invite" :title="t('room.copyInviteLink')" @click="copyInvite">
           <Icon name="link" :size="18" />
-          <span class="invite-text">Copy Invite</span>
+          <span class="invite-text">{{ t('room.copyInvite') }}</span>
         </button>
       </div>
     </header>
@@ -193,17 +192,17 @@ onBeforeUnmount(() => {
         @menu="(id, x, y) => (menu = { id, x, y })"
       />
 
-      <div v-snap class="pill" role="toolbar" aria-label="Call controls">
+      <div v-snap class="pill" role="toolbar" :aria-label="t('room.controls')">
         <ControlButton
           icon="mic"
-          :label="selfMuted ? 'Unmute' : 'Mute'"
+          :label="selfMuted ? t('common.unmute') : t('common.mute')"
           :off="selfMuted"
           :shortcut="mod + 'M'"
           @click="toggleMute"
         />
         <ControlButton
           icon="headphones"
-          :label="call.deafened ? 'Undeafen' : 'Deafen'"
+          :label="call.deafened ? t('common.undeafen') : t('common.deafen')"
           :off="call.deafened"
           :shortcut="mod + 'D'"
           @click="toggleDeafen"
@@ -212,7 +211,7 @@ onBeforeUnmount(() => {
         <div class="settings-anchor">
           <ControlButton
             icon="gear"
-            label="Voice Settings"
+            :label="t('room.voiceSettings')"
             :on="settingsOpen"
             data-settings-toggle
             @click="settingsOpen = !settingsOpen"
@@ -220,7 +219,7 @@ onBeforeUnmount(() => {
           <SettingsPanel v-if="settingsOpen" @close="settingsOpen = false" />
         </div>
         <div class="sep" />
-        <ControlButton icon="hangup" label="Disconnect" danger @click="leaveCall" />
+        <ControlButton icon="hangup" :label="t('common.disconnect')" danger @click="leaveCall" />
       </div>
     </main>
 

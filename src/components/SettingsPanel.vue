@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { AudioEngine, type SpatialMode } from '../audio/engine'
 import { applyMicPrefs, call, getEngine, getNative, llSupported, micLevel, setAppDevices, setDtx, setOutput, setSpatial, startMicTest, stopMicTest, type TestPath } from '../call'
+import { t } from '../i18n'
 import { DEFAULT_PREFS } from '../lib/prefs'
 import { isNative, native } from '../native/bridge'
 import Segmented from './Segmented.vue'
@@ -32,7 +33,7 @@ async function loadDevices() {
     const all = await app.devices()
     const info = (d: (typeof all)[number], kind: MediaDeviceKind) => ({ deviceId: d.id, label: d.name + (d.default ? ' (default)' : ''), kind }) as MediaDeviceInfo
     // "default" follows whatever the system's default is, as the browser's does.
-    const def = (kind: MediaDeviceKind) => ({ deviceId: 'default', label: 'System default', kind }) as MediaDeviceInfo
+    const def = (kind: MediaDeviceKind) => ({ deviceId: 'default', label: t('common.systemDefault'), kind }) as MediaDeviceInfo
     inputs.value = [def('audioinput'), ...all.filter(d => d.input).map(d => info(d, 'audioinput'))]
     outputs.value = [def('audiooutput'), ...all.filter(d => d.output).map(d => info(d, 'audiooutput'))]
     return
@@ -63,64 +64,63 @@ function label(d: MediaDeviceInfo, i: number, kind: string) {
   return d.label || `${kind} ${i + 1}`
 }
 
-const modes: { value: SpatialMode; label: string; hint: string }[] = [
-  { value: 'off', label: 'Off', hint: 'Straight to your ears. Lowest latency.' },
-  { value: 'stereo', label: 'Stereo', hint: 'Louder on the side they sit: panned by level only.' },
+const modes = computed<{ value: SpatialMode; label: string; hint: string }[]>(() => [
+  { value: 'off', label: t('common.off'), hint: t('spatial.offHint') },
+  { value: 'stereo', label: t('spatial.stereo'), hint: t('spatial.stereoHint') },
   isNative
-    ? {
-        value: 'hrtf',
-        label: 'Binaural',
-        hint: 'A modelled head between your ears: the ear away from someone hears them up to 0.66 ms later and duller, the near one a little brighter, so voices sound placed around the table rather than just louder on one side. Only the far ear waits; the person across from you sounds just as with it off. On headphones.'
-      }
-    : { value: 'hrtf', label: 'HRTF', hint: 'Full 3D around your head, on headphones.' }
-]
-const modeHint = computed(() => modes.find(m => m.value === call.prefs.spatial)?.hint)
+    ? { value: 'hrtf', label: t('spatial.binaural'), hint: t('spatial.binauralHint') }
+    : { value: 'hrtf', label: t('spatial.hrtf'), hint: t('spatial.hrtfHint') }
+])
+const modeHint = computed(() => modes.value.find(m => m.value === call.prefs.spatial)?.hint)
 
 const testPaths = computed<{ value: TestPath; label: string }[]>(() => [
-  { value: 'raw', label: 'Raw' },
+  { value: 'raw', label: t('settings.pathRaw') },
   // The app has no WebRTC audio stack of its own to test.
-  ...(isNative ? [] : [{ value: 'webrtc' as const, label: 'WebRTC audio' }]),
-  ...(llSupported ? [{ value: 'll' as const, label: 'Low latency' }] : [])
+  ...(isNative ? [] : [{ value: 'webrtc' as const, label: t('settings.pathWebRTC') }]),
+  ...(llSupported ? [{ value: 'll' as const, label: t('settings.pathLL') }] : [])
 ])
 function pickPath(v: TestPath) {
   if (call.test.on) void startMicTest(v)
   else call.test.path = v
 }
-const testHints: Record<TestPath, string> = {
-  raw: isNative
-    ? 'Mic straight to your ears inside the sound card’s own callback, like pw-loopback. The floor every path sits on.'
-    : 'Mic straight to your ears: your devices and the browser’s buffers. The floor every path sits on.',
-  webrtc: 'Through WebRTC’s encoder, jitter buffer and playout, exactly as a call, minus the network.',
-  ll: 'Through the low-latency engine: its silence gate, encoder, packets, decoder and jitter buffer, minus the network.'
-}
+const testHint = computed(
+  () => ({
+    raw: t(isNative ? 'settings.hintRawApp' : 'settings.hintRawBrowser'),
+    webrtc: t('settings.hintWebRTC'),
+    ll: t('settings.hintLL')
+  })[call.test.path]
+)
 
-const processing = [
-  { key: 'echoCancellation', label: 'Echo Cancellation' },
-  { key: 'noiseSuppression', label: 'Noise Suppression' },
-  { key: 'autoGainControl', label: 'Automatic Gain Control' }
-] as const
+const processing = computed(
+  () =>
+    [
+      { key: 'echoCancellation', label: t('settings.echo') },
+      { key: 'noiseSuppression', label: t('settings.noise') },
+      { key: 'autoGainControl', label: t('settings.agc') }
+    ] as const
+)
 
 // The app does its own processing, each with what it costs in delay.
 const appProcessing = computed(() => [
   {
     key: 'echoCancellation' as const,
-    label: 'Echo Cancellation',
-    hint: 'Takes what your speakers play back out of your mic (SpeexDSP). Adds at most one 2.7 ms block, none at all on most sound cards. Only if you’re not on headphones.',
+    label: t('settings.echo'),
+    hint: t('settings.echoHint'),
     off: false
   },
   {
     key: 'noiseSuppression' as const,
-    label: 'Noise Suppression',
+    label: t('settings.noise'),
     hint:
       native.app?.noise === false
-        ? 'Not in this build of the app.'
-        : `RNNoise: a small neural network takes out fans, keyboards and hum. Adds 10 ms (its analysis window) plus up to 10 ms to fill a frame${call.prefs.noiseLookahead ? ', plus 10 ms of lookahead' : ''}.`,
+        ? t('settings.noiseNotBuilt')
+        : t(call.prefs.noiseLookahead ? 'settings.noiseHintLookahead' : 'settings.noiseHint'),
     off: native.app?.noise === false
   },
   {
     key: 'autoGainControl' as const,
-    label: 'Automatic Gain Control',
-    hint: 'Brings your voice to a steady level by changing the app’s own gain (never your system’s mic volume): down for a loud mic, up for a quiet one. Adds no delay.',
+    label: t('settings.agc'),
+    hint: t('settings.agcHint'),
     off: false
   }
 ])
@@ -160,15 +160,15 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div ref="el" v-snap class="panel" role="dialog" aria-label="Voice settings">
+  <div ref="el" v-snap class="panel" role="dialog" :aria-label="t('settings.title')">
     <header>
-      <h2>Voice Settings</h2>
-      <button type="button" class="x" aria-label="Close" @click="emit('close')"><Icon name="close" :size="20" /></button>
+      <h2>{{ t('settings.title') }}</h2>
+      <button type="button" class="x" :aria-label="t('common.close')" @click="emit('close')"><Icon name="close" :size="20" /></button>
     </header>
     <nav class="tabs" role="tablist">
-      <button type="button" role="tab" :aria-selected="tab === 'voice'" :class="{ active: tab === 'voice' }" @click="tab = 'voice'">Voice</button>
+      <button type="button" role="tab" :aria-selected="tab === 'voice'" :class="{ active: tab === 'voice' }" @click="tab = 'voice'">{{ t('settings.tabVoice') }}</button>
       <button type="button" role="tab" :aria-selected="tab === 'll'" :class="{ active: tab === 'll' }" @click="tab = 'll'">
-        Low Latency <span class="badge">Beta</span>
+        {{ t('settings.tabLL') }} <span class="badge">{{ t('common.beta') }}</span>
       </button>
       <button
         v-if="overlaySupported"
@@ -178,7 +178,7 @@ onBeforeUnmount(() => {
         :class="{ active: tab === 'overlay' }"
         @click="tab = 'overlay'"
       >
-        Overlay
+        {{ t('settings.tabOverlay') }}
       </button>
     </nav>
     <LLSettings v-if="tab === 'll'" />
@@ -187,31 +187,31 @@ onBeforeUnmount(() => {
 
     <div class="row two">
       <label class="field">
-        <span class="eyebrow">Input Device</span>
+        <span class="eyebrow">{{ t('settings.inputDevice') }}</span>
         <select :value="currentInput" @change="pickInput(($event.target as HTMLSelectElement).value)">
-          <option v-for="(d, i) in inputs" :key="d.deviceId" :value="d.deviceId">{{ label(d, i, 'Microphone') }}</option>
-          <option v-if="!inputs.length" value="default">Default</option>
+          <option v-for="(d, i) in inputs" :key="d.deviceId" :value="d.deviceId">{{ label(d, i, t('common.microphone')) }}</option>
+          <option v-if="!inputs.length" value="default">{{ t('common.default') }}</option>
         </select>
       </label>
       <label v-if="canPickOutput" class="field">
-        <span class="eyebrow">Output Device</span>
+        <span class="eyebrow">{{ t('settings.outputDevice') }}</span>
         <select :value="currentOutput" @change="pickOutput(($event.target as HTMLSelectElement).value)">
-          <option v-for="(d, i) in outputs" :key="d.deviceId" :value="d.deviceId">{{ label(d, i, 'Speaker') }}</option>
-          <option v-if="!outputs.length" value="default">Default</option>
+          <option v-for="(d, i) in outputs" :key="d.deviceId" :value="d.deviceId">{{ label(d, i, t('common.speaker')) }}</option>
+          <option v-if="!outputs.length" value="default">{{ t('common.default') }}</option>
         </select>
       </label>
     </div>
 
     <div class="row">
-      <span class="eyebrow">Input Level</span>
+      <span class="eyebrow">{{ t('settings.inputLevel') }}</span>
       <div class="meter" :class="{ dead: !!call.micProblem }">
         <div class="fill" :style="{ transform: `scaleX(${level})` }" />
       </div>
 
     <div class="row">
-      <span class="eyebrow">Mic Test</span>
+      <span class="eyebrow">{{ t('settings.micTest') }}</span>
       <p class="note first">
-        Hear yourself through one path, with no network in the way, and see how long it takes. You're deafened while it runs.
+        {{ t('settings.micTestNote') }}
       </p>
       <Segmented
         :options="testPaths"
@@ -220,23 +220,23 @@ onBeforeUnmount(() => {
       />
       <div class="test-row">
         <button type="button" class="test-btn" :class="{ stop: call.test.on }" @click="call.test.on ? stopMicTest() : startMicTest(call.test.path)">
-          {{ call.test.on ? 'Stop Testing' : "Let's Check" }}
+          {{ call.test.on ? t('settings.stopTesting') : t('settings.startTesting') }}
         </button>
         <div v-if="call.test.on" class="test-out" aria-live="polite">
           <strong>{{ call.test.ms === null ? '…' : `${call.test.measured ? '' : '≈ '}${Math.round(call.test.ms)} ms` }}</strong>
-          <span>{{ call.test.measured ? 'mic to ears, measured' : 'mic to ears' }}</span>
+          <span>{{ call.test.measured ? t('settings.testMicToEarsMeasured') : t('settings.testMicToEars') }}</span>
           <small v-if="call.test.detail">{{ call.test.detail }}</small>
         </div>
       </div>
-      <p class="note">{{ testHints[call.test.path] }}</p>
+      <p class="note">{{ testHint }}</p>
     </div>
       <p v-if="call.micProblem" class="note bad">
-        {{ call.micProblem === 'denied' ? 'Microphone access is blocked for this site.' : 'No microphone found.' }}
+        {{ call.micProblem === 'denied' ? t('settings.micBlocked') : t('settings.micNone') }}
       </p>
     </div>
 
     <div class="row">
-      <span class="eyebrow">Spatial Audio</span>
+      <span class="eyebrow">{{ t('spatial.title') }}</span>
       <div class="seg" role="radiogroup">
         <button
           v-for="m in modes"
@@ -254,7 +254,7 @@ onBeforeUnmount(() => {
     </div>
 
     <div class="row">
-      <span class="eyebrow">Voice Processing</span>
+      <span class="eyebrow">{{ t('settings.processing') }}</span>
       <template v-if="isNative">
         <Switch
           v-for="p in appProcessing"
@@ -267,91 +267,91 @@ onBeforeUnmount(() => {
         />
         <template v-if="call.prefs.noiseSuppression && native.app?.noise !== false">
           <Switch
-            label="Lookahead"
-            hint="RNNoise as its authors run it: it hears the next 10 ms before deciding, so the first sound of each word comes through cleaner. Costs those 10 ms. Off, nothing is held back."
+            :label="t('settings.lookahead')"
+            :hint="t('settings.lookaheadHint')"
             :model-value="call.prefs.noiseLookahead"
             @update:model-value="v => setAppDevices({ noiseLookahead: v })"
           />
           <Slider
-            label="Voice gate"
+            :label="t('settings.gate')"
             unit="%"
             :min="0"
             :max="95"
             :step="5"
             :hint="
               gatePct === 0
-                ? 'Off: noise is taken out, but you’re never faded to silence.'
-                : `Fades you out when RNNoise is less than ${gatePct}% sure you’re talking. Lower keeps more of quiet words; higher cuts more noise between them.`
+                ? t('settings.gateOff')
+                : t('settings.gateOn', { pct: gatePct })
             "
             :model-value="gatePct"
             @update:model-value="v => setAppDevices({ noiseGate: v / 100 })"
           />
           <Slider
             v-if="gatePct > 0"
-            label="Gate hold"
+            :label="t('settings.gateHold')"
             unit=" ms"
             :min="100"
             :max="1000"
             :step="50"
-            hint="How long the gate stays open after you stop, so word endings and pauses mid-sentence aren’t cut. It opens again the moment you speak; nothing is held back to look ahead."
+            :hint="t('settings.gateHoldHint')"
             :model-value="call.prefs.noiseGraceMs"
             @update:model-value="v => setAppDevices({ noiseGraceMs: v })"
           />
         </template>
         <template v-if="call.prefs.autoGainControl">
           <Slider
-            label="Target level"
+            :label="t('settings.agcTarget')"
             unit=" dBFS"
             :min="-30"
             :max="-10"
             :step="1"
-            hint="How loud it brings your speech on average. Higher is louder; the peak ceiling below keeps the peaks in check either way."
+            :hint="t('settings.agcTargetHint')"
             :model-value="call.prefs.agcTargetDb"
             @update:model-value="v => setAppDevices({ agcTargetDb: v })"
           />
           <Slider
-            label="Peak ceiling"
+            :label="t('settings.agcCeiling')"
             unit=" dBFS"
             :min="-12"
             :max="-1"
             :step="1"
-            hint="The loudest it lets your recent peaks get. It holds the gain back rather than squash them, so lower is cleaner, higher is louder. Anything sudden past −1 dBFS is caught by the limiter."
+            :hint="t('settings.agcCeilingHint')"
             :model-value="call.prefs.agcCeilingDb"
             @update:model-value="v => setAppDevices({ agcCeilingDb: v })"
           />
           <Slider
-            label="Max boost"
+            :label="t('settings.agcMax')"
             unit=" dB"
             :min="0"
             :max="40"
             :step="1"
-            hint="The most it will turn a quiet mic up. More reaches quieter mics, and lifts their background noise with them."
+            :hint="t('settings.agcMaxHint')"
             :model-value="call.prefs.agcMaxDb"
             @update:model-value="v => setAppDevices({ agcMaxDb: v })"
           />
           <Slider
-            label="Rise time"
+            :label="t('settings.agcRise')"
             unit=" ms"
             :min="100"
             :max="5000"
             :step="100"
-            hint="How long it takes to turn you up when you get quieter. Slower sounds steadier; faster catches up sooner."
+            :hint="t('settings.agcRiseHint')"
             :model-value="call.prefs.agcRiseMs"
             @update:model-value="v => setAppDevices({ agcRiseMs: v })"
           />
           <Slider
-            label="Fall time"
+            :label="t('settings.agcFall')"
             unit=" ms"
             :min="10"
             :max="500"
             :step="10"
-            hint="How long it takes to turn you down when you get loud. Fast keeps a sudden loud bit from blasting; too fast can pump."
+            :hint="t('settings.agcFallHint')"
             :model-value="call.prefs.agcFallMs"
             @update:model-value="v => setAppDevices({ agcFallMs: v })"
           />
-          <button type="button" class="reset-gain" @click="resetGain">Reset gain control</button>
+          <button type="button" class="reset-gain" @click="resetGain">{{ t('settings.resetGain') }}</button>
         </template>
-        <p class="note spaced">All off, the app doesn’t touch your mic at all, and none of it costs anything.</p>
+        <p class="note spaced">{{ t('settings.appProcessingNote') }}</p>
       </template>
       <template v-else>
       <Switch
@@ -361,11 +361,11 @@ onBeforeUnmount(() => {
         :model-value="call.prefs[p.key]"
         @update:model-value="v => applyMicPrefs({ [p.key]: v })"
       />
-      <p class="note">The browser's own. All three off is the lowest latency: the browser hands your mic over untouched. Echo cancellation is for when you're not on headphones.</p>
+      <p class="note">{{ t('settings.browserProcessingNote') }}</p>
       </template>
       <Switch
-        label="Silence Suppression (DTX)"
-        hint="People stop sending you audio while they're quiet. Saves bandwidth, adds ~9 ms of buffering. Changing it reconnects you for a moment."
+        :label="t('settings.dtx')"
+        :hint="t('settings.dtxHint')"
         :model-value="call.prefs.dtx"
         @update:model-value="setDtx"
       />

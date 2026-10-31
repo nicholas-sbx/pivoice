@@ -1,4 +1,5 @@
 import { createApp } from 'vue'
+import { i18n } from '../i18n'
 import Overlay from './Overlay.vue'
 import '../styles/base.css'
 
@@ -9,4 +10,4 @@ import '../styles/base.css'
  * call, no audio, no room, just the table drawn from what the app tells it.
  */
 
-createApp(Overlay).mount('#app')
+createApp(Overlay).use(i18n).mount('#app')

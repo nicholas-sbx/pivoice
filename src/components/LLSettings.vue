@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { LL_DEFAULTS, LL_RANGES, type FrameMs, type LLConfig, type OpusApplication, captureFrame, sendDelayMs, type LLCodec } from '../audio/ll/config'
 import { call, getEngine, getNative, llSupported, micLevel, setAppDevices, setOutputBuffer, updateLL } from '../call'
+import { t } from '../i18n'
 import { isNative, native } from '../native/bridge'
 import type { AudioInfo, Glitches } from '../native/protocol'
 import Segmented from './Segmented.vue'
@@ -19,25 +20,26 @@ const frames: { value: FrameMs; label: string }[] = [
   { value: 10, label: '10 ms' },
   { value: 20, label: '20 ms' }
 ]
-const apps: { value: OpusApplication; label: string }[] = [
-  { value: 'lowdelay', label: 'Low delay' },
-  { value: 'voip', label: 'VoIP' },
-  { value: 'audio', label: 'Audio' }
-]
-const appHints: Record<OpusApplication, string> = {
-  lowdelay: 'CELT only: 2.5 ms lookahead. Lowest delay.',
-  voip: 'Tuned for speech: 6.5 ms lookahead. Below 10 ms frames it’s CELT anyway.',
-  audio: 'Tuned for music: 6.5 ms lookahead.'
-}
-const codecs: { value: LLCodec; label: string }[] = [
-  { value: 'opus', label: 'Opus' },
-  { value: 'pcm', label: 'Raw PCM (LAN)' }
-]
-const redundancy: { value: 0 | 1 | 2; label: string }[] = [
-  { value: 0, label: 'Off' },
-  { value: 1, label: '+1 frame' },
-  { value: 2, label: '+2 frames' }
-]
+const apps = computed<{ value: OpusApplication; label: string }[]>(() => [
+  { value: 'lowdelay', label: t('ll.appLowdelay') },
+  { value: 'voip', label: t('ll.appVoip') },
+  { value: 'audio', label: t('ll.appAudio') }
+])
+const appHint = computed(() => t(({ lowdelay: 'll.appLowdelayHint', voip: 'll.appVoipHint', audio: 'll.appAudioHint' } as const)[c.value.application]))
+const codecs = computed<{ value: LLCodec; label: string }[]>(() => [
+  { value: 'opus', label: t('ll.codecOpus') },
+  { value: 'pcm', label: t('ll.codecPCM') }
+])
+const redundancy = computed<{ value: 0 | 1 | 2; label: string }[]>(() => [
+  { value: 0, label: t('common.off') },
+  { value: 1, label: t('ll.redundancy1') },
+  { value: 2, label: t('ll.redundancy2') }
+])
+const bufferOptions = computed(() => [
+  { value: 'min' as const, label: t('ll.bufferMin') },
+  { value: 'small' as const, label: t('ll.bufferSmall') },
+  { value: 'interactive' as const, label: t('ll.bufferDefault') }
+])
 
 // Your mic's level now, to set the silence threshold against.
 const micDb = ref('…')
@@ -56,7 +58,7 @@ onMounted(() => {
   micTimer = setInterval(() => {
     const level = micLevel()
     // micLevel() is RMS × 4, clamped; back to dBFS.
-    micDb.value = level > 0 ? `${Math.round(20 * Math.log10(level / 4))} dBFS` : 'silent'
+    micDb.value = level > 0 ? `${Math.round(20 * Math.log10(level / 4))} dBFS` : t('ll.micSilent')
   }, 250)
   if (isNative) {
     void readGlitches()
@@ -72,10 +74,10 @@ const glitchRows = computed(() => {
   const g = glitches.value
   if (!g) return []
   return [
-    { n: g.inputOverflows, label: 'mic overruns', hint: 'the sound card’s mic buffer filled before the app read it' },
-    { n: g.outputUnderflows, label: 'speaker underruns', hint: 'a block reached the speakers late' },
-    { n: g.captureDropped, label: 'mic blocks dropped', hint: 'the sender fell behind' },
-    { n: g.framesDropped, label: 'incoming frames dropped', hint: 'the audio thread fell behind' }
+    { n: g.inputOverflows, label: t('ll.glitch.inputOverflows'), hint: t('ll.glitch.inputOverflowsHint') },
+    { n: g.outputUnderflows, label: t('ll.glitch.outputUnderflows'), hint: t('ll.glitch.outputUnderflowsHint') },
+    { n: g.captureDropped, label: t('ll.glitch.captureDropped'), hint: t('ll.glitch.captureDroppedHint') },
+    { n: g.framesDropped, label: t('ll.glitch.framesDropped'), hint: t('ll.glitch.framesDroppedHint') }
   ]
 })
 
@@ -100,184 +102,181 @@ const transport = typeof SharedArrayBuffer !== 'undefined' && globalThis.crossOr
 const buffer = computed(() => {
   void call.status
   const info = appAudio.value ?? getNative()?.info
-  if (info) return `${info.block}-sample blocks (${((info.block * 1000) / 48_000).toFixed(1)} ms) · in ${info.inputLatencyMs.toFixed(1)} ms, out ${info.outputLatencyMs.toFixed(1)} ms · ${info.api}${info.mode ? ` (${info.mode})` : ''}`
+  if (info) {
+    return t(info.mode ? 'll.bufferNowMode' : 'll.bufferNow', {
+      block: info.block,
+      blockMs: ((info.block * 1000) / 48_000).toFixed(1),
+      input: info.inputLatencyMs.toFixed(1),
+      output: info.outputLatencyMs.toFixed(1),
+      api: info.api,
+      mode: info.mode ?? ''
+    })
+  }
   const ctx = getEngine()?.ctx
   if (!ctx) return ''
-  return `${(ctx.baseLatency * 1000).toFixed(1)} ms Web Audio + ${((ctx.outputLatency || 0) * 1000).toFixed(1)} ms device`
+  return t('ll.bufferWebAudio', { base: (ctx.baseLatency * 1000).toFixed(1), device: ((ctx.outputLatency || 0) * 1000).toFixed(1) })
 })
 </script>
 
 <template>
   <div class="ll">
     <Switch
-      label="Low-Latency Engine (Experimental)"
-      :hint="
-        llSupported
-          ? 'Replaces WebRTC’s audio with people who have it on too: the browser’s Opus at frame sizes WebRTC won’t do, our own jitter buffer, and packets that are never retransmitted.'
-          : 'This browser doesn’t have WebCodecs audio, which the engine needs.'
-      "
+:label="t('ll.engine')"
+      :hint="t(llSupported ? 'll.engineHint' : 'll.engineUnsupported')"
       :model-value="c.enabled && llSupported"
       @update:model-value="v => set('enabled', v)"
     />
 
     <div class="cost">
-      Fixed delay <strong>{{ fixedMs }} ms</strong> ({{ c.codec === 'pcm' ? 'one block' : 'frame + lookahead' }}) ·
-      {{ packetsPerSecond.toFixed(0) }} packets/s · ≈ {{ wireKbps.toFixed(0) }} kbps per listener ·
-      <template v-if="isNative">straight from the sound card’s callback</template>
-      <template v-else>{{ transport === 'shared' ? 'shared memory' : 'messages' }} between audio thread and worker</template>
+      {{ t('ll.fixedDelay') }} <strong>{{ fixedMs }} ms</strong>
+      {{
+        t('ll.costRest', {
+          what: t(c.codec === 'pcm' ? 'll.costOneBlock' : 'll.costFrame'),
+          packets: packetsPerSecond.toFixed(0),
+          kbps: wireKbps.toFixed(0),
+          transport: isNative ? t('ll.transportApp') : t(transport === 'shared' ? 'll.transportShared' : 'll.transportMessages')
+        })
+      }}
     </div>
 
     <template v-if="isNative">
-      <span class="eyebrow">Sound card</span>
+      <span class="eyebrow">{{ t('ll.soundCard') }}</span>
       <p class="note">
-        The app runs the microphone and the speakers in one callback, with the smallest buffer your device offers, and plays
-        everyone through it: there’s no browser audio in the way.
-        <template v-if="buffer"><br />Now: {{ buffer }}</template>
+        {{ t('ll.soundCardNote') }}
+        <template v-if="buffer"><br />{{ t('ll.now', { buffer }) }}</template>
       </p>
       <Switch
         v-if="onWindows"
-        label="Exclusive Mode"
-        hint="Takes the sound card for the app alone, for WASAPI’s smallest buffers: less delay, but nothing else can play or record on it while you’re in a call. Without it, the app still asks Windows for the mic raw (no effects)."
+:label="t('ll.exclusive')"
+        :hint="t('ll.exclusiveHint')"
         :model-value="call.prefs.appExclusive"
         @update:model-value="v => setAppDevices({ appExclusive: v })"
       />
       <template v-if="glitches">
-        <span class="eyebrow">Glitches since the sound card opened</span>
+        <span class="eyebrow">{{ t('ll.glitches') }}</span>
         <ul class="glitches">
           <li v-for="g in glitchRows" :key="g.label" :class="{ bad: g.n > 0 }" :title="g.hint">
             <strong>{{ g.n }}</strong> {{ g.label }}
           </li>
-          <li :class="{ bad: glitches.gcPauseMaxMs > 1 }" title="the longest the app stopped for garbage collection lately">
-            <strong>{{ glitches.gcPauseMaxMs.toFixed(2) }} ms</strong> longest pause
+          <li :class="{ bad: glitches.gcPauseMaxMs > 1 }" :title="t('ll.glitch.gcPauseHint')">
+            <strong>{{ glitches.gcPauseMaxMs.toFixed(2) }} ms</strong> {{ t('ll.glitch.gcPause') }}
           </li>
         </ul>
         <p class="note">
-          Hear a crackle? Whatever counted up just then is why. Underruns or overruns: the sound card wants a bigger buffer, or
-          something else on the machine is hogging it. Late frames in someone’s route card: the network.
+          {{ t('ll.glitchesNote') }}
         </p>
       </template>
     </template>
     <template v-else>
-    <span class="eyebrow">Both engines</span>
+    <span class="eyebrow">{{ t('ll.bothEngines') }}</span>
     <Segmented
-      label="Audio output buffer"
-      :options="[
-        { value: 'min', label: 'Smallest' },
-        { value: 'small', label: 'Small (~5 ms)' },
-        { value: 'interactive', label: 'Browser default' }
-      ]"
+      :label="t('ll.outputBuffer')"
+      :options="bufferOptions"
       :model-value="call.prefs.outputBuffer"
       @update:model-value="setOutputBuffer"
     />
     <p class="note">
-      Web Audio’s buffer to your speakers (this engine always plays through it). Smaller is less delay and steadier timing,
-      but crackles sooner on a busy machine: if this engine sounds choppy, try a bigger one with the Raw mic test. Changing it
-      reconnects you for a moment.
-      <template v-if="buffer"><br />Now: {{ buffer }}</template>
+      {{ t('ll.outputBufferNote') }}
+      <template v-if="buffer"><br />{{ t('ll.now', { buffer }) }}</template>
     </p>
     </template>
 
-    <span class="eyebrow">Sending</span>
-    <Segmented label="Codec" :options="codecs" :model-value="c.codec" @update:model-value="v => set('codec', v)" />
+    <span class="eyebrow">{{ t('ll.sending') }}</span>
+    <Segmented :label="t('ll.codec')" :options="codecs" :model-value="c.codec" @update:model-value="v => set('codec', v)" />
     <p class="note">
-      {{
-        c.codec === 'pcm'
-          ? 'Raw 16-bit PCM: no encoder and no lookahead, one 2.7 ms block per packet, as soon as it’s captured. Megabits per listener (see above): for local networks.'
-          : 'The browser’s Opus: a fraction of the bandwidth, at the cost of a frame to fill and the encoder’s lookahead.'
-      }}
+      {{ t(c.codec === 'pcm' ? 'll.codecPCMNote' : 'll.codecOpusNote') }}
     </p>
     <template v-if="c.codec === 'opus'">
-    <Segmented label="Frame size" :options="frames" :model-value="c.frameMs" @update:model-value="v => set('frameMs', v)" />
-    <Segmented label="Opus mode" :options="apps" :model-value="c.application" @update:model-value="v => set('application', v)" />
-    <p class="note">{{ appHints[c.application] }}</p>
-    <Slider label="Bitrate" unit=" kbps" :min="r.bitrateKbps[0]" :max="r.bitrateKbps[1]" :step="r.bitrateKbps[2]" :model-value="c.bitrateKbps" @update:model-value="v => set('bitrateKbps', v)" />
+    <Segmented :label="t('ll.frameSize')" :options="frames" :model-value="c.frameMs" @update:model-value="v => set('frameMs', v)" />
+    <Segmented :label="t('ll.opusMode')" :options="apps" :model-value="c.application" @update:model-value="v => set('application', v)" />
+    <p class="note">{{ appHint }}</p>
+    <Slider :label="t('ll.bitrate')" unit=" kbps" :min="r.bitrateKbps[0]" :max="r.bitrateKbps[1]" :step="r.bitrateKbps[2]" :model-value="c.bitrateKbps" @update:model-value="v => set('bitrateKbps', v)" />
     <Slider
-      label="Encoder complexity"
+      :label="t('ll.complexity')"
       :min="r.complexity[0]"
       :max="r.complexity[1]"
       :step="r.complexity[2]"
-      hint="CPU against quality. No effect on delay."
+      :hint="t('ll.complexityHint')"
       :model-value="c.complexity"
       @update:model-value="v => set('complexity', v)"
     />
     </template>
-    <Segmented label="Redundancy" :options="redundancy" :model-value="c.redundancy" @update:model-value="v => set('redundancy', v)" />
-    <p class="note">Each packet repeats the frames before it, so one lost packet costs nothing. More bandwidth, no extra delay.</p>
-    <Switch label="Silence Suppression (DTX)" hint="Send nothing while you’re quiet." :model-value="c.dtx" @update:model-value="v => set('dtx', v)" />
+    <Segmented :label="t('ll.redundancy')" :options="redundancy" :model-value="c.redundancy" @update:model-value="v => set('redundancy', v)" />
+    <p class="note">{{ t('ll.redundancyNote') }}</p>
+    <Switch :label="t('settings.dtx')" :hint="t('ll.dtxHint')" :model-value="c.dtx" @update:model-value="v => set('dtx', v)" />
     <Slider
       v-if="c.dtx"
-      label="Silence threshold"
+      :label="t('ll.silenceThreshold')"
       unit=" dBFS"
       :min="r.dtxThresholdDb[0]"
       :max="r.dtxThresholdDb[1]"
       :step="r.dtxThresholdDb[2]"
-      :hint="`Quieter than this counts as silence. Your mic right now: ${micDb}. Lower it if quiet words get cut; raise it if room noise keeps it sending.`"
+      :hint="t('ll.silenceThresholdHint', { level: micDb })"
       :model-value="c.dtxThresholdDb"
       @update:model-value="v => set('dtxThresholdDb', v)"
     />
     <Slider
       v-if="c.dtx"
-      label="Silence hangover"
+      :label="t('ll.silenceHangover')"
       unit=" ms"
       :min="r.dtxHangoverMs[0]"
       :max="r.dtxHangoverMs[1]"
       :step="r.dtxHangoverMs[2]"
-      hint="Keep sending this long after you go quiet, so word endings and pauses mid-sentence aren’t cut."
+      :hint="t('ll.silenceHangoverHint')"
       :model-value="c.dtxHangoverMs"
       @update:model-value="v => set('dtxHangoverMs', v)"
     />
 
-    <span class="eyebrow">Receiving (jitter buffer)</span>
+    <span class="eyebrow">{{ t('ll.receiving') }}</span>
     <p class="note">
-      It aims for the network’s jitter (the chosen percentile of how late packets have been, over the window) × multiplier +
-      margin, kept between the minimum and the maximum. Choppy? Raise the percentile or the margin. Laggy? Lower them.
+      {{ t('ll.receivingNote') }}
     </p>
     <Slider
-      label="Jitter percentile"
+      :label="t('ll.jitterPercentile')"
       :min="r.jitterPercentile[0]"
       :max="r.jitterPercentile[1]"
       :step="r.jitterPercentile[2]"
-      hint="How much of the lateness to cover: 99 drops about 1 packet in 100 as late; 100 covers the worst one seen."
+      :hint="t('ll.jitterPercentileHint')"
       :model-value="c.jitterPercentile"
       @update:model-value="v => set('jitterPercentile', v)"
     />
     <Slider
-      label="Jitter window"
+      :label="t('ll.jitterWindow')"
       unit=" s"
       :min="r.jitterWindowSec[0]"
       :max="r.jitterWindowSec[1]"
       :step="r.jitterWindowSec[2]"
-      hint="How far back it remembers lateness. Longer is steadier; shorter recovers faster after a bad patch."
+      :hint="t('ll.jitterWindowHint')"
       :model-value="c.jitterWindowSec"
       @update:model-value="v => set('jitterWindowSec', v)"
     />
-    <Slider label="Jitter multiplier" unit="×" :digits="1" :min="r.jitterMultiplier[0]" :max="r.jitterMultiplier[1]" :step="r.jitterMultiplier[2]" :model-value="c.jitterMultiplier" @update:model-value="v => set('jitterMultiplier', v)" />
-    <Slider label="Safety margin" unit=" ms" :min="r.marginMs[0]" :max="r.marginMs[1]" :step="r.marginMs[2]" :model-value="c.marginMs" @update:model-value="v => set('marginMs', v)" />
-    <Slider label="Minimum buffer" unit=" ms" :min="r.minBufferMs[0]" :max="r.minBufferMs[1]" :step="r.minBufferMs[2]" :model-value="c.minBufferMs" @update:model-value="v => set('minBufferMs', v)" />
-    <Slider label="Maximum buffer" unit=" ms" :min="r.maxBufferMs[0]" :max="r.maxBufferMs[1]" :step="r.maxBufferMs[2]" :model-value="c.maxBufferMs" @update:model-value="v => set('maxBufferMs', v)" />
+    <Slider :label="t('ll.jitterMultiplier')" unit="×" :digits="1" :min="r.jitterMultiplier[0]" :max="r.jitterMultiplier[1]" :step="r.jitterMultiplier[2]" :model-value="c.jitterMultiplier" @update:model-value="v => set('jitterMultiplier', v)" />
+    <Slider :label="t('ll.margin')" unit=" ms" :min="r.marginMs[0]" :max="r.marginMs[1]" :step="r.marginMs[2]" :model-value="c.marginMs" @update:model-value="v => set('marginMs', v)" />
+    <Slider :label="t('ll.minBuffer')" unit=" ms" :min="r.minBufferMs[0]" :max="r.minBufferMs[1]" :step="r.minBufferMs[2]" :model-value="c.minBufferMs" @update:model-value="v => set('minBufferMs', v)" />
+    <Slider :label="t('ll.maxBuffer')" unit=" ms" :min="r.maxBufferMs[0]" :max="r.maxBufferMs[1]" :step="r.maxBufferMs[2]" :model-value="c.maxBufferMs" @update:model-value="v => set('maxBufferMs', v)" />
     <Slider
-      label="Speed adjustment"
+      :label="t('ll.stretch')"
       unit="%"
       :digits="1"
       :min="r.stretchPct[0]"
       :max="r.stretchPct[1]"
       :step="r.stretchPct[2]"
-      hint="How much playback may speed up or slow down to steer to the target (the pitch moves with it). It does that in the pauses between words, and while someone talks only if a gap is coming. 0 = only resync between sentences."
+      :hint="t('ll.stretchHint')"
       :model-value="c.stretchPct"
       @update:model-value="v => set('stretchPct', v)"
     />
     <Slider
-      label="Concealment"
+      :label="t('ll.conceal')"
       unit=" ms"
       :min="r.concealMs[0]"
       :max="r.concealMs[1]"
       :step="r.concealMs[2]"
-      hint="How long a gap is covered by fading out the last frame before it goes silent."
+      :hint="t('ll.concealHint')"
       :model-value="c.concealMs"
       @update:model-value="v => set('concealMs', v)"
     />
 
-    <button type="button" class="reset" @click="updateLL({ ...LL_DEFAULTS, enabled: c.enabled })">Reset to defaults</button>
+    <button type="button" class="reset" @click="updateLL({ ...LL_DEFAULTS, enabled: c.enabled })">{{ t('common.resetToDefaults') }}</button>
   </div>
 </template>
 

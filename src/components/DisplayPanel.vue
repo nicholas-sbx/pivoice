@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { call, updatePrefs } from '../call'
+import { t } from '../i18n'
 import Switch from './Switch.vue'
 import { vSnap } from '../lib/snap'
 
@@ -27,24 +28,24 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div ref="el" v-snap class="panel" role="dialog" aria-label="Display settings">
-    <span class="eyebrow">At the table</span>
+  <div ref="el" v-snap class="panel" role="dialog" :aria-label="t('room.displaySettings')">
+    <span class="eyebrow">{{ t('display.atTable') }}</span>
     <Switch
-      label="Show ping"
-      hint="Round trip to each person, beside their name."
+      :label="t('display.ping')"
+      :hint="t('display.pingHint')"
       :model-value="call.prefs.showPing"
       @update:model-value="v => updatePrefs({ showPing: v })"
     />
     <Switch
-      label="Show audio route"
-      hint="How each person's audio reaches you: direct or relayed, buffering, loss."
+      :label="t('display.route')"
+      :hint="t('display.routeHint')"
       :model-value="call.prefs.showRoute"
       @update:model-value="v => updatePrefs({ showRoute: v })"
     />
-    <span class="eyebrow second">On this device</span>
+    <span class="eyebrow second">{{ t('display.onDevice') }}</span>
     <Switch
-      label="Keep screen awake"
-      hint="Stops the screen going to sleep while you're in a call."
+      :label="t('display.awake')"
+      :hint="t('display.awakeHint')"
       :model-value="call.prefs.keepAwake"
       @update:model-value="v => updatePrefs({ keepAwake: v })"
     />

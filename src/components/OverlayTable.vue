@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { t } from '../i18n'
 import { tableRadius } from '../lib/seats'
 import type { Seating } from '../lib/seating'
 import { useSeatStates, useTableView } from '../lib/tableView'
@@ -118,13 +119,13 @@ const icon = computed(() => Math.round(12 * (props.scale ?? 1)))
       </div>
     </div>
 
-    <div v-if="controls" class="controls" role="toolbar" aria-label="Call controls">
+    <div v-if="controls" class="controls" role="toolbar" :aria-label="t('room.controls')">
       <button
         type="button"
         class="btn"
         :class="{ off: selfMuted }"
-        :title="selfMuted ? 'Unmute' : 'Mute'"
-        :aria-label="selfMuted ? 'Unmute' : 'Mute'"
+        :title="selfMuted ? t('common.unmute') : t('common.mute')"
+        :aria-label="selfMuted ? t('common.unmute') : t('common.mute')"
         :aria-pressed="selfMuted"
         @click="$emit('toggleMute')"
       >
@@ -134,8 +135,8 @@ const icon = computed(() => Math.round(12 * (props.scale ?? 1)))
         type="button"
         class="btn"
         :class="{ off: selfDeafened }"
-        :title="selfDeafened ? 'Undeafen' : 'Deafen'"
-        :aria-label="selfDeafened ? 'Undeafen' : 'Deafen'"
+        :title="selfDeafened ? t('common.undeafen') : t('common.deafen')"
+        :aria-label="selfDeafened ? t('common.undeafen') : t('common.deafen')"
         :aria-pressed="selfDeafened"
         @click="$emit('toggleDeafen')"
       >
@@ -145,14 +146,14 @@ const icon = computed(() => Math.round(12 * (props.scale ?? 1)))
         type="button"
         class="btn"
         :class="{ on: spatial }"
-        :title="spatialLabel ?? 'Spatial Audio'"
-        :aria-label="spatialLabel ?? 'Spatial Audio'"
+        :title="spatialLabel ?? t('spatial.title')"
+        :aria-label="spatialLabel ?? t('spatial.title')"
         :aria-pressed="!!spatial"
         @click="$emit('toggleSpatial')"
       >
         <Icon name="spatial" :size="20" />
       </button>
-      <button type="button" class="btn danger" title="Disconnect" aria-label="Disconnect" @click="$emit('leave')">
+      <button type="button" class="btn danger" :title="t('common.disconnect')" :aria-label="t('common.disconnect')" @click="$emit('leave')">
         <Icon name="hangup" :size="20" />
       </button>
     </div>

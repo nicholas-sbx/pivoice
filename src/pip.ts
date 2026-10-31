@@ -1,5 +1,6 @@
 import { shallowRef } from 'vue'
 import { call, toast } from './call'
+import { t } from './i18n'
 import { touchFirst } from './lib/viewport'
 import { isNative } from './native/bridge'
 
@@ -39,7 +40,7 @@ export async function togglePip() {
     const root = await setUp(win)
     if (pipWindow.value === win) pipRoot.value = root
   } catch {
-    toast("Couldn't open the pop-out window.", 'error')
+    toast(t('toast.popOutFailed'), 'error')
   } finally {
     opening = false
   }
