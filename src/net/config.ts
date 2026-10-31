@@ -30,7 +30,7 @@ function isIceServer(x: unknown): x is RTCIceServer {
 
 /**
  * Asks our own Worker (`/api/ice`) for short-lived Cloudflare TURN
- * credentials. Only there when the Worker has TURN configured; anything else
+ * credentials. Empty unless the Worker has TURN configured; that, or anything else
  * (dev server, no TURN key, slow network) falls back to the defaults.
  */
 export async function fetchIceServers(timeoutMs = 2500): Promise<RTCIceServer[]> {
