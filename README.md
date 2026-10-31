@@ -277,8 +277,7 @@ it's as good as your two clocks (NTP usually keeps desktops within a few ms).
 
 ### The low-latency engine (experimental)
 
-Off by default on the website, and on by default in the app (which always
-has it), sending raw PCM, in **Voice Settings → Low Latency**. Turning it on
+On by default, on the website and in the app, sending raw PCM, in **Voice Settings → Low Latency**. Turning it on
 or off keeps the rest of its settings. Pairs
 of people who both have it on stop using WebRTC's audio for each other and
 use this instead. PCM is about 1.3 Mbit/s to each person you're talking to,
@@ -381,8 +380,8 @@ starts, so changing it reconnects you on the spot:
 | Opus mode | Low delay | Low delay (CELT, 2.5 ms lookahead), VoIP or Audio (6.5 ms). |
 | Bitrate | 64 kbps | 12–256 kbps. |
 | Encoder complexity | 8 | CPU against quality. No effect on delay. |
-| Redundancy | +1 frame | Each packet repeats 0–2 previous frames. |
-| Silence suppression | On | Send nothing while you're quiet. |
+| Redundancy | Off | Each packet repeats 0–2 previous frames. |
+| Silence suppression | Off | Send nothing while you're quiet. |
 | Silence threshold | −70 dBFS | What counts as quiet. The tab shows your mic's level live. |
 | Silence hangover | 400 ms | How long it keeps sending after you go quiet. |
 | Jitter percentile | 99 | How much of the measured lateness to cover. 100 covers the worst packet seen. |
