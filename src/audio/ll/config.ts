@@ -24,17 +24,18 @@ export const PCM_FRAME = 128
  * quiet speech (−70 dBFS, 400 ms hangover) and the jitter target moved to
  * the 99th percentile. 3: raw PCM became the default codec, and the engine
  * is on by default. 4: in a browser it's off by default again (the app
- * keeps it on); tuning carried over.
+ * keeps it on); tuning carried over. 5: on in a browser again, and
+ * redundancy and silence suppression went off by default, for everyone.
  */
-export const LL_REV = 4
+export const LL_REV = 5
 /** Saved tuning from before this resets to the defaults, once. */
-const TUNING_SINCE = 3
+const TUNING_SINCE = 5
 /**
  * Whether the engine is on survives a revision, except across these: it
  * was saved for everyone as whatever the default was, so a saved `enabled`
  * from before the default changed was never anyone's choice.
  */
-const ENABLED_SINCE = { app: 3, web: 4 }
+const ENABLED_SINCE = { app: 3, web: 5 }
 
 export interface LLConfig {
   rev: number
@@ -82,10 +83,10 @@ export const LL_DEFAULTS: LLConfig = {
   application: 'lowdelay',
   bitrateKbps: 64,
   complexity: 8,
-  dtx: true,
+  dtx: false,
   dtxThresholdDb: -70,
   dtxHangoverMs: 400,
-  redundancy: 1,
+  redundancy: 0,
   minBufferMs: 0,
   maxBufferMs: 80,
   marginMs: 3,
@@ -112,13 +113,9 @@ export const LL_RANGES = {
   concealMs: [0, 60, 1]
 } as const satisfies Partial<Record<keyof LLConfig, readonly [number, number, number]>>
 
-/**
- * The defaults: the same everywhere but for whether the engine is on. The
- * app always has it and it's the point of the app; a browser has to decode
- * in a worklet, which is touchier, so there it's for those who ask.
- */
-export function llDefaults(app: boolean): LLConfig {
-  return { ...LL_DEFAULTS, enabled: app }
+/** The defaults: the same in the app and in a browser (the engine on, raw PCM, no redundancy, no silence suppression). */
+export function llDefaults(_app: boolean): LLConfig {
+  return { ...LL_DEFAULTS }
 }
 
 export function sanitizeLL(raw: unknown, app: boolean): LLConfig {
