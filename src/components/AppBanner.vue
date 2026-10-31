@@ -20,7 +20,7 @@ const href = app ? downloadUrl(version, app.file(version)) : ''
 <template>
   <div v-if="show && app" class="banner" role="region" aria-label="Get the app">
     <span class="text">
-      Get lower latency, better performance, and an in game overlay in desktop app.
+      Get lower latency, better performance, and an in game overlay with the desktop app.
     </span>
     <a class="get" :href="href" :download="app.file(version)" rel="noopener">Download for {{ app.label }}</a>
     <button type="button" class="x" aria-label="Dismiss" title="Dismiss" @click="updatePrefs({ appBannerDismissed: true })">
