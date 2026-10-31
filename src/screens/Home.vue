@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { call, startCall } from '../call'
+import { t } from '../i18n'
 import { isNative, native } from '../native/bridge'
 import { APP_DOWNLOADS, downloadUrl, onMobileDevice, visitorOS } from '../native/downloads'
 import Icon from '../components/Icon.vue'
@@ -36,7 +37,7 @@ const newerUrl = computed(() => {
 function checkName(): string | null {
   const n = cleanName(name.value)
   if (!n) {
-    nameError.value = 'This field is required'
+    nameError.value = t('home.required')
     nameInput.value?.focus()
     return null
   }
@@ -55,7 +56,7 @@ function join() {
   if (busy.value) return
   const c = normalizeRoomCode(code.value)
   if (!isRoomCode(c)) {
-    codeError.value = c ? `Codes are ${CODE_LENGTH} characters` : 'Enter a room code'
+    codeError.value = c ? t('home.codeLength', { length: CODE_LENGTH }) : t('home.codeEnter')
     codeInput.value?.focus()
     return
   }
@@ -93,20 +94,20 @@ onMounted(() => {
           <g fill="#fff"><circle cx="32" cy="11" r="5" /><circle cx="50.2" cy="42.5" r="5" /><circle cx="13.8" cy="42.5" r="5" /></g>
         </svg>
       </div>
-      <h1>{{ fromInvite ? "You've been invited to a call" : 'Pull up a chair' }}</h1>
+      <h1>{{ fromInvite ? t('home.titleInvite') : t('home.title') }}</h1>
       <p class="sub">
-        {{ fromInvite ? 'Your friends are waiting for you.' : 'Make a room and share the code, or join one you were given.' }}
+        {{ fromInvite ? t('home.subInvite') : t('home.sub') }}
       </p>
 
       <div v-if="call.error" class="banner" role="alert">{{ call.error }}</div>
       <div v-if="native.verdict?.ok && native.verdict.newer" class="banner info">
-        Pivoice app {{ native.verdict.newer }} is out (you have {{ native.app?.version }}):
-        <a :href="newerUrl" target="_blank" rel="noopener">download it</a> when you get a moment.
+        {{ t('home.updateOut', { newer: native.verdict.newer, current: native.app?.version ?? '' }) }}
+        <a :href="newerUrl" target="_blank" rel="noopener">{{ t('home.updateLink') }}</a> {{ t('home.updateAfter') }}
       </div>
 
       <label class="field">
         <span class="eyebrow" :class="{ bad: nameError }">
-          Display Name
+          {{ t('home.displayName') }}
           <span v-if="nameError" class="err">- {{ nameError }}</span>
           <span v-else class="req">*</span>
         </span>
@@ -126,19 +127,19 @@ onMounted(() => {
       <button v-if="!fromInvite" type="button" class="option" :disabled="busy" @click="create">
         <span class="option-icon"><Icon name="plus" :size="24" /></span>
         <span class="option-text">
-          <strong>Create a Room</strong>
-          <small>Get a code to share with your friends</small>
+          <strong>{{ t('home.createRoom') }}</strong>
+          <small>{{ t('home.createHint') }}</small>
         </span>
-        <span v-if="call.joining === 'create'" class="spinner" aria-label="Creating" />
+        <span v-if="call.joining === 'create'" class="spinner" :aria-label="t('home.creating')" />
         <Icon v-else name="chevron" :size="24" class="chev" />
       </button>
 
       <div class="join" :class="{ invite: fromInvite }">
-        <h3 v-if="!fromInvite">Have a code already?</h3>
+        <h3 v-if="!fromInvite">{{ t('home.haveCode') }}</h3>
         <label class="field">
           <span class="eyebrow" :class="{ bad: codeError }">
-            Room Code
-            <span v-if="fromInvite && !codeError" class="hint">· from your invite</span>
+            {{ t('home.roomCode') }}
+            <span v-if="fromInvite && !codeError" class="hint">{{ t('home.fromInvite') }}</span>
             <span v-if="codeError" class="err">- {{ codeError }}</span>
           </span>
           <div class="join-row">
@@ -157,18 +158,18 @@ onMounted(() => {
               @keydown.enter="join"
             />
             <button type="button" class="btn" :class="fromInvite ? 'primary' : 'secondary'" :disabled="busy" @click="join">
-              <span v-if="call.joining === 'join'" class="spinner" aria-label="Joining" />
-              <span v-else>Join Room</span>
+              <span v-if="call.joining === 'join'" class="spinner" :aria-label="t('home.joining')" />
+              <span v-else>{{ t('home.join') }}</span>
             </button>
           </div>
         </label>
         <button v-if="fromInvite" type="button" class="link" :disabled="busy" @click="create">
-          Or make a new room instead
+          {{ t('home.makeNew') }}
         </button>
       </div>
 
       <div v-if="!isNative && downloads.length" class="get-app">
-        <span>Lowest latency in the app <small>v{{ appVersion }}</small></span>
+        <span>{{ t('home.getApp') }} <small>{{ t('home.version', { version: appVersion }) }}</small></span>
         <div class="get-app-buttons">
           <a
             v-for="d in downloads"
@@ -185,8 +186,8 @@ onMounted(() => {
       </div>
 
       <footer>
-        <span><Icon name="headphones" :size="16" /> Best with headphones</span>
-        <span>v{{ version }}<template v-if="native.app"> · app {{ native.app.version }}</template></span>
+        <span><Icon name="headphones" :size="16" /> {{ t('home.headphones') }}</span>
+        <span>{{ t('home.version', { version }) }}<template v-if="native.app"> {{ t('home.appVersion', { version: native.app.version }) }}</template></span>
       </footer>
     </section>
   </main>

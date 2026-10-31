@@ -4,6 +4,7 @@ import { AudioEngine, type MicProblem, type SpatialMode } from './audio/engine'
 import { LOOP_ID, sanitizeLL, sendDelayMs, type LLConfig } from './audio/ll/config'
 import { WebRTCLoopback } from './audio/loopback'
 import { LowLatencyEngine } from './audio/ll/engine'
+import { t, type MessageKey } from './i18n'
 import { copyText } from './lib/copyText'
 import { loadPrefs, savePrefs, type Prefs } from './lib/prefs'
 import { Seating } from './lib/seating'
@@ -183,13 +184,13 @@ export function dismissToast(id: number) {
   if (i >= 0) call.toasts.splice(i, 1)
 }
 
-const FAILURES: Record<SessionFailure, string> = {
-  'not-found': "There's no room with that code. Check it and try again.",
-  full: 'That room is full.',
-  unreachable: "Couldn't reach the room. Check your connection and try again.",
-  unsupported: "This browser can't make voice calls.",
-  version: 'That room is on a newer version of Pivoice. Reload the page to update.',
-  busy: "Couldn't find a free room code. Try again."
+const FAILURES: Record<SessionFailure, MessageKey> = {
+  'not-found': 'error.notFound',
+  full: 'error.full',
+  unreachable: 'error.unreachable',
+  unsupported: 'error.unsupported',
+  version: 'error.version',
+  busy: 'error.busy'
 }
 
 export function updatePrefs(patch: Partial<Prefs>) {
@@ -279,8 +280,8 @@ async function connect(kind: 'create' | 'join', name: string, code: string, rejo
   call.micProblem = eng.micProblem
   if (rejoin) {
     // Coming back: already told them.
-  } else if (eng.micProblem === 'denied') toast("Microphone blocked. You can listen, but nobody can hear you.", 'error', 7000)
-  else if (eng.micProblem) toast("Couldn't open a microphone. You can listen, but nobody can hear you.", 'error', 7000)
+  } else if (eng.micProblem === 'denied') toast(t('toast.micBlocked'), 'error', 7000)
+  else if (eng.micProblem) toast(t('toast.micFailed'), 'error', 7000)
   eng.setSpatial(call.prefs.spatial)
   if (call.prefs.outputId) void eng.setOutputDevice(call.prefs.outputId)
   eng.setMicEnabled(!effectiveMuted())
@@ -375,7 +376,7 @@ async function connectNative(kind: 'create' | 'join', name: string, code: string
   await v.start(appConfig())
   if (nv !== v) return
   call.micProblem = v.micProblem
-  if (!rejoin && v.micProblem) toast("Couldn't open a microphone. You can listen, but nobody can hear you.", 'error', 7000)
+  if (!rejoin && v.micProblem) toast(t('toast.micFailed'), 'error', 7000)
   v.setSelf(effectiveMuted(), call.deafened)
   for (const [id, volume] of Object.entries(call.volumes)) v.setVolume(id, volume)
   for (const [id, on] of Object.entries(call.silenced)) if (on) v.setSilenced(id, true)
@@ -437,7 +438,7 @@ function onStatus(status: SessionStatus, failure?: SessionFailure) {
   } else if (status === 'failed') {
     rejoining = false
     cleanup()
-    call.error = wasInRoom ? 'Lost the connection to the room.' : FAILURES[failure ?? 'unreachable']
+    call.error = wasInRoom ? t('error.lostRoom') : t(FAILURES[failure ?? 'unreachable'])
   } else if (status === 'ended') {
     cleanup()
   } else if (rejoining) {
@@ -727,7 +728,7 @@ export function updateLL(patch: Partial<LLConfig>) {
 
 export function toggleMute() {
   if (call.micProblem) {
-    toast(call.micProblem === 'denied' ? 'Allow the microphone in your browser, then rejoin.' : 'No microphone to unmute.', 'error')
+    toast(t(call.micProblem === 'denied' ? 'toast.micAllow' : 'toast.micNone'), 'error')
     return
   }
   // Like Discord: unmuting while deafened undeafens too.
@@ -828,12 +829,12 @@ export function inviteLink(): string {
 }
 
 export async function copyInvite() {
-  if (await copyText(inviteLink())) toast('Invite link copied', 'success', 2500)
-  else toast("Couldn't copy the invite link.", 'error')
+  if (await copyText(inviteLink())) toast(t('toast.inviteCopied'), 'success', 2500)
+  else toast(t('toast.inviteCopyFailed'), 'error')
 }
 
 export async function copyCode() {
-  if (await copyText(call.code)) toast('Room code copied', 'success', 2500)
+  if (await copyText(call.code)) toast(t('toast.codeCopied'), 'success', 2500)
 }
 
 window.addEventListener('pagehide', () => session?.leave())

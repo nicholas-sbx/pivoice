@@ -2,6 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { MAX_VOLUME } from '../audio/engine'
 import { call, setSilenced, setVolume } from '../call'
+import { t } from '../i18n'
 import { vSnap } from '../lib/snap'
 
 /** Right-click on someone: Discord's user context menu, cut down to what a voice call needs. */
@@ -53,12 +54,12 @@ onBeforeUnmount(() => {
 
 <template>
   <div ref="el" v-snap class="menu" role="menu" :style="{ left: pos.left + 'px', top: pos.top + 'px' }" @contextmenu.prevent>
-    <div class="who">{{ member?.name ?? 'Left the call' }}</div>
+    <div class="who">{{ member?.name ?? t('table.menuLeft') }}</div>
     <div class="sep" />
     <div class="item slider">
       <span class="top">
-        <label class="label" :for="`vol-${id}`">User Volume</label>
-        <button v-if="volume !== 100" type="button" class="reset" title="Back to 100%" @click="reset">Reset</button>
+        <label class="label" :for="`vol-${id}`">{{ t('menu.userVolume') }}</label>
+        <button v-if="volume !== 100" type="button" class="reset" :title="t('menu.backTo100')" @click="reset">{{ t('common.reset') }}</button>
       </span>
       <div class="track">
         <input
@@ -80,7 +81,7 @@ onBeforeUnmount(() => {
     </div>
     <div class="sep" />
     <button type="button" class="item check" role="menuitemcheckbox" :aria-checked="!!call.silenced[id]" @click="setSilenced(id, !call.silenced[id])">
-      <span>Mute</span>
+      <span>{{ t('common.mute') }}</span>
       <span class="box" :class="{ checked: call.silenced[id] }">
         <svg v-if="call.silenced[id]" viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z" /></svg>
       </span>

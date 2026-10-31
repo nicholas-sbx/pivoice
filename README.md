@@ -912,6 +912,7 @@ checks for them and has no environment:
 
 ```
 src/
+  i18n/         every word the site shows, in en.ts (vue-i18n): edit the wording there
   lib/          seats (planning + the animated Table), seating (the call's one Table, and
                 who draws it), tableView (what the table and the pop-out share), tiles
                 (the phone layout), spring, room codes, prefs, viewport

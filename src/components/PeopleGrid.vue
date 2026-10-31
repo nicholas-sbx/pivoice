@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { t } from '../i18n'
 import { layoutTiles, tileSpacing } from '../lib/tiles'
 import { touchFirst } from '../lib/viewport'
 import type { Member } from '../net/protocol'
@@ -86,8 +87,8 @@ function pingOf(id: string): number | null {
 }
 
 function mouthToEar(s: LinkStats): string {
-  if (s.measuredMs != null) return `${Math.round(s.measuredMs)} ms mouth to ear`
-  if (s.mouthToEarMs != null) return `≈ ${Math.round(s.mouthToEarMs)} ms mouth to ear`
+  if (s.measuredMs != null) return t('route.mouthToEar', { ms: Math.round(s.measuredMs) })
+  if (s.mouthToEarMs != null) return t('route.mouthToEarApprox', { ms: Math.round(s.mouthToEarMs) })
   return ''
 }
 </script>
@@ -112,7 +113,7 @@ function mouthToEar(s: LinkStats): string {
       <div class="info">
         <div class="tag">
           <span class="name">{{ m.name }}</span>
-          <span v-if="m.away" class="sub">reconnecting…</span>
+          <span v-if="m.away" class="sub">{{ t('table.reconnecting') }}</span>
           <Icon v-if="mutedOf(m)" name="mic" :size="16" slash class="state" />
           <Icon v-if="deafenedOf(m)" name="headphones" :size="16" slash class="state" />
           <Icon v-if="silenced[m.id]" name="speaker" :size="16" slash class="state" />
@@ -120,10 +121,10 @@ function mouthToEar(s: LinkStats): string {
         <span v-if="layout.row && pingOf(m.id) != null" class="ping" :class="pingLevel(pingOf(m.id)!)">{{ pingOf(m.id) }} ms</span>
         <div v-if="showRoute && !isSelf(m.id)" class="route">
           <template v-if="links[m.id]">
-            <span class="engine" :class="links[m.id].engine">{{ links[m.id].engine === 'll' ? 'Low latency' : 'WebRTC' }}</span>
+            <span class="engine" :class="links[m.id].engine">{{ links[m.id].engine === 'll' ? t('route.engineLL') : t('route.engineWebRTC') }}</span>
             · {{ routeLabel(links[m.id]) }}<template v-if="mouthToEar(links[m.id])"> · {{ mouthToEar(links[m.id]) }}</template>
           </template>
-          <template v-else>Connecting…</template>
+          <template v-else>{{ t('common.connecting') }}</template>
         </div>
       </div>
     </div>

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { call, updatePrefs } from '../call'
+import { t } from '../i18n'
 import { isNative } from '../native/bridge'
 import { APP_DOWNLOADS, downloadUrl, onMobileDevice, visitorOS } from '../native/downloads'
 import Icon from './Icon.vue'
@@ -18,12 +19,12 @@ const href = app ? downloadUrl(version, app.file(version)) : ''
 </script>
 
 <template>
-  <div v-if="show && app" class="banner" role="region" aria-label="Get the app">
+  <div v-if="show && app" class="banner" role="region" :aria-label="t('banner.label')">
     <span class="text">
-      Lower latency in the Pivoice app for {{ app.label }}: it does the audio itself, without the browser's buffers.
+      {{ t('banner.text', { os: app.label }) }}
     </span>
-    <a class="get" :href="href" :download="app.file(version)" rel="noopener">Download for {{ app.label }}</a>
-    <button type="button" class="x" aria-label="Dismiss" title="Dismiss" @click="updatePrefs({ appBannerDismissed: true })">
+    <a class="get" :href="href" :download="app.file(version)" rel="noopener">{{ t('banner.download', { os: app.label }) }}</a>
+    <button type="button" class="x" :aria-label="t('common.dismiss')" :title="t('common.dismiss')" @click="updatePrefs({ appBannerDismissed: true })">
       <Icon name="close" :size="18" />
     </button>
   </div>

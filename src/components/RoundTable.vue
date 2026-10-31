@@ -4,6 +4,7 @@ import { seating } from '../call'
 import { tableRadius } from '../lib/seats'
 import { useSeatStates, useTableView } from '../lib/tableView'
 import type { Member } from '../net/protocol'
+import { t } from '../i18n'
 import { pingLevel, routeLabel, type LinkStats } from '../net/stats'
 import { vSnap } from '../lib/snap'
 import { touchFirst } from '../lib/viewport'
@@ -85,12 +86,12 @@ function n0(ms: number | null): string {
 
 function breakdownTitle(s: LinkStats): string {
   return [
-    `Microphone: ${n0(s.captureMs)} ms (yours, as your browser reports it)`,
-    `Codec: ${n0(s.codecMs)} ms (10 ms Opus frame + lookahead)`,
-    `Network: ${n0(s.rttMs == null ? null : s.rttMs / 2)} ms (half the round trip)`,
-    `Jitter buffer: ${n0(s.bufferMs)} ms`,
-    `Playout: ${n0(s.playoutMs)} ms (browser to speakers)`,
-    '? = not reported by this browser, counted as 0.'
+    t('route.breakdown.mic', { ms: n0(s.captureMs) }),
+    t('route.breakdown.codec', { ms: n0(s.codecMs) }),
+    t('route.breakdown.network', { ms: n0(s.rttMs == null ? null : s.rttMs / 2) }),
+    t('route.breakdown.buffer', { ms: n0(s.bufferMs) }),
+    t('route.breakdown.playout', { ms: n0(s.playoutMs) }),
+    t('route.breakdown.unknown')
   ].join('\n')
 }
 
@@ -117,7 +118,7 @@ const count = computed(() => props.members.filter(m => !m.away).length || 1)
     <div ref="tableEl" class="table">
       <div class="felt">
         <div v-if="code" class="code">{{ code }}</div>
-        <div class="count">{{ count }} {{ count === 1 ? 'person' : 'people' }} at the table</div>
+        <div class="count">{{ t('table.count', { count }) }}</div>
       </div>
     </div>
 
@@ -149,7 +150,7 @@ const count = computed(() => props.members.filter(m => !m.away).length || 1)
       <div class="under">
         <div v-snap class="tag">
           <span class="name">{{ member(id)?.name }}</span>
-          <span v-if="member(id)?.away" class="sub">reconnecting…</span>
+          <span v-if="member(id)?.away" class="sub">{{ t('table.reconnecting') }}</span>
           <Icon v-if="mutedOf(id)" name="mic" :size="16" slash class="state" />
           <Icon v-if="deafenedOf(id)" name="headphones" :size="16" slash class="state" />
           <Icon v-if="silenced[id]" name="speaker" :size="16" slash class="state" />
@@ -165,41 +166,57 @@ const count = computed(() => props.members.filter(m => !m.away).length || 1)
         <div v-if="showRoute && !isSelf(id)" class="route">
           <template v-if="links[id]">
             <div class="engine" :class="links[id].engine">
-              {{ links[id].engine === 'll' ? 'Low-latency engine' : 'WebRTC audio' }}
+              {{ links[id].engine === 'll' ? t('route.engineLLLong') : t('route.engineWebRTCLong') }}
             </div>
             <div class="route-head" :class="links[id].route ?? ''">
               <span class="dot" />
               {{ routeLabel(links[id]) }}
             </div>
             <div class="route-line">
-              {{ [links[id].protocol?.toUpperCase(), links[id].relayProtocol ? `${links[id].relayProtocol!.toUpperCase()} to relay` : '', links[id].codec, links[id].kbps == null ? '' : `${Math.round(links[id].kbps!)} kbps`]
+              {{ [links[id].protocol?.toUpperCase(), links[id].relayProtocol ? t('route.toRelay', { protocol: links[id].relayProtocol!.toUpperCase() }) : '', links[id].codec, links[id].kbps == null ? '' : `${Math.round(links[id].kbps!)} kbps`]
                 .filter(Boolean)
                 .join(' · ') }}
             </div>
             <div
               v-if="links[id].measuredMs != null"
               class="route-line big"
-              title="Measured: their capture time (stamped on the audio) to when it reached your speakers. Exact on one machine; across machines it's as good as your two clocks."
+              :title="t('route.measuredTitle')"
             >
-              {{ Math.round(links[id].measuredMs!) }} ms mouth to ear
+              {{ t('route.mouthToEar', { ms: Math.round(links[id].measuredMs!) }) }}
             </div>
             <div v-else-if="links[id].mouthToEarMs != null" class="route-line big" :title="breakdownTitle(links[id])">
-              ≈ {{ Math.round(links[id].mouthToEarMs!) }} ms mouth to ear
+              {{ t('route.mouthToEarApprox', { ms: Math.round(links[id].mouthToEarMs!) }) }}
             </div>
             <div v-if="links[id].mouthToEarMs != null" class="route-line dim wrap">
-              mic {{ n0(links[id].captureMs) }} · codec {{ n0(links[id].codecMs) }} · net {{ n0(links[id].rttMs! / 2) }} · buffer
-              {{ n0(links[id].bufferMs) }} · out {{ n0(links[id].playoutMs) }}
+              {{
+                t('route.parts', {
+                  mic: n0(links[id].captureMs),
+                  codec: n0(links[id].codecMs),
+                  net: n0(links[id].rttMs! / 2),
+                  buffer: n0(links[id].bufferMs),
+                  out: n0(links[id].playoutMs)
+                })
+              }}
             </div>
             <div v-if="links[id].ll" class="route-line dim">
-              target {{ n0(links[id].ll!.targetMs) }} ms · late {{ links[id].ll!.late }} · concealed
-              {{ links[id].ll!.concealedPct.toFixed(1) }}%
+              {{
+                t('route.llStats', {
+                  target: n0(links[id].ll!.targetMs),
+                  late: links[id].ll!.late,
+                  concealed: links[id].ll!.concealedPct.toFixed(1)
+                })
+              }}
             </div>
             <div class="route-line dim">
-              jitter {{ fmt(links[id].jitterMs) }} · {{ links[id].ll ? 'gaps' : 'loss' }}
-              {{ links[id].lossPct == null ? '–' : links[id].lossPct!.toFixed(links[id].lossPct! < 1 ? 1 : 0) + '%' }}
+              {{
+                t(links[id].ll ? 'route.jitterGaps' : 'route.jitterLoss', {
+                  jitter: fmt(links[id].jitterMs),
+                  loss: links[id].lossPct == null ? '–' : links[id].lossPct!.toFixed(links[id].lossPct! < 1 ? 1 : 0) + '%'
+                })
+              }}
             </div>
           </template>
-          <div v-else class="route-head">Connecting…</div>
+          <div v-else class="route-head">{{ t('common.connecting') }}</div>
         </div>
       </div>
     </div>

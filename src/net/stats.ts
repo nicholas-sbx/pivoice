@@ -1,3 +1,4 @@
+import { t } from '../i18n'
 import type { LLRemoteStats } from '../audio/ll/engine'
 import { OPUS_LOOKAHEAD_MS, PTIME_MS } from './sdp'
 
@@ -196,13 +197,13 @@ export function hostOf(url: string | null): string | null {
 export function routeLabel(s: LinkStats): string {
   switch (s.route) {
     case 'local':
-      return 'Same network'
+      return t('route.local')
     case 'direct':
-      return 'Direct, peer to peer'
+      return t('route.direct')
     case 'relay':
-      return s.localType === 'relay' ? `Relayed via ${s.relayHost ?? 'TURN'}` : 'Relayed via their TURN'
+      return s.localType === 'relay' ? t('route.relayedVia', { host: s.relayHost ?? 'TURN' }) : t('route.relayedTheirs')
     default:
-      return 'Connecting…'
+      return t('common.connecting')
   }
 }
 

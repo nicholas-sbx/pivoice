@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { call, updatePrefs } from '../call'
+import { t } from '../i18n'
 import type { OverlayPrefs } from '../lib/prefs'
 import { native } from '../native/bridge'
 import { listMonitors, overlayError, overlayPlacing } from '../native/overlay'
@@ -38,19 +39,12 @@ const screen = computed(
   () => monitors.value.find(m => m.id === o.value.monitor) ?? monitors.value.find(m => m.current) ?? monitors.value.find(m => m.primary) ?? null
 )
 const missing = computed(() => !!o.value.monitor && monitors.value.length > 0 && !monitors.value.some(m => m.id === o.value.monitor))
-const label = (m: AppMonitor) => `${m.name} (${m.width} × ${m.height})${m.primary ? ', primary' : ''}`
+const label = (m: AppMonitor) => {
+  const text = t('overlay.screenLabel', { name: m.name, width: m.width, height: m.height })
+  return m.primary ? t('overlay.screenPrimary', { label: text }) : text
+}
 
-const anchors: { value: OverlayAnchor; label: string }[] = [
-  { value: 'top-left', label: 'Top left' },
-  { value: 'top', label: 'Top' },
-  { value: 'top-right', label: 'Top right' },
-  { value: 'left', label: 'Left' },
-  { value: 'center', label: 'Middle' },
-  { value: 'right', label: 'Right' },
-  { value: 'bottom-left', label: 'Bottom left' },
-  { value: 'bottom', label: 'Bottom' },
-  { value: 'bottom-right', label: 'Bottom right' }
-]
+const anchors: OverlayAnchor[] = ['top-left', 'top', 'top-right', 'left', 'center', 'right', 'bottom-left', 'bottom', 'bottom-right']
 
 /** The screen in miniature, its own shape, and the overlay on it where it'll be, to scale. */
 const map = computed(() => {
@@ -72,46 +66,43 @@ const map = computed(() => {
 <template>
   <div class="overlay-settings">
     <Switch
-      label="Show overlay"
-      hint="The table, small, over everything else on your screen while you're in a call. Clicks go straight through it."
+      :label="t('overlay.show')"
+      :hint="t('overlay.showHint')"
       :model-value="o.on"
       @update:model-value="v => set({ on: v })"
     />
-    <p v-if="o.on && overlayError" class="note error">Couldn't show it: {{ overlayError }}</p>
+    <p v-if="o.on && overlayError" class="note error">{{ t('overlay.error', { error: overlayError }) }}</p>
     <p v-if="!onTop" class="note">
-      This desktop (GNOME) doesn't let apps keep a window on top or say where it goes. Move the overlay with Super and drag, and pin it with
-      Alt+Space, Always on Top. It takes clicks here, so you can.
+      {{ t('overlay.gnome') }}
     </p>
     <p v-if="native.app?.os === 'windows'" class="note">
-      Over games too: borderless or windowed full screen, and most that say exclusive (Windows runs them through the desktop anyway).
-      Not over a game in true exclusive full screen, which draws past the desktop altogether: if it doesn't show, set the game to
-      borderless, or leave Windows' fullscreen optimizations on for it.
+      {{ t('overlay.windows') }}
     </p>
 
     <label class="field">
-      <span class="eyebrow">Screen</span>
+      <span class="eyebrow">{{ t('overlay.screen') }}</span>
       <select :value="missing ? '' : o.monitor" :disabled="!placeable" @change="set({ monitor: ($event.target as HTMLSelectElement).value })">
-        <option value="">The one Pivoice is on</option>
+        <option value="">{{ t('overlay.screenCurrent') }}</option>
         <option v-for="m in monitors" :key="m.id" :value="m.id">{{ label(m) }}</option>
       </select>
     </label>
-    <p v-if="missing" class="note">The screen you picked isn't connected, so it's on the one Pivoice is on until it is.</p>
+    <p v-if="missing" class="note">{{ t('overlay.screenMissing') }}</p>
 
-    <span class="eyebrow">Position</span>
+    <span class="eyebrow">{{ t('overlay.position') }}</span>
     <div class="map" :class="{ disabled: !placeable }" :style="map.style">
       <div class="shown" :style="map.box" />
-      <div class="grid" role="radiogroup" aria-label="Position">
+      <div class="grid" role="radiogroup" :aria-label="t('overlay.position')">
         <button
           v-for="a in anchors"
-          :key="a.value"
+          :key="a"
           type="button"
           role="radio"
           :disabled="!placeable"
-          :aria-checked="o.anchor === a.value"
-          :aria-label="a.label"
-          :title="a.label"
-          :class="{ active: o.anchor === a.value }"
-          @click="set({ anchor: a.value })"
+          :aria-checked="o.anchor === a"
+          :aria-label="t(`overlay.anchor.${a}`)"
+          :title="t(`overlay.anchor.${a}`)"
+          :class="{ active: o.anchor === a }"
+          @click="set({ anchor: a })"
         >
           <span class="dot" />
         </button>
@@ -119,34 +110,34 @@ const map = computed(() => {
     </div>
 
     <Slider
-      label="Distance from the edge"
+      :label="t('overlay.margin')"
       :model-value="o.margin"
       :min="0"
       :max="200"
       :step="2"
       unit=" px"
-      :hint="o.anchor === 'center' ? 'Not in the middle: it has no edge to keep from.' : 'From the part of the screen windows get, so it never sits under a taskbar or panel.'"
+      :hint="t(o.anchor === 'center' ? 'overlay.marginCenter' : 'overlay.marginHint')"
       @update:model-value="v => set({ margin: v })"
     />
-    <Slider label="Size" :model-value="o.size" :min="160" :max="600" :step="10" unit=" px" hint="Its width and height." @update:model-value="v => set({ size: v })" />
+    <Slider :label="t('overlay.size')" :model-value="o.size" :min="160" :max="600" :step="10" unit=" px" :hint="t('overlay.sizeHint')" @update:model-value="v => set({ size: v })" />
     <Slider
-      label="Scale"
+      :label="t('overlay.scale')"
       :model-value="Math.round(o.scale * 100)"
       :min="75"
       :max="150"
       :step="5"
       unit="%"
-      hint="How big the faces and names are in it."
+      :hint="t('overlay.scaleHint')"
       @update:model-value="v => set({ scale: v / 100 })"
     />
     <Slider
-      label="Opacity"
+      :label="t('overlay.opacity')"
       :model-value="Math.round(o.opacity * 100)"
       :min="20"
       :max="100"
       :step="5"
       unit="%"
-      hint="The table and anyone quiet. Whoever's speaking always shows in full."
+      :hint="t('overlay.opacityHint')"
       @update:model-value="v => set({ opacity: v / 100 })"
     />
   </div>

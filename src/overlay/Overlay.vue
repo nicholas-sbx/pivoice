@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onBeforeUnmount, reactive, shallowRef, watch } from 'vue'
+import { t } from '../i18n'
 import OverlayTable from '../components/OverlayTable.vue'
 import { Seating } from '../lib/seating'
 import type { OverlayLook, OverlayState, ToOverlay } from '../native/protocol'
@@ -76,7 +77,7 @@ onBeforeUnmount(() => {
       :self-deafened="state.selfDeafened"
       :silenced="state.silenced"
     />
-    <span v-if="look.placing" class="label">Overlay</span>
+    <span v-if="look.placing" class="label">{{ t('overlay.placing') }}</span>
   </div>
 </template>
 

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { t } from '../i18n'
 import { copyText } from '../lib/copyText'
 import { toast } from '../call'
 import { forgetApp, native } from '../native/bridge'
@@ -26,7 +27,7 @@ function reload() {
 }
 
 async function copyLink() {
-  if (await copyText(link.value)) toast('Download link copied', 'success', 2500)
+  if (await copyText(link.value)) toast(t('toast.downloadLinkCopied'), 'success', 2500)
 }
 </script>
 
@@ -34,39 +35,37 @@ async function copyLink() {
   <div v-if="native.state === 'mismatch' || native.state === 'lost'" class="gate" role="alertdialog" aria-labelledby="gate-title">
     <section class="card">
       <template v-if="native.state === 'lost'">
-        <h1 id="gate-title">Lost the Pivoice app</h1>
+        <h1 id="gate-title">{{ t('gate.lostTitle') }}</h1>
         <p>
-          The page can't reach the app any more. It may have quit: open Pivoice again
-          {{ inWindow ? 'and this window comes back with it.' : 'and it opens a fresh page for you.' }}
+          {{ t('gate.lostText') }}
+          {{ inWindow ? t('gate.lostInWindow') : t('gate.lostInBrowser') }}
         </p>
         <div class="actions">
-          <button type="button" class="primary" @click="reload">Try Again</button>
-          <button v-if="!inWindow" type="button" @click="forgetApp">Use This Browser Instead</button>
+          <button type="button" class="primary" @click="reload">{{ t('gate.tryAgain') }}</button>
+          <button v-if="!inWindow" type="button" @click="forgetApp">{{ t('gate.useBrowser') }}</button>
         </div>
       </template>
       <template v-else-if="verdict && !verdict.ok && verdict.action === 'download'">
-        <h1 id="gate-title">Update the Pivoice app</h1>
+        <h1 id="gate-title">{{ t('gate.updateTitle') }}</h1>
         <p>
-          This app (version {{ native.app?.version }}) is too old for the site. Download version {{ verdict.latest }}, quit this
-          one, and open the new one.
+          {{ t('gate.updateText', { current: native.app?.version ?? '', latest: verdict.latest }) }}
         </p>
         <code class="link">{{ link }}</code>
         <div class="actions">
           <a class="button primary" :href="link" target="_blank" rel="noopener">
-            Download {{ verdict.latest }}<template v-if="file"> for {{ file.label }}</template>
+            {{ file ? t('gate.downloadFor', { version: verdict.latest, os: file.label }) : t('gate.download', { version: verdict.latest }) }}
           </a>
-          <button type="button" @click="copyLink">Copy Link</button>
-          <a v-if="file" class="button" :href="page" target="_blank" rel="noopener">All Platforms</a>
+          <button type="button" @click="copyLink">{{ t('gate.copyLink') }}</button>
+          <a v-if="file" class="button" :href="page" target="_blank" rel="noopener">{{ t('gate.allPlatforms') }}</a>
         </div>
       </template>
       <template v-else>
-        <h1 id="gate-title">Restart the Pivoice app</h1>
+        <h1 id="gate-title">{{ t('gate.restartTitle') }}</h1>
         <p>
-          This app (version {{ native.app?.version }}) is newer than the page it loaded. Quit Pivoice and open it again to load
-          the current site. Still here after that? The site's update is on its way: try again in a few minutes.
+          {{ t('gate.restartText', { current: native.app?.version ?? '' }) }}
         </p>
         <div class="actions">
-          <button type="button" class="primary" @click="reload">Reload</button>
+          <button type="button" class="primary" @click="reload">{{ t('gate.reload') }}</button>
         </div>
       </template>
     </section>
