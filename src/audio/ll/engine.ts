@@ -1,26 +1,25 @@
 import workletUrl from './worklet.ts?worker&url'
 import LLWorker from './worker.ts?worker'
-import { LOOP_ID, captureFrame, type LLConfig } from './config'
+import { LOOP_ID, PCM_FRAME, type LLConfig } from './config'
 import { FrameRing, RING_MAX_FRAME, RING_SLOTS } from './ring'
 import type { JitterConfig, JitterStats } from './jitter'
 import type { FromWorker, ToWorker, WorkerRemoteStats } from './worker'
 import type { CaptureMessage, PlaybackMessage } from './worklet'
 
 /**
- * The experimental low-latency engine, main-thread half: it sets things up
- * and stays out of the way.
+ * The low-latency engine, main-thread half: it sets things up and stays
+ * out of the way. It's how everyone hears everyone.
  *
  * WebRTC's audio path has costs a page can't touch: 10 ms frames at the
  * least, its jitter buffer (NetEq, ~25 ms floor here), and its own capture
- * and playout buffering. This replaces all of it for pairs of people who
- * both turn it on:
+ * and playout buffering. This replaces all of it:
  *
- *   mic → pv-capture worklet (frames of 2.5–20 ms on the audio clock)
- *       → worker: WebCodecs Opus (the browser's own libopus), our silence
- *         gate, packets with redundancy → data channels that are unordered
- *         and never retransmit, so late is dropped, never queued
- *   data channels → worker: WebCodecs decode → pv-playback worklet (our
- *       JitterBuffer) → that person's channel strip in AudioEngine
+ *   mic → pv-capture worklet (128-sample blocks on the audio clock)
+ *       → worker: our silence gate, raw PCM packets (with redundancy if
+ *         asked for) → data channels that are unordered and never
+ *         retransmit, so late is dropped, never queued
+ *   data channels → worker → pv-playback worklet (our JitterBuffer)
+ *       → that person's channel strip in AudioEngine
  *
  * The main thread isn't in that path at all, so page work (rendering,
  * layout) can't add jitter. Every so often a packet carries the wall-clock
@@ -31,8 +30,6 @@ import type { CaptureMessage, PlaybackMessage } from './worklet'
 
 export interface LLRemoteStats extends JitterStats {
   kbps: number | null
-  /** What they're sending us. */
-  codec: 'opus' | 'pcm' | null
   /** One way, sender's capture to our speakers, ms. Needs their capture stamps. */
   measuredMs: number | null
   /** Round trip over the engine's own channel, ms (pings from the worker). */
@@ -57,12 +54,7 @@ const SR = 48_000
 
 export class LowLatencyEngine {
   static supported(): boolean {
-    return (
-      typeof AudioEncoder !== 'undefined' &&
-      typeof AudioDecoder !== 'undefined' &&
-      typeof AudioWorkletNode !== 'undefined' &&
-      typeof Worker !== 'undefined'
-    )
+    return typeof AudioWorkletNode !== 'undefined' && typeof Worker !== 'undefined'
   }
 
   /**
@@ -110,7 +102,7 @@ export class LowLatencyEngine {
         outputChannelCount: [1],
         channelCount: 1,
         channelCountMode: 'explicit',
-        processorOptions: { frame: captureFrame(this.cfg), active: this.active, ring: captureRing?.sab }
+        processorOptions: { frame: PCM_FRAME, active: this.active, ring: captureRing?.sab }
       })
       this.capture.port.postMessage({ out: capture.port1 } satisfies CaptureMessage, [capture.port1])
       this.capture.connect(this.sink)
@@ -182,10 +174,8 @@ export class LowLatencyEngine {
   }
 
   configure(cfg: LLConfig) {
-    const prev = this.cfg
     this.cfg = { ...cfg }
     this.toWorker({ type: 'config', cfg: this.cfg })
-    if (captureFrame(prev) !== captureFrame(cfg)) this.capture?.port.postMessage({ frame: captureFrame(cfg) } satisfies CaptureMessage)
     const jitter = jitterConfig(cfg)
     for (const r of this.remotes.values()) r.node.port.postMessage({ type: 'config', jitter } satisfies PlaybackMessage)
   }
@@ -286,7 +276,6 @@ export class LowLatencyEngine {
     return {
       ...r.stats,
       kbps: r.worker?.kbps ?? null,
-      codec: r.worker?.codec ?? null,
       rttMs: r.worker?.rttMs ?? null,
       measuredMs: sorted.length ? sorted[Math.floor(sorted.length / 2)] : null
     }

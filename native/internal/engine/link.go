@@ -3,12 +3,12 @@ package engine
 import (
 	"encoding/json"
 	"log"
+	"net"
 	"strings"
 	"sync"
 	"sync/atomic"
 
 	"github.com/nicholas-sbx/pivoice/native/internal/ll"
-	"github.com/nicholas-sbx/pivoice/native/internal/opus"
 	"github.com/nicholas-sbx/pivoice/native/internal/proto"
 	"github.com/pion/webrtc/v4"
 )
@@ -17,31 +17,30 @@ import (
 One peer connection to one person, the app's side of src/net/peer.ts.
 The page decides when links come and go (who dials, retries, timeouts:
 src/net/session.ts) and passes the signalling to and from the room; this
-is the connection itself. Two kinds, as in the browser:
-
-  - voice: a call, Opus over RTP, for people who don't have the
-    low-latency engine on;
-  - ll: only a data channel, pre-agreed as stream 42 by both ends,
-    unordered and never retransmitted, carrying the engine's packets.
+is the connection itself: only a data channel, pre-agreed as stream 42
+by both ends, unordered and never retransmitted, carrying the low-latency
+engine's packets. No media: the connection takes no audio tracks at all
+(it knows no codecs), so a peer can't hand us anything but those packets.
 */
 
 const (
-	llChannelID     = 42
-	maxPendingICE   = 64
-	opusPayloadType = 111
-	voicePtimeMs    = "10"
+	llChannelID   = 42
+	maxPendingICE = 64
+	// The most frames one packet may carry (the new one and two repeats),
+	// and the longest a frame may be (a 128-sample block is all anyone
+	// sends; 8× that is room to spare). Anything more isn't ours: dropped.
+	maxPacketFrames = 3
+	maxFrameBytes   = 8 * 2 * pcmFrame
 )
 
 type link struct {
 	e       *Engine
 	id      string
 	peer    string
-	kind    string
 	offerer bool
 	pc      *webrtc.PeerConnection
 	dc      *webrtc.DataChannel
-	track   *webrtc.TrackLocalStaticSample
-	// What this link brings in: their low-latency packets, or their call's audio.
+	// What this link brings in: their packets.
 	src *source
 
 	mu        sync.Mutex
@@ -50,44 +49,48 @@ type link struct {
 	rtts      []float64
 
 	closed atomic.Bool
-	// ll: the channel is open; voice: the connection is.
+	// The channel is open.
 	up atomic.Bool
 }
 
-// opusFmtp is what we want to receive, as tuneOpusSdp in src/net/sdp.ts asks for it.
-func opusFmtp(dtx bool) string {
-	d := "0"
-	if dtx {
-		d = "1"
-	}
-	return "minptime=10;useinbandfec=1;stereo=0;sprop-stereo=0;usedtx=" + d + ";maxaveragebitrate=64000"
-}
-
-func opusCapability(dtx bool) webrtc.RTPCodecCapability {
-	return webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeOpus, ClockRate: 48000, Channels: 2, SDPFmtpLine: opusFmtp(dtx)}
-}
-
-func (e *Engine) newAPI(dtx bool) (*webrtc.API, error) {
-	m := &webrtc.MediaEngine{}
-	if err := m.RegisterCodec(webrtc.RTPCodecParameters{RTPCodecCapability: opusCapability(dtx), PayloadType: opusPayloadType}, webrtc.RTPCodecTypeAudio); err != nil {
-		return nil, err
-	}
+// newAPI: a media engine with no codecs registered, so any audio or video
+// a peer offers is turned down rather than decoded.
+func (e *Engine) newAPI() *webrtc.API {
 	var se webrtc.SettingEngine
 	se.SetIncludeLoopbackCandidate(e.opts.Loopback)
-	return webrtc.NewAPI(webrtc.WithMediaEngine(m), webrtc.WithSettingEngine(se)), nil
+	return webrtc.NewAPI(webrtc.WithMediaEngine(&webrtc.MediaEngine{}), webrtc.WithSettingEngine(se))
 }
 
-func iceServers(in []proto.IceServer) []webrtc.ICEServer {
+// The most ICE servers a link takes, and URLs each: the site hands out a
+// STUN server and maybe a TURN one, a few URLs apiece.
+const (
+	maxICEServers   = 8
+	maxICEServerURL = 8
+)
+
+// iceServers is the page's list as pion wants it, keeping only STUN and
+// TURN URLs to hosts out on the network: never this machine or its local
+// links (unless loopback is on, for tests), so a page can't use the app to
+// knock on ports it couldn't reach itself.
+func iceServers(in []proto.IceServer, loopback bool) []webrtc.ICEServer {
 	var out []webrtc.ICEServer
 	for _, s := range in {
+		if len(out) == maxICEServers {
+			break
+		}
 		var urls []string
+		add := func(u string) {
+			if len(urls) < maxICEServerURL && iceURLOK(u, loopback) {
+				urls = append(urls, u)
+			}
+		}
 		switch u := s.URLs.(type) {
 		case string:
-			urls = []string{u}
+			add(u)
 		case []any:
 			for _, x := range u {
 				if str, ok := x.(string); ok {
-					urls = append(urls, str)
+					add(str)
 				}
 			}
 		}
@@ -103,20 +106,43 @@ func iceServers(in []proto.IceServer) []webrtc.ICEServer {
 	return out
 }
 
-func (e *Engine) openLink(m proto.In) (*link, error) {
-	api, err := e.newAPI(e.dtx.Load())
-	if err != nil {
-		return nil, err
+// iceURLOK: stun:, turn: or turns:, to a host that isn't loopback, link-local or unspecified.
+func iceURLOK(u string, loopback bool) bool {
+	scheme, rest, ok := strings.Cut(u, ":")
+	if !ok || (scheme != "stun" && scheme != "turn" && scheme != "turns") {
+		return false
 	}
-	pc, err := api.NewPeerConnection(webrtc.Configuration{
-		ICEServers:    iceServers(m.IceServers),
+	rest, _, _ = strings.Cut(rest, "?")
+	host := rest
+	if h, _, err := net.SplitHostPort(rest); err == nil {
+		host = h
+	}
+	host = strings.Trim(host, "[]")
+	if host == "" {
+		return false
+	}
+	if loopback {
+		return true
+	}
+	if strings.EqualFold(host, "localhost") || strings.HasSuffix(strings.ToLower(host), ".localhost") {
+		return false
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return !ip.IsLoopback() && !ip.IsLinkLocalUnicast() && !ip.IsUnspecified() && !ip.IsMulticast()
+	}
+	return true
+}
+
+func (e *Engine) openLink(m proto.In) (*link, error) {
+	pc, err := e.newAPI().NewPeerConnection(webrtc.Configuration{
+		ICEServers:    iceServers(m.IceServers, e.opts.Loopback),
 		BundlePolicy:  webrtc.BundlePolicyMaxBundle,
 		RTCPMuxPolicy: webrtc.RTCPMuxPolicyRequire,
 	})
 	if err != nil {
 		return nil, err
 	}
-	l := &link{e: e, id: m.Link, peer: m.Peer, kind: m.Kind, offerer: m.Offerer, pc: pc, src: newSource()}
+	l := &link{e: e, id: m.Link, peer: m.Peer, offerer: m.Offerer, pc: pc, src: newSource()}
 	pc.OnICECandidate(func(c *webrtc.ICECandidate) {
 		if c == nil {
 			return
@@ -129,62 +155,38 @@ func (e *Engine) openLink(m proto.In) (*link, error) {
 	pc.OnConnectionStateChange(func(s webrtc.PeerConnectionState) {
 		switch s {
 		case webrtc.PeerConnectionStateConnected:
-			if l.kind == "voice" {
-				l.up.Store(true)
-				e.rebuildTargets()
-			}
 			e.emit(proto.LinkState{T: "link", Link: l.id, State: "connected"})
 		case webrtc.PeerConnectionStateFailed:
 			e.closeLink(l.id)
 		}
 	})
 
-	if l.kind == "ll" {
-		yes, no, zero, id := true, false, uint16(0), uint16(llChannelID)
-		dc, err := pc.CreateDataChannel("pv-audio", &webrtc.DataChannelInit{Negotiated: &yes, ID: &id, Ordered: &no, MaxRetransmits: &zero})
-		if err != nil {
-			_ = pc.Close()
-			return nil, err
-		}
-		l.dc = dc
-		dc.OnOpen(func() {
-			if l.closed.Load() {
-				return
-			}
-			l.up.Store(true)
-			e.attach(l)
-			e.emit(proto.LinkState{T: "link", Link: l.id, State: "ll-up"})
-		})
-		dc.OnClose(func() {
-			if l.up.Swap(false) {
-				e.emit(proto.LinkState{T: "link", Link: l.id, State: "ll-down"})
-			}
-			e.closeLink(l.id)
-		})
-		dc.OnMessage(func(msg webrtc.DataChannelMessage) {
-			if !msg.IsString {
-				l.receive(msg.Data)
-			}
-		})
-	} else {
-		track, err := webrtc.NewTrackLocalStaticSample(opusCapability(false), "audio", "pivoice")
-		if err != nil {
-			_ = pc.Close()
-			return nil, err
-		}
-		l.track = track
-		if l.offerer {
-			if _, err := pc.AddTransceiverFromTrack(track, webrtc.RTPTransceiverInit{Direction: webrtc.RTPTransceiverDirectionSendrecv}); err != nil {
-				_ = pc.Close()
-				return nil, err
-			}
-		}
-		pc.OnTrack(func(t *webrtc.TrackRemote, _ *webrtc.RTPReceiver) {
-			if t.Kind() == webrtc.RTPCodecTypeAudio {
-				go l.readCall(t)
-			}
-		})
+	yes, no, zero, id := true, false, uint16(0), uint16(llChannelID)
+	dc, err := pc.CreateDataChannel("pv-audio", &webrtc.DataChannelInit{Negotiated: &yes, ID: &id, Ordered: &no, MaxRetransmits: &zero})
+	if err != nil {
+		_ = pc.Close()
+		return nil, err
 	}
+	l.dc = dc
+	dc.OnOpen(func() {
+		if l.closed.Load() {
+			return
+		}
+		l.up.Store(true)
+		e.attach(l)
+		e.emit(proto.LinkState{T: "link", Link: l.id, State: "up"})
+	})
+	dc.OnClose(func() {
+		if l.up.Swap(false) {
+			e.emit(proto.LinkState{T: "link", Link: l.id, State: "down"})
+		}
+		e.closeLink(l.id)
+	})
+	dc.OnMessage(func(msg webrtc.DataChannelMessage) {
+		if !msg.IsString {
+			l.receive(msg.Data)
+		}
+	})
 	if l.offerer {
 		go l.offer()
 	}
@@ -201,7 +203,7 @@ func (l *link) fail(what string, err error) {
 	if l.closed.Load() {
 		return
 	}
-	log.Printf("%s link %s: %s failed: %v", l.kind, l.id, what, err)
+	log.Printf("link %s: %s failed: %v", l.id, what, err)
 	l.e.closeLink(l.id)
 }
 
@@ -215,7 +217,7 @@ func (l *link) offer() {
 		l.fail("offer", err)
 		return
 	}
-	l.signal(map[string]any{"sdp": map[string]any{"type": "offer", "sdp": tuneSDP(o.SDP)}})
+	l.signal(map[string]any{"sdp": map[string]any{"type": "offer", "sdp": o.SDP}})
 }
 
 // onSignal is the rest of the conversation: their offer or answer, their candidates.
@@ -255,13 +257,6 @@ func (l *link) onSignal(raw json.RawMessage) {
 			return
 		}
 		l.flush()
-		if l.track != nil {
-			// Onto the transceiver their offer made, which makes it sendrecv.
-			if _, err := l.pc.AddTrack(l.track); err != nil {
-				l.fail("answer", err)
-				return
-			}
-		}
 		a, err := l.pc.CreateAnswer(nil)
 		if err != nil {
 			l.fail("answer", err)
@@ -271,7 +266,7 @@ func (l *link) onSignal(raw json.RawMessage) {
 			l.fail("answer", err)
 			return
 		}
-		l.signal(map[string]any{"sdp": map[string]any{"type": "answer", "sdp": tuneSDP(a.SDP)}})
+		l.signal(map[string]any{"sdp": map[string]any{"type": "answer", "sdp": a.SDP}})
 	case s.SDP != nil && s.SDP.Type == "answer" && l.offerer:
 		if err := l.pc.SetRemoteDescription(webrtc.SessionDescription{Type: webrtc.SDPTypeAnswer, SDP: s.SDP.SDP}); err != nil {
 			l.fail("signal", err)
@@ -290,30 +285,6 @@ func (l *link) flush() {
 	for _, c := range pending {
 		_ = l.pc.AddICECandidate(c)
 	}
-}
-
-// tuneSDP asks for 10 ms frames on audio, the way src/net/sdp.ts does
-// (libwebrtc picks its Opus frame size from the remote description's
-// ptime). Only on the copy we send: pion won't take a local description
-// that differs from what it made, and ptime is only a wish about what we
-// receive. The Opus parameters themselves come from the codec we registered.
-func tuneSDP(sdp string) string {
-	if !strings.Contains(sdp, "m=audio") || strings.Contains(sdp, "a=ptime:") {
-		return sdp
-	}
-	lines := strings.Split(sdp, "\r\n")
-	out := make([]string, 0, len(lines)+1)
-	inAudio := false
-	for _, line := range lines {
-		if strings.HasPrefix(line, "m=") || line == "" {
-			if inAudio {
-				out = append(out, "a=ptime:"+voicePtimeMs)
-			}
-			inAudio = strings.HasPrefix(line, "m=audio")
-		}
-		out = append(out, line)
-	}
-	return strings.Join(out, "\r\n")
 }
 
 func (l *link) close() {
@@ -353,74 +324,36 @@ func (l *link) receive(buf []byte) {
 	l.e.receiveLL(l.src, buf)
 }
 
-// receiveLL takes one low-latency packet for a source: PCM straight
-// through, Opus decoded, oldest frame first so a repeat of one we missed
-// goes in before the new one.
+// receiveLL takes one low-latency packet for a source, oldest frame first
+// so a repeat of one we missed goes in before the new one. Only raw PCM,
+// at most maxPacketFrames frames of at most maxFrameBytes, and each frame
+// must start where the last one we took ended or later: a repeat, or an
+// overlap meant to pile frames up in the jitter buffer, goes nowhere.
 func (e *Engine) receiveLL(s *source, buf []byte) {
 	p, ok := ll.DecodePacket(buf)
-	if !ok {
+	if !ok || !p.PCM || len(p.Frames) > maxPacketFrames {
 		return
 	}
+	for _, f := range p.Frames {
+		if len(f.Data) < 2 || len(f.Data) > maxFrameBytes {
+			return
+		}
+	}
 	s.bytes.Add(int64(len(buf)))
-	s.pcm.Store(p.PCM)
-	s.gotCodec.Store(true)
 	var newest int64
 	for i, f := range p.Frames {
 		ts := s.unwrap.Unwrap(f.TS)
 		if i == len(p.Frames)-1 {
 			newest = ts
 		}
-		if ts <= s.lastDecoded {
+		if ts < s.nextTS {
 			continue
 		}
-		s.lastDecoded = ts
-		if p.PCM {
-			s.deliver(float64(ts), ll.BytesToPCM(f.Data))
-			continue
-		}
-		pcm, err := s.decode(f.Data)
-		if err == nil {
-			s.deliver(float64(ts), pcm)
-		}
+		pcm := ll.BytesToPCM(f.Data)
+		s.nextTS = ts + int64(len(pcm))
+		s.deliver(float64(ts), pcm)
 	}
 	if p.HasCapture && len(p.Frames) > 0 {
 		s.stamp.Store(&stamp{ts: float64(newest), ms: p.CaptureMs})
 	}
-}
-
-// readCall decodes their call's audio: Opus over RTP, on the RTP clock (48 kHz for Opus).
-func (l *link) readCall(t *webrtc.TrackRemote) {
-	s := l.src
-	l.e.attach(l)
-	for {
-		pkt, _, err := t.ReadRTP()
-		if err != nil {
-			return
-		}
-		if len(pkt.Payload) == 0 {
-			continue
-		}
-		s.bytes.Add(int64(len(pkt.Payload)))
-		s.gotCodec.Store(true)
-		ts := s.unwrap.Unwrap(pkt.Timestamp)
-		if ts <= s.lastDecoded {
-			continue
-		}
-		s.lastDecoded = ts
-		pcm, err := s.decode(pkt.Payload)
-		if err == nil {
-			s.deliver(float64(ts), pcm)
-		}
-	}
-}
-
-func (s *source) decode(data []byte) ([]float32, error) {
-	if s.dec == nil {
-		dec, err := opus.NewDecoder()
-		if err != nil {
-			return nil, err
-		}
-		s.dec = dec
-	}
-	return s.dec.Decode(data)
 }

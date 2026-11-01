@@ -25,12 +25,10 @@ type LinkStats struct {
 	LossPct       *float64     `json:"lossPct"`
 	BufferMs      *float64     `json:"bufferMs"`
 	Kbps          *float64     `json:"kbps"`
-	Codec         *string      `json:"codec"`
 	PlayoutMs     *float64     `json:"playoutMs"`
 	CaptureMs     *float64     `json:"captureMs"`
-	CodecMs       float64      `json:"codecMs"`
+	SendMs        float64      `json:"sendMs"`
 	MouthToEarMs  *float64     `json:"mouthToEarMs"`
-	Engine        string       `json:"engine"`
 	MeasuredMs    *float64     `json:"measuredMs"`
 	LL            *RemoteStats `json:"ll"`
 }
@@ -39,7 +37,6 @@ type LinkStats struct {
 type RemoteStats struct {
 	ll.JitterStats
 	Kbps       *float64 `json:"kbps"`
-	Codec      *string  `json:"codec"`
 	MeasuredMs *float64 `json:"measuredMs"`
 	RttMs      *float64 `json:"rttMs"`
 }
@@ -99,16 +96,8 @@ func (e *Engine) kbps(s *source, now time.Time) *float64 {
 	return ptr(float64(n) * 8 / 1000 / secs)
 }
 
-// sendDelayMs: what our own sending costs, frame plus lookahead (sendDelayMs in config.ts).
-func sendDelayMs(codec string, frameMs float64, app string) float64 {
-	if codec == "pcm" {
-		return float64(pcmFrame) * 1000 / 48000
-	}
-	if app == "lowdelay" {
-		return frameMs + 2.5
-	}
-	return frameMs + 6.5
-}
+// sendMs: what our own sending costs, the PCM frame we wait to fill (sendDelayMs in config.ts).
+const sendMs = float64(pcmFrame) * 1000 / 48000
 
 func (e *Engine) stats() Stats {
 	e.mu.Lock()
@@ -123,59 +112,23 @@ func (e *Engine) stats() Stats {
 		block := float64(info.Block) * 1000 / 48000
 		inMs, outMs = ptr(info.InputLatencyMs+block), ptr(info.OutputLatencyMs+block)
 	}
-	cfg := *e.llConfig.Load()
-	byPeer := map[string][2]*link{}
 	for _, l := range e.links {
-		p := byPeer[l.peer]
-		if l.kind == "ll" {
-			p[0] = l
-		} else {
-			p[1] = l
-		}
-		byPeer[l.peer] = p
-	}
-	for id, p := range byPeer {
-		llLink, voice := p[0], p[1]
-		var st LinkStats
-		var l *link
-		switch {
-		case llLink != nil && llLink.up.Load():
-			l = llLink
-			st.Engine = "ll"
-		case voice != nil:
-			l = voice
-			st.Engine = "webrtc"
-		default:
+		if !l.up.Load() {
 			continue
 		}
+		var st LinkStats
 		route(l.pc, &st)
 		st.CaptureMs, st.PlayoutMs = inMs, outMs
 		s := l.src
 		ps := s.published.Load()
 		rs := &RemoteStats{Kbps: e.kbps(s, now)}
-		if s.gotCodec.Load() {
-			c := "opus"
-			if s.pcm.Load() && l.kind == "ll" {
-				c = "pcm"
-			}
-			rs.Codec = &c
+		l.mu.Lock()
+		rs.RttMs = median(l.rtts)
+		l.mu.Unlock()
+		if rs.RttMs != nil {
+			st.RttMs = rs.RttMs
 		}
-		if l.kind == "ll" {
-			l.mu.Lock()
-			rs.RttMs = median(l.rtts)
-			l.mu.Unlock()
-			if rs.RttMs != nil {
-				st.RttMs = rs.RttMs
-			}
-			codec := cfg.Codec
-			if rs.Codec != nil {
-				codec = *rs.Codec
-			}
-			// Their frame size isn't sent; ours is the best guess.
-			st.CodecMs = sendDelayMs(codec, cfg.FrameMs, cfg.Application)
-		} else {
-			st.CodecMs = 10 + 6.5
-		}
+		st.SendMs = sendMs
 		if ps != nil {
 			rs.JitterStats = ps.JitterStats
 			rs.MeasuredMs = ps.measuredMs
@@ -184,18 +137,16 @@ func (e *Engine) stats() Stats {
 			st.LossPct = ptr(ps.ConcealedPct)
 			st.MeasuredMs = ps.measuredMs
 		}
-		st.Kbps, st.Codec = rs.Kbps, rs.Codec
+		st.Kbps = rs.Kbps
 		if st.RttMs != nil && st.BufferMs != nil {
-			m := *st.RttMs/2 + *st.BufferMs + st.CodecMs
+			m := *st.RttMs/2 + *st.BufferMs + st.SendMs
 			if inMs != nil {
 				m += *inMs + *outMs
 			}
 			st.MouthToEarMs = &m
 		}
-		if l.kind == "ll" {
-			st.LL = rs
-		}
-		out.Peers[id] = st
+		st.LL = rs
+		out.Peers[l.peer] = st
 	}
 	for s := range e.readAt {
 		if !e.live(s) {
@@ -213,7 +164,7 @@ func (e *Engine) live(s *source) bool {
 			return true
 		}
 	}
-	return e.loop != nil && e.loop.ll.Load() == s
+	return e.loop != nil && e.loop.src.Load() == s
 }
 
 func (e *Engine) testStatsLocked(inMs, outMs *float64) *TestStats {
@@ -231,7 +182,7 @@ func (e *Engine) testStatsLocked(inMs, outMs *float64) *TestStats {
 		if e.loop == nil {
 			return nil
 		}
-		s := e.loop.ll.Load()
+		s := e.loop.src.Load()
 		ps := s.published.Load()
 		if ps == nil {
 			return &TestStats{}

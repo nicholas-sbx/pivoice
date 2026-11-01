@@ -9,10 +9,9 @@ spatial audio and each voice comes from where that person sits.
 
 <p>
   <img src="docs/screenshots/room-6.jpg" width="49%" alt="Six people at the table, with ping">
-  <img src="docs/screenshots/compare.jpg" width="49%" alt="Audio route cards: one person on WebRTC audio, one on the low-latency engine">
+  <img src="docs/screenshots/room-3.jpg" width="49%" alt="Three people: the table at half size">
 </p>
 <p>
-  <img src="docs/screenshots/room-3.jpg" width="49%" alt="Three people: the table at half size">
   <img src="docs/screenshots/settings.jpg" width="49%" alt="Voice settings">
 </p>
 <p>
@@ -51,7 +50,7 @@ installed (`npm i -g playwright && npx playwright install chromium`).
 `SHOTS_DIR=docs/screenshots npm run e2e` retakes the screenshots above.
 
 `npm test` runs the unit tests (seat planning against brute force, the
-springs, the protocol, the Opus SDP tuning, the Worker and the rooms), and `npm run
+springs, the protocol, the low-latency engine, the Worker and the rooms), and `npm run
 typecheck` / `npm run typecheck:worker` the types.
 
 ## What's in it
@@ -71,8 +70,7 @@ with six at the table and showed up as wandering latency. A green ring shows who
 their names, along with your ping to each of them (green under 80 ms, yellow
 under 160, red above). Right-click someone for **User Volume** (0–200%,
 sticking at 100% on the way past; **Reset** or a double-click puts it back)
-and **Mute**, for you only. Above 100% the website plays them through Web
-Audio rather than the plain `<audio>` element, which can't go louder.
+and **Mute**, for you only.
 
 **On a phone.** A table is mostly empty felt on a small screen, and seats
 only matter for where people sound from. So on a phone (or any window
@@ -107,25 +105,22 @@ Discord, deafening mutes you too and unmuting undeafens you.
 
 **Mic test.** In Voice Settings, like Discord's **Let's Check**: you hear
 yourself, deafened while it runs (and undeafened after, if you weren't
-before), through one of three paths, none of them touching the network:
+before), through one of two paths, neither of them touching the network:
 
 - **Raw**: the mic straight to your ears through Web Audio. This is your
   devices plus the browser's buffers, the floor every other path sits on.
   Shown as what the browser reports for its buffers (it can't be measured
   without a microphone hearing your speakers).
-- **WebRTC audio**: two peer connections in the tab, with the same SDP tuning
-  as a call, played out the way calls play. Measured from capture stamps.
-- **Low latency**: the low-latency engine's whole path, looped back inside
-  its worker: silence gate, encoder, packets, decoder, jitter buffer. Measured
-  from capture stamps, with the buffer, concealment and late counts alongside.
+- **As in a call**: the low-latency engine's whole path, looped back inside
+  its worker: silence gate, packets, jitter buffer. Measured from capture
+  stamps, with the buffer, concealment and late counts alongside.
 
-In headless Chromium (fake devices): raw ≈ 11 ms, WebRTC audio 45 ms, the
-low-latency engine 24 ms. If the engine sounds choppy in its loopback, the
-cause is on your machine (output buffer, silence gate), not the network.
+In headless Chromium (fake devices): raw ≈ 11 ms, as in a call 20 ms. If
+it sounds choppy in its loopback, the cause is on your machine (output
+buffer, silence gate), not the network.
 
-**Settings apply immediately.** The two settings that only a fresh
-connection can apply (the audio output buffer, and silence suppression on
-WebRTC audio) reconnect you on the spot. You drop and come straight back
+**Settings apply immediately.** The one setting only a fresh start can
+apply (the website's audio output buffer) reconnects you on the spot. You drop and come straight back
 as the same member, without saying goodbye. The room keeps you as
 reconnecting for those few seconds, so you keep your seat, and the volumes
 everyone has set for you still apply. If you were alone, you take the room
@@ -153,23 +148,23 @@ page asks the browser's Wake Lock for the screen, so a phone on speaker
 doesn't lock and cut the audio; it asks again when the page is shown after
 being hidden, and says nothing if the browser can't or won't). The route card under each person shows how their audio
 reaches you (same network, direct peer to peer, or relayed through a TURN
-server, and which one), the transport, codec and bitrate, a mouth-to-ear
-estimate with its breakdown (mic, codec, network, jitter buffer, playout),
-and jitter and packet loss. It's all read once a second from the calls'
-own WebRTC stats, and it also says which engine is carrying that person's
-voice. Those stats are only read while the route card is up: `getStats()`
-stalls Chrome's network thread, where the low-latency engine's packets
-come in, and its jitter buffer grows to cover the stall (p90 mouth to ear
-went from 22.7 to 25–26 ms with the poll on). Ping to people on that
-engine comes from its own pings over its data channel instead. The mouth-to-ear figure is measured where it can be (see below), and
-an estimate (`≈`) where it can't. Hover the estimate for what each part means.
+server, and which one), the transport and bitrate, a mouth-to-ear figure
+with its breakdown (mic, sending, network, jitter buffer, playout), and
+jitter and gaps. The route comes from the connection's WebRTC stats, read
+once a second only while the route card is up: `getStats()` stalls
+Chrome's network thread, where the low-latency engine's packets come in,
+and its jitter buffer grows to cover the stall (p90 mouth to ear went from
+22.7 to 25–26 ms with the poll on). Ping comes from the engine's own pings
+over its data channel, and everything else from the engine. The
+mouth-to-ear figure is measured where it can be (see below), and an
+estimate (`≈`) where it can't. Hover the estimate for what each part means.
 
 **Voice settings.** Input and output device, an input level meter,
 spatial audio (**Off**, **Stereo**, **HRTF**; in the app **Binaural**
 instead of HRTF), echo cancellation, noise suppression and automatic gain
-control (all **off** by default; in the app, its own: see below), and
-silence suppression (DTX, off). The **Low Latency** tab has the experimental
-engine and all its settings (below).
+control (in the app, its own: see below). The **Latency** tab has the
+sound card or output buffer, and every setting of the low-latency engine,
+which carries everyone's voice (below).
 
 ### Seating
 
@@ -203,34 +198,22 @@ seats jump straight to where they're going.
 
 ### Audio and latency
 
-- **A full mesh of WebRTC calls.** Everyone calls everyone directly, with no
-  SFU or relay in the middle unless the network forces TURN. That's the
-  lowest latency you can get, and fine for the 12 people a room allows.
+- **A full mesh of peer connections.** Everyone connects to everyone
+  directly, with no SFU or relay in the middle unless the network forces
+  TURN. That's the lowest latency you can get, and fine for the 12 people a
+  room allows. Each connection carries only the low-latency engine's data
+  channel: no media tracks, no codec.
 - **Noise suppression and auto gain on, echo cancellation off.** The
   browser's own, by default: most people's mics need them, and the bigger
   latency win is the app. Echo cancellation is on by default only on phones,
   which are usually on their speaker; on a computer it costs latency and
   people are on headphones. All three off, the browser hands the mic over
   untouched, for the lowest latency.
-- **10 ms Opus frames.** The SDP each side sends asks for `ptime=10`
-  instead of 20 ms, with in-band FEC and mono
-  ([`src/net/sdp.ts`](src/net/sdp.ts)). Measured: 100 packets a second.
-  Senders are marked high priority for networks that honour DSCP.
 - **Nothing sent that nobody will hear.** While you're muted (deafening
-  mutes you too), your calls carry no audio track at all, so no packets go
-  out. A disabled track would still send encoded silence 100 times a second.
-  Nobody sends audio to someone who's deafened. Swapping the track back is
-  instant and needs no renegotiation.
-- **Silence suppression (DTX), off by default.** With it on, while someone's
-  quiet Opus sends a small comfort-noise update every 400 ms instead of 100
-  packets a second, and resumes on the first frame of speech, so nothing is
-  clipped. It costs about 9 ms: measured in Chrome, the jitter buffer sat at
-  ~36 ms with it and ~27 ms without. Turn it on in Voice Settings to save
-  bandwidth while people are quiet. It applies to what people send *you*. Changing it reconnects you for
-  a moment, since it's part of how each call is set up.
-- **Spatial audio off by default.** With it off, each voice plays from a plain
-  `<audio>` element, the shortest path the browser has from the network to your
-  ears.
+  mutes you too), the engine sends nothing, and nobody sends audio to
+  someone who's deafened.
+- **Spatial audio off by default.** Each voice goes from its jitter buffer
+  straight to the speakers.
 - **Spatial audio on:** each voice goes `gain → PannerNode → speakers`.
   **Stereo** uses equal-power panning. **HRTF** uses the browser's built-in
   head-related transfer function (`panningModel: 'HRTF'`, in every modern
@@ -239,8 +222,9 @@ seats jump straight to where they're going.
   and the seat on your left is ahead-left. Only the direction counts:
   nobody's quieter for sitting further away. There's no head tracking.
 
-**Where the rest of the delay is.** Measured on one machine, Chrome to Chrome
-(the network part is ~1 ms):
+**Why not WebRTC's own audio.** It used to carry everyone's voice. Measured
+on one machine, Chrome to Chrome over a WebRTC call (Opus, 10 ms frames;
+the network part is ~1 ms):
 
 | Stage | Delay | Who controls it |
 | --- | --- | --- |
@@ -252,8 +236,9 @@ seats jump straight to where they're going.
 
 That's ~85–95 ms mouth to ear even on one machine, against the ~10–20 ms of
 something like `pw-loopback`, and most of it is inside the browser's WebRTC
-audio, where a page can't reach. That's why there's a second engine (next
-section).
+audio, where a page can't reach. That's why everyone talks through the
+low-latency engine instead (next section), and WebRTC is only the
+connection.
 
 Outside the app, on Linux with PipeWire, a large audio buffer size shows up
 three times: in mic, in out, and as jitter that grows the buffer. A mic
@@ -262,34 +247,26 @@ clock.force-quantum 256` (0 puts it back), or starting Chrome with
 `PULSE_LATENCY_MSEC=5`, shrinks it.
 
 **Measured, not guessed.** The route card's mouth-to-ear figure is a real
-measurement whenever it can be (no `≈`):
+measurement whenever it can be (no `≈`): one packet in 20 carries the
+wall-clock capture time of its newest frame, and the playback worklet
+reports which frame it played when. That's capture to speakers, exact on
+one machine; across machines it's as good as your two clocks (NTP usually
+keeps desktops within a few ms).
 
-- WebRTC audio: our offers ask for the `abs-capture-time` RTP header
-  extension. Each frame then carries the wall-clock time it was captured at,
-  `getSynchronizationSources()` reports it next to when the frame was handed
-  to our audio output, and Chrome's playout delay is added on top.
-- Low-latency engine: one packet in 20 carries the wall-clock capture time of
-  its newest frame, and the playback worklet reports which frame it played
-  when.
+### The low-latency engine
 
-Both measure capture to speakers. That's exact on one machine; across machines
-it's as good as your two clocks (NTP usually keeps desktops within a few ms).
-
-### The low-latency engine (experimental)
-
-On by default, on the website and in the app, sending raw PCM, in **Voice Settings → Low Latency**. Turning it on
-or off keeps the rest of its settings. Pairs
-of people who both have it on stop using WebRTC's audio for each other and
-use this instead. PCM is about 1.3 Mbit/s to each person you're talking to,
-so on a slow uplink switch the codec to Opus or turn the engine off:
+How everyone hears everyone, on the website and in the app: raw 16-bit
+PCM over a data channel, no codec. Its settings are in **Voice Settings →
+Latency**. PCM is about 1 Mbit/s to each person you're talking to (see
+[Bigger rooms](#bigger-rooms) for what that means):
 
 ```
-mic → pv-capture AudioWorklet: frames of 2.5–20 ms on the audio clock (one 2.7 ms block for PCM)
-    → shared-memory ring → worker: our silence gate → WebCodecs AudioEncoder (the browser's libopus), or raw PCM
-    → packet: frame + the previous 0–2 frames again + now and then a capture stamp
+mic → pv-capture AudioWorklet: one 128-sample block (2.7 ms) at a time, on the audio clock
+    → shared-memory ring → worker: our silence gate → raw PCM
+    → packet: block + the previous 0–2 blocks again + now and then a capture stamp
     → RTCDataChannel, unordered, maxRetransmits 0 (late is dropped, never queued)
-    → their worker: WebCodecs AudioDecoder (or straight through for PCM)
-    → shared-memory ring → pv-playback AudioWorklet: our jitter buffer → their channel strip (volume, spatial)
+    → their worker → shared-memory ring → pv-playback AudioWorklet: our jitter buffer
+    → their channel strip (volume, spatial)
 ```
 
 - **No main thread in the audio path.** The capture worklet hands frames
@@ -297,22 +274,23 @@ mic → pv-capture AudioWorklet: frames of 2.5–20 ms on the audio clock (one 2
   SharedArrayBuffer (the worker wakes on `Atomics.waitAsync`, the playback
   worklet reads its ring at the top of each block), the data channels are transferred to
   that worker the moment they're created (Chrome only allows it then), and
-  decoded audio goes straight from the worker to the playback worklet. Page
+  incoming audio goes straight from the worker to the playback worklet. Page
   work can't delay a packet. Where a browser can't transfer a data channel,
   the page relays instead. Shared memory needs the page to be cross-origin
   isolated, so the Worker sends `Cross-Origin-Opener-Policy: same-origin` and
   `Cross-Origin-Embedder-Policy: require-corp` on everything (so does the
   Vite dev server). Without isolation the engine falls back to MessagePorts;
   the tab says which it's using.
-- **Raw PCM by default, for local networks.** No encoder and no lookahead: each 128-sample
-  block (2.7 ms) goes out as 16-bit PCM the moment the audio thread has it.
-  The fixed delay drops to one block, at about 1.3 Mbit/s per listener (more
-  with redundancy). Opus at 2.5 ms still costs a frame plus 2.5 ms of
-  lookahead.
-- **Opus at frame sizes WebRTC won't do.** WebCodecs' Opus takes
-  `frameDuration` down to 2.5 ms and `application: 'lowdelay'`, which means
-  CELT only and 2.5 ms of lookahead instead of 6.5. Encoding a frame takes
-  ~0.2 ms.
+- **Raw PCM, no codec.** No encoder and no lookahead: each 128-sample block
+  goes out as 16-bit PCM the moment the audio thread has it, so the fixed
+  delay is one block. And nothing anyone sends is ever decoded by C (see
+  [Why no Opus](#why-no-opus)). All it needs from a browser is AudioWorklet
+  and workers.
+- **Only what a sender would send.** Both ends (the worker here, the app's
+  `receiveLL`) take raw PCM packets of at most three blocks, none longer
+  than eight blocks, each starting where the last one taken ended, and the
+  jitter buffer holds at most 256 frames. Anything else is dropped, so
+  nobody can make you hold or play more than they'd send by talking.
 - **Our own jitter buffer** ([`src/audio/ll/jitter.ts`](src/audio/ll/jitter.ts)):
   - It tracks the best path delay (the minimum of arrival minus send time
     over a few seconds) and a high percentile (99th) of the jitter above it,
@@ -327,60 +305,39 @@ mic → pv-capture AudioWorklet: frames of 2.5–20 ms on the audio clock (one 2
     next sentence fresh at the target.
   - Unit tests drive it with simulated streams: clean, jittery, lossy and
     silent ones.
-- **Our own DTX.** Chrome's encoder drops frames for DTX and then numbers the
-  rest as if it hadn't (its decoder does the same with gaps), which scrambles
-  timing. So the engine keeps its own map from each frame to its capture time,
-  and gates silence itself. The gate decides per frame from that frame's own
-  level, with a hangover (400 ms), so the start of a word is never waited
-  on. The threshold is low (−70 dBFS) because the mic comes in raw with no
-  auto gain: in 0.2.0 it was −55, which could chop quiet speech.
-- **Redundancy instead of FEC.** WebCodecs' decoder can't use Opus's in-band
-  FEC, so each packet can repeat the previous one or two frames. One lost
-  packet then costs nothing, and there's no extra delay.
-- **Smallest output buffer** (applies to both engines): the AudioContext is
-  made with `latencyHint: 0`. In Chrome that's a 128-frame (2.7 ms) buffer
-  instead of ~10 ms. It also makes the audio thread run every 2.7 ms instead
-  of in ~10 ms bursts, which was most of the engine's capture jitter.
+- **Our own silence gate**, off by default. It decides per block from that
+  block's own level, with a hangover (400 ms), so the start of a word is
+  never waited on. The threshold is low (−70 dBFS) because the mic comes in
+  raw with no auto gain: in 0.2.0 it was −55, which could chop quiet speech.
+- **Redundancy**, off by default: each packet can repeat the previous one or
+  two blocks, so one lost packet costs nothing, with no extra delay, at
+  double or triple the bandwidth.
+- **Smallest output buffer**: the AudioContext is made with `latencyHint: 0`.
+  In Chrome that's a 128-frame (2.7 ms) buffer instead of ~10 ms. It also
+  makes the audio thread run every 2.7 ms instead of in ~10 ms bursts, which
+  was most of the engine's capture jitter.
 
-What it did in headless Chromium on one 4-core machine, three people, read
-from one seat (fake audio devices, so the absolute numbers will differ on
-real hardware):
-
-| | Mouth to ear (measured) | Buffer | Out |
-| --- | --- | --- | --- |
-| WebRTC audio | 66–71 ms | ~30–39 ms | 30 ms |
-| Low-latency engine, 5 ms frames | 36–37 ms | ~10–15 ms | 11 ms |
-
-And with two people, which is the path most calls take:
+What it did in headless Chromium on one 4-core machine, two people (fake
+audio devices, so the absolute numbers will differ on real hardware):
 
 | | Mouth to ear (measured) |
 | --- | --- |
 | Raw mic to speakers (the floor) | ≈ 11 ms |
-| Opus, 5 ms frames | 24 ms |
-| Opus, 2.5 ms frames, margin 0 | 18 ms |
 | Raw PCM, margin 3 ms (defaults) | 19 ms |
 | Raw PCM, margin 0 | 16–17 ms |
 | Raw PCM, margin 0, no shared memory | 18 ms |
 
 What's left between PCM and the floor is one capture block, the buffer the
-jitter buffer keeps (a block or so even at target 0) and the data channel hop.
-
-<p>
-  <img src="docs/screenshots/ll-settings.jpg" width="60%" alt="Low-latency engine settings">
-</p>
+jitter buffer keeps (a block or so even at target 0) and the data channel
+hop. WebRTC's own audio measured 66–71 ms in the same setup with three people.
 
 Every knob applies live. The output buffer can only be set when the audio
 starts, so changing it reconnects you on the spot:
 
 | Setting | Default | What it does |
 | --- | --- | --- |
-| Audio output buffer | Smallest | Web Audio's buffer to the speakers, for both engines: Smallest (Chrome: 128 frames, 2.7 ms), Small (~5 ms where the device offers it), or Browser default (~10 ms). The tab shows what you actually got. Bigger if it crackles. |
-| Codec | Raw PCM | Raw PCM (no encoder delay, ~1.3 Mbit/s per listener: LAN only), or Opus for a fraction of the bandwidth. The Opus rows below only apply to Opus. |
-| Frame size | 5 ms | 2.5 / 5 / 10 / 20 ms. Each step down halves the frame delay and doubles the packets. |
-| Opus mode | Low delay | Low delay (CELT, 2.5 ms lookahead), VoIP or Audio (6.5 ms). |
-| Bitrate | 64 kbps | 12–256 kbps. |
-| Encoder complexity | 8 | CPU against quality. No effect on delay. |
-| Redundancy | Off | Each packet repeats 0–2 previous frames. |
+| Audio output buffer | Smallest | Web Audio's buffer to the speakers, which everyone plays through: Smallest (Chrome: 128 frames, 2.7 ms), Small (~5 ms where the device offers it), or Browser default (~10 ms). The tab shows what you actually got. Bigger if it crackles. |
+| Redundancy | Off | Each packet repeats 0–2 previous blocks. |
 | Silence suppression | Off | Send nothing while you're quiet. |
 | Silence threshold | −70 dBFS | What counts as quiet. The tab shows your mic's level live. |
 | Silence hangover | 400 ms | How long it keeps sending after you go quiet. |
@@ -392,32 +349,33 @@ starts, so changing it reconnects you on the spot:
 | Speed adjustment | ±2% | How hard playback may steer to the target. 0 only resyncs between sentences. |
 | Concealment | 12 ms | How long a gap is covered before it goes silent. |
 
-The tab also shows what the sending settings cost: the fixed delay (frame +
-lookahead, or one block for PCM), packets per second, bandwidth per listener,
-and whether the audio thread and worker share memory. At 2.5 ms frames
-the per-packet overhead of SCTP, DTLS, UDP and IP dominates, so expect a few
-hundred kbps per person you're talking to.
+The tab also shows what sending costs: the fixed delay (one block),
+packets per second, bandwidth per listener, and whether the audio thread
+and worker share memory.
 
-Mixing engines in one room is fine: each pair decides for itself, and anyone
-without the engine on hears and is heard over WebRTC audio as before.
+#### Bigger rooms
 
-**Bigger rooms.** Raw PCM is about 1.3 Mbit/s up to each person you're
-talking to: ~6.5 Mbit/s in a room of six, ~14 Mbit/s at the 12-person
-limit. Fine on a LAN, a lot for some home uplinks. Measured in headless
-Chromium with every participant's browser on one 4-core machine, all on
-the defaults, read from one seat:
+Raw PCM is about 1 Mbit/s up to each person you're talking to, and with
+silence suppression off (the default) that's all the time, not only while
+you talk: ~5 Mbit/s in a room of six, ~11 Mbit/s at the 12-person limit,
+375 packets a second to each. Fine on a LAN or fibre; a lot for some home
+uplinks and for phones on mobile data. There's no lower rate to fall back
+to: when the uplink can't keep up, packets back up and are dropped, and
+people sound choppy rather than worse. Anyone relayed through TURN costs
+that much relay bandwidth too. Measured in headless Chromium with every
+participant's browser on one 4-core machine, all on the defaults, read
+from one seat:
 
-| People | Low-latency engine (PCM) | WebRTC audio |
-| --- | --- | --- |
-| 2 | 21 ms | 60 ms |
-| 4 | 29 ms | 60 ms |
-| 6 | 76 ms | 84 ms |
+| People | Mouth to ear (measured) |
+| --- | --- |
+| 2 | 21 ms |
+| 4 | 29 ms |
+| 6 | 76 ms |
 
-At six both engines degrade because that machine is overloaded (load ~8 on
-4 cores, running all six browsers), so the last row says more about the
-test than about real calls, where everyone has a machine of their own.
-Switching to Opus on its own above a few listeners is the obvious next step
-if uplinks turn out to be the limit; it isn't built.
+At six that machine is overloaded (load ~8 on 4 cores, running all six
+browsers), so the last row says more about the test than about real calls,
+where everyone has a machine of their own. A codec would cut the bandwidth
+20–30 times; [Why no Opus](#why-no-opus) says how one should come back.
 
 **Tried, and left as they are:**
 
@@ -435,6 +393,55 @@ if uplinks turn out to be the limit; it isn't built.
 - **A steadier target** (rise fast, fall slowly): a single late packet still
   lifts the target from ~6 to ~14 ms for about 4 s. Holding it would stop the
   swings at the cost of a few ms more on average. Not done.
+
+### Why no Opus
+
+There's no codec anywhere: everything anyone sends is raw PCM, read by our
+own code (TypeScript in the browser, Go in the app), and no C ever parses a
+byte another person sent. That's on purpose.
+
+It used to be otherwise. Anyone without the engine on got a WebRTC call
+(Opus over RTP), and the engine could send Opus too. In a browser that was
+the browser's own libopus, inside its sandbox. In the app it was libopus
+linked into the app, decoding packets from anyone in the room with the
+app's full access to your machine. Fuzzing libopus as the app called it
+found nothing, but a review of how the app used it found that anyone in a
+room could corrupt the app's memory: offering two audio tracks made two
+goroutines decode on one decoder at once, which wrote out of bounds under
+AddressSanitizer within seconds. So Opus went, and the WebRTC call with it.
+Every connection now carries only the engine's data channel, and the app's
+peer connections know no codecs at all, so a peer's audio tracks are
+turned down before they start.
+
+What that costs is bandwidth ([Bigger rooms](#bigger-rooms)). If that turns
+out to be the limit, Opus can come back, but not as it was:
+
+- **Out of the app's process.** Decode in a small helper process with
+  almost no rights: on Linux `no_new_privs`, a Landlock ruleset that allows
+  nothing, and a seccomp filter that allows little more than reading and
+  writing its pipe; on Windows an AppContainer (or a restricted,
+  low-integrity token) in a job object; on macOS a sandbox profile that
+  denies everything. Packets go in over a pipe or shared memory and PCM
+  comes out. Decoding happens off the audio thread anyway (on each link's
+  network goroutine), so the hop costs microseconds and never a glitch, and
+  a crash there costs a respawn, not the app. Or compile libopus to
+  WebAssembly and run it in the app under wazero: memory safe by
+  construction, perhaps 2–4 times slower than native, which is still a
+  small part of a core for a full room (measure it before choosing).
+- **One decoder per incoming stream, used by one goroutine.** The bug above
+  was one decoder shared by two tracks of one link. Give each track its own
+  source and decoder, or take only a link's first track.
+- **Bounded per packet and per second.** A few frames a packet and no more
+  samples a second than real time, so a small packet can't be made to
+  decode into a lot of audio.
+- **Fuzzed in CI.** libFuzzer and AddressSanitizer on the decoder exactly as
+  the app calls it (48 kHz mono, a 5760-sample buffer), seeded with real
+  packets of every mode, and the same for anything else new in C.
+- **In a browser, the browser's own** (WebCodecs or WebRTC): its libopus is
+  already sandboxed with the page.
+
+The C that's left in the app (PortAudio, RNNoise, SpeexDSP) only ever
+sees your own sound card's audio.
 
 ## The app
 
@@ -456,11 +463,12 @@ becomes just the UI.
   callback.
 - **WebRTC from Go** ([pion](https://github.com/pion/webrtc)). The app
   makes the peer connections itself. Its low-latency engine is a port of
-  the browser's (same packets, same jitter buffer, tested against the same
-  cases), and its calls are Opus over RTP with the same SDP asks, so app
-  users and website users talk to each other in any mix. Received audio
-  goes from the network into each person's jitter buffer and out of the
-  same callback the mic comes in on.
+  the browser's (same packets, same limits, same jitter buffer, tested
+  against the same cases), so app users and website users talk to each
+  other in any mix. Its peer connections know no codecs, so they take
+  nothing but the engine's data channel. Received audio goes from the
+  network into each person's jitter buffer and out of the same callback the
+  mic comes in on.
 - **The page still runs the call.** It keeps the room's WebSocket and all
   of [`session.ts`](src/net/session.ts) (who calls whom, link ids,
   retries), so there's one copy of those rules. Its links are just
@@ -470,7 +478,7 @@ becomes just the UI.
 - **Windows: the mic as it comes.** WASAPI is opened in raw mode, which
   tells Windows to skip the effects it would otherwise put on the mic
   (its own noise suppression, gain, "enhancements"), at pro-audio thread
-  priority. **Exclusive Mode** (Low Latency tab, Windows only) takes the
+  priority. **Exclusive Mode** (Latency tab, Windows only) takes the
   device for the app alone, for WASAPI's smallest buffers, at the cost of
   nothing else being able to use it meanwhile. The sound card line there
   says which one you got (exclusive, raw or shared).
@@ -547,7 +555,7 @@ picks AVX2 or SSE4.1 when it starts, on x86-64.
 - **Safe.** Fixed-size frames in Go-owned buffers, no allocation per block
   (a test holds the whole chain to zero), and both libraries built from
   pinned sources (a checksum for RNNoise's release, a commit for
-  SpeexDSP's tag) into the binary, as PortAudio and Opus are.
+  SpeexDSP's tag) into the binary, as PortAudio is.
 
 ### The overlay
 
@@ -629,7 +637,7 @@ Costs, and what isn't done:
 
 ### When it crackles
 
-The **Low Latency** tab in the app counts everything on the app's side
+The **Latency** tab in the app counts everything on the app's side
 that can put a click in the audio since the sound card opened: the
 driver's own overrun and underrun flags, mic blocks the sender wasn't
 ready for, incoming frames the audio thread was too far behind to take,
@@ -659,18 +667,28 @@ dealt with; if it still happens, the counters say which it was:
 - In the app's window, it's functions bound into the webview: no socket
   or port at all, so there's nothing for other programs (or other sites
   in your browser) to find.
-- Nothing gets through until the page says hello with a key the app made
-  up when it started (32 random bytes). A script the app adds runs at the
-  start of *every* page in its window, before the page's own code: it shuts
-  the bridge (whatever the last page was doing stops) and hands out the key
-  only if the page is on the site's origin. If the window ever ended up on
-  another site, that site couldn't reach your microphone.
+- Nothing gets through without a key the app made up when it started (32
+  random bytes): not the hello, and nothing after it either, since any
+  frame inside the page could reach the bound functions. A script the app
+  adds runs at the start of *every* page in its window, before the page's
+  own code: it shuts the bridge (whatever the last page was doing stops)
+  and hands out the key only if the page is on the site's origin.
+- The window stays on the site. On Linux WebKitGTK asks the app before
+  every navigation, frames included, and the app refuses anything off the
+  site's origin and every new window; on Windows and macOS the same script
+  sends any other page straight back to the site. Links out go to your
+  browser.
 - `--browser` opens the UI in your ordinary browser instead, over a
-  WebSocket on 127.0.0.1 (a port the system picks). The address and key
-  ride in the `#fragment`, which never leaves your machine and is taken out
-  of the address bar straight away; the socket only accepts the site's own
-  `Origin`, and still wants the key. This is also how development and the
-  end-to-end test work.
+  WebSocket on 127.0.0.1 (a port the system picks). The browser is pointed
+  at a one-time link on that port that sends it on to the site with the
+  address and key in the `#fragment`, so the key is never on a command line
+  where other users could see it; the fragment never leaves your machine
+  and is taken out of the address bar straight away. The socket only
+  accepts the site's own `Origin`, and still wants the key. This is also
+  how development and the end-to-end test work.
+- What the page asks for is checked: settings are clamped to the ranges the
+  page offers, ICE servers must be STUN or TURN somewhere other than this
+  machine, and `--url` must be https unless it's this machine.
 
 **Two versions.** The site is `package.json`'s version, the app is
 [`native/VERSION`](native/VERSION), and they release separately. What
@@ -700,9 +718,9 @@ tests `--headless --fake-audio --loopback-ice` (no sound card: a beeping
 mic and silent speakers, and it prints the UI's address instead of opening
 it).
 
-**Building it.** Go 1.24, a C compiler, pkg-config, and PortAudio, Opus,
+**Building it.** Go 1.24, a C compiler, pkg-config, and PortAudio,
 SpeexDSP and (Linux) WebKitGTK 4.1 headers (`apt install portaudio19-dev
-libopus-dev libspeexdsp-dev libwebkit2gtk-4.1-dev`). RNNoise too if you
+libspeexdsp-dev libwebkit2gtk-4.1-dev`). RNNoise too if you
 want noise suppression: few distributions package 0.2, so `build/deps.sh
 rnnoise` builds it (with the lookahead switch) and `PKG_CONFIG_PATH` finds it
 in `build/deps/lib/pkgconfig`. Without it, `build.sh` builds the app with no
@@ -717,13 +735,17 @@ go test -race ./...              # set PKG_CONFIG_PATH=$PWD/build/pkgconfig firs
 
 `NOWEBVIEW=1 ./build.sh` builds without the window (`--browser` and
 `--headless` only). Releases link PortAudio (ALSA, CoreAudio, WASAPI/MME
-only; ALSA is loaded at start-up), Opus, RNNoise and SpeexDSP statically, built from pinned
+only; ALSA is loaded at start-up), RNNoise and SpeexDSP statically, built from pinned
 sources by [`native/build/deps.sh`](native/build/deps.sh), so the binary
-needs nothing but the system's webview and sound server.
+needs nothing but the system's webview and sound server. Where the
+toolchain has them without extra libraries (not MinGW), they're built with
+`_FORTIFY_SOURCE`, stack canaries and stack-clash protection, and the
+Linux binary is position independent with full RELRO. `go test -fuzz
+FuzzDecodePacket ./internal/ll` (or `FuzzJitterBuffer`) fuzzes what peers
+send.
 
 **Not yet in the app:** a measured HRTF (**Binaural** is a spherical head:
-direction left to right, not up and down); a measured mouth to ear on plain calls (no `abs-capture-time` from the app);
-honouring a receiver's DTX request on calls; Linux on ARM; macOS releases
+direction left to right, not up and down); Linux on ARM; macOS releases
 (it builds, but CI has it switched off); signing (Windows warns before the
 first run).
 
@@ -733,15 +755,25 @@ Each room is a [Durable Object](https://developers.cloudflare.com/durable-object
 on the app's own Worker, named by its code, so everyone with the code reaches
 the same one wherever they are ([`worker/room.ts`](worker/room.ts)). It
 keeps the roster and passes WebRTC offers, answers and ICE candidates
-between members. It never sees the audio: the voice is a full mesh of
-WebRTC calls between members, as before.
+between members. It never sees the audio: that goes straight between
+members.
 
 - **Making a room.** `POST /api/rooms`: the Worker picks a random code (a
   CSPRNG over ~594 million), asks that room to hold it for a minute, and
-  tries another if it's taken. Browsers never pick codes, so nobody can
-  squat one.
+  tries another if it's taken. Browsers never pick codes for new rooms.
 - **Joining.** A WebSocket to `/api/rooms/CODE/ws`. A code nobody's using
-  gets turned away, and the room leaves nothing behind.
+  gets turned away (unless you say you were in it: next), and the room
+  leaves nothing behind.
+- **Coming back after a deploy.** A deploy restarts every room and it
+  forgets everyone, so a hello that says when you first joined (`resume`)
+  makes the room again around you, in your old place in line. That means
+  anyone can also make a room under a code of their choosing by saying they
+  were in it, and pick their place in the line. That's left as it is, on
+  purpose. Closing it means signing a proof into every welcome (a secret on
+  the Worker, and a protocol change), and all it would stop is someone
+  hammering random codes, out of ~594 million, to spin up Durable Objects:
+  its benefit is invisible to users and its costs are visible. Don't change
+  it without a reason people would notice.
 - **Who you are.** Each tab makes up a secret key, and the room derives your
   public id from it (the first 128 bits of its SHA-256). Ids can't be chosen,
   so nobody can pass themselves off as you, and coming back with the same key
@@ -751,11 +783,10 @@ WebRTC calls between members, as before.
   sent it, passes it only to someone in the room right now, and rebuilds it
   from known fields first, so nothing else rides along. In each pair the one
   with the smaller id makes the offer, so two never cross. Each pair has one
-  peer connection for the call, and a second for the low-latency engine when
-  both have it on.
+  peer connection, carrying only the low-latency engine's data channel.
 - **Nobody's the host.** The room is the authority, so anyone can leave,
   including whoever made it, and the call carries on.
-- **Dropping out.** If your socket drops, your calls carry on (they're peer
+- **Dropping out.** If your socket drops, your links carry on (they're peer
   to peer) while it reconnects, and the room keeps your seat (shown
   reconnecting) for 12 seconds. A deploy restarts every room: everyone
   reconnects within a few seconds and the room is made again around them,
@@ -767,7 +798,10 @@ WebRTC calls between members, as before.
   sockets that went quiet. When everyone's gone, its storage is wiped.
 - **Limits.** 12 people a room. Each socket can burst 300 messages (a whole
   room's worth of offers and candidates at once) and then 30 a second, 16 KB
-  each at most, and has to say hello within 10 s. Break the protocol and the
+  each at most, and of those, 60 at once and then 5 a second to any one
+  person (more are dropped), so a few people together can't flood one. A
+  socket has to say hello within 10 s (the room wakes up to close it if
+  not), and at most 12 can be waiting to at once. Break the protocol and the
   room closes the socket. Only the app's own pages (and any
   `ALLOWED_ORIGINS`) may open a room socket or make a room. The optional
   `ROOM_LIMITER` in `wrangler.toml` caps both per IP, which makes guessing
@@ -798,9 +832,11 @@ Both can be on at once. The Worker's servers come first.
 
 The app is one Cloudflare Worker named `voice` (from `wrangler.toml`), so it lives at `voice.<your-subdomain>.workers.dev`. The
 static build in `dist/` is served as static assets, without invoking the
-Worker (so it doesn't count against the Worker request limits), with the
-cross-origin isolation headers the low-latency engine's shared memory needs
-coming from `public/_headers`. The Worker runs the rooms and answers
+Worker (so it doesn't count against the Worker request limits), with
+headers from `public/_headers`: the cross-origin isolation the low-latency
+engine's shared memory needs, and a Content Security Policy (our own
+scripts only, no frames either way), `nosniff`, no referrer and the
+microphone for the site alone. The Worker runs the rooms and answers
 `/api/ice`. The rooms are SQLite-backed Durable Objects, which the Workers
 Free plan includes; the first deploy creates them from the `[[migrations]]`
 in `wrangler.toml`.
@@ -916,10 +952,10 @@ src/
                 (the phone layout), spring, room codes, prefs, viewport
   net/          protocol (+ validation, shared with the Worker), roomSocket (the
                 WebSocket to the room), peer (one peer connection), session
-                (joining, the call mesh), sdp, ICE config
+                (joining, the mesh), stats (the route card), ICE config
   audio/        engine: mic, per-person channel strips, panning, speaking detection
   audio/ll/     the low-latency engine: worklets (capture, playback), worker
-                (encode, decode, network), jitter buffer, shared-memory ring, packet format, settings
+                (silence gate, packets, network), jitter buffer, shared-memory ring, packet format, settings
   components/   round table, its miniature for the pop-out and the overlay, call control
                 buttons, settings, user menu, icons
   overlay/      the app's overlay page (overlay.html): only the table, drawn from what the app sends
@@ -934,6 +970,6 @@ tests/          unit tests
 native/         the app (Go): main and the window, and in internal/: audio (the PortAudio
                 duplex stream, a fake one), engine (mixer, sending, pion links, stats), dsp
                 (echo cancellation, noise suppression, gain), ll (packets and jitter buffer,
-                ported), opus, bridge, proto (the bridge's messages), overlay (its window
+                ported), bridge, proto (the bridge's messages), overlay (its window
                 on each desktop, and the rings)
 ```

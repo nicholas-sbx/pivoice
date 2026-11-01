@@ -7,11 +7,14 @@
  * Shared by the app and the Worker, so both sides validate the same way.
  */
 
-/** Bump when old and new clients can't share a room any more. */
-export const PROTOCOL_VERSION = 2
+/**
+ * Bump when old and new clients can't share a room any more. 3: one
+ * connection a pair, the low-latency engine's, so no `ll` flag and no link kinds.
+ */
+export const PROTOCOL_VERSION = 3
 export const MAX_NAME_LENGTH = 32
 export const MAX_MEMBERS = 12
-/** Longest message either side will send or accept. An audio offer is ~3 KB. */
+/** Longest message either side will send or accept. An offer is ~1 KB. */
 export const MAX_MESSAGE_CHARS = 16 * 1024
 const MAX_SDP_CHARS = 12 * 1024
 const MAX_CANDIDATE_CHARS = 1024
@@ -45,14 +48,9 @@ export interface Member {
   joinedAt: number
   muted: boolean
   deafened: boolean
-  /** Has the experimental low-latency engine on (pairs who both do use it). */
-  ll: boolean
   /** Lost touch with the room and has a few seconds to come back before they're dropped. */
   away: boolean
 }
-
-/** Each pair has a voice connection, and a second one for the low-latency engine when both have it on. */
-export type LinkKind = 'voice' | 'll'
 
 export interface SessionDescription {
   type: 'offer' | 'answer'
@@ -67,14 +65,11 @@ export interface IceCandidate {
 }
 
 /**
- * One step of setting up (or tearing down) a peer connection. `link` is a
- * fresh id the offerer picks for each connection, so a late message for an
- * old one never lands on its replacement.
+ * One step of setting up (or tearing down) a pair's peer connection. `link`
+ * is a fresh id the offerer picks for each connection, so a late message for
+ * an old one never lands on its replacement.
  */
-export type Signal =
-  | { kind: LinkKind; link: string; sdp: SessionDescription }
-  | { kind: LinkKind; link: string; ice: IceCandidate }
-  | { kind: LinkKind; link: string; bye: true }
+export type Signal = { link: string; sdp: SessionDescription } | { link: string; ice: IceCandidate } | { link: string; bye: true }
 
 export type ClientMsg =
   /**
@@ -84,8 +79,8 @@ export type ClientMsg =
    * meanwhile (a deploy restarts every room) is then made again, and they
    * keep their place in line.
    */
-  | { t: 'hello'; v: number; key: string; name: string; muted: boolean; deafened: boolean; ll: boolean; resume: number | null }
-  | { t: 'state'; muted: boolean; deafened: boolean; ll: boolean }
+  | { t: 'hello'; v: number; key: string; name: string; muted: boolean; deafened: boolean; resume: number | null }
+  | { t: 'state'; muted: boolean; deafened: boolean }
   | { t: 'signal'; to: string; signal: Signal }
   | { t: 'leave' }
 
@@ -158,13 +153,13 @@ export function cleanName(name: unknown): string {
 /** Rebuilds a signal from known fields only, so nothing else is ever passed along. */
 export function parseSignal(raw: unknown): Signal | null {
   if (!isObj(raw)) return null
-  const { kind, link } = raw
-  if ((kind !== 'voice' && kind !== 'll') || !isLinkId(link)) return null
-  if (raw.bye === true) return { kind, link, bye: true }
+  const { link } = raw
+  if (!isLinkId(link)) return null
+  if (raw.bye === true) return { link, bye: true }
   if (isObj(raw.sdp)) {
     const { type, sdp } = raw.sdp
     if ((type !== 'offer' && type !== 'answer') || !isStr(sdp, MAX_SDP_CHARS) || !sdp) return null
-    return { kind, link, sdp: { type, sdp } }
+    return { link, sdp: { type, sdp } }
   }
   if (isObj(raw.ice)) {
     const { candidate, sdpMid, sdpMLineIndex, usernameFragment } = raw.ice
@@ -173,7 +168,6 @@ export function parseSignal(raw: unknown): Signal | null {
     if (sdpMLineIndex != null && !(Number.isInteger(sdpMLineIndex) && (sdpMLineIndex as number) >= 0 && (sdpMLineIndex as number) < 64)) return null
     if (usernameFragment != null && !isStr(usernameFragment, 256)) return null
     return {
-      kind,
       link,
       ice: {
         candidate,
@@ -191,14 +185,14 @@ export function parseClientMsg(raw: unknown): ClientMsg | null {
   switch (raw.t) {
     case 'hello': {
       const name = cleanName(raw.name)
-      if (!isNum(raw.v) || !isMemberKey(raw.key) || !name || !isBool(raw.muted) || !isBool(raw.deafened) || !isBool(raw.ll)) return null
+      if (!isNum(raw.v) || !isMemberKey(raw.key) || !name || !isBool(raw.muted) || !isBool(raw.deafened)) return null
       const resume = raw.resume === null ? null : isNum(raw.resume) ? raw.resume : undefined
       if (resume === undefined) return null
-      return { t: 'hello', v: raw.v, key: raw.key, name, muted: raw.muted, deafened: raw.deafened, ll: raw.ll, resume }
+      return { t: 'hello', v: raw.v, key: raw.key, name, muted: raw.muted, deafened: raw.deafened, resume }
     }
     case 'state':
-      if (!isBool(raw.muted) || !isBool(raw.deafened) || !isBool(raw.ll)) return null
-      return { t: 'state', muted: raw.muted, deafened: raw.deafened, ll: raw.ll }
+      if (!isBool(raw.muted) || !isBool(raw.deafened)) return null
+      return { t: 'state', muted: raw.muted, deafened: raw.deafened }
     case 'signal': {
       const signal = parseSignal(raw.signal)
       return isMemberId(raw.to) && signal ? { t: 'signal', to: raw.to, signal } : null
@@ -214,8 +208,8 @@ function parseMember(raw: unknown): Member | null {
   if (!isObj(raw)) return null
   const name = cleanName(raw.name)
   if (!isMemberId(raw.id) || !name || !isNum(raw.joinedAt)) return null
-  if (!isBool(raw.muted) || !isBool(raw.deafened) || !isBool(raw.ll) || !isBool(raw.away)) return null
-  return { id: raw.id, name, joinedAt: raw.joinedAt, muted: raw.muted, deafened: raw.deafened, ll: raw.ll, away: raw.away }
+  if (!isBool(raw.muted) || !isBool(raw.deafened) || !isBool(raw.away)) return null
+  return { id: raw.id, name, joinedAt: raw.joinedAt, muted: raw.muted, deafened: raw.deafened, away: raw.away }
 }
 
 export function parseServerMsg(raw: unknown): ServerMsg | null {

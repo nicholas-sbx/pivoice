@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { AudioEngine, type SpatialMode } from '../audio/engine'
-import { applyMicPrefs, call, getEngine, getNative, llSupported, micLevel, setAppDevices, setDtx, setOutput, setSpatial, startMicTest, stopMicTest, type TestPath } from '../call'
+import { applyMicPrefs, call, getEngine, getNative, micLevel, setAppDevices, setOutput, setSpatial, startMicTest, stopMicTest, type TestPath } from '../call'
 import { DEFAULT_PREFS } from '../lib/prefs'
 import { isNative, native } from '../native/bridge'
 import Segmented from './Segmented.vue'
@@ -18,7 +18,7 @@ import { vSnap } from '../lib/snap'
 const emit = defineEmits<{ close: [] }>()
 
 const el = ref<HTMLElement>()
-const tab = ref<'voice' | 'll' | 'overlay'>('voice')
+const tab = ref<'voice' | 'latency' | 'overlay'>('voice')
 const inputs = ref<MediaDeviceInfo[]>([])
 const outputs = ref<MediaDeviceInfo[]>([])
 const level = ref(0)
@@ -76,12 +76,10 @@ const modes: { value: SpatialMode; label: string; hint: string }[] = [
 ]
 const modeHint = computed(() => modes.find(m => m.value === call.prefs.spatial)?.hint)
 
-const testPaths = computed<{ value: TestPath; label: string }[]>(() => [
+const testPaths: { value: TestPath; label: string }[] = [
   { value: 'raw', label: 'Raw' },
-  // The app has no WebRTC audio stack of its own to test.
-  ...(isNative ? [] : [{ value: 'webrtc' as const, label: 'WebRTC audio' }]),
-  ...(llSupported ? [{ value: 'll' as const, label: 'Low latency' }] : [])
-])
+  { value: 'll', label: 'As in a call' }
+]
 function pickPath(v: TestPath) {
   if (call.test.on) void startMicTest(v)
   else call.test.path = v
@@ -90,8 +88,7 @@ const testHints: Record<TestPath, string> = {
   raw: isNative
     ? 'Mic straight to your ears inside the sound card’s own callback, like pw-loopback. The floor every path sits on.'
     : 'Mic straight to your ears: your devices and the browser’s buffers. The floor every path sits on.',
-  webrtc: 'Through WebRTC’s encoder, jitter buffer and playout, exactly as a call, minus the network.',
-  ll: 'Through the low-latency engine: its silence gate, encoder, packets, decoder and jitter buffer, minus the network.'
+  ll: 'Through everything a call does: the silence gate, packets and jitter buffer, minus the network.'
 }
 
 const processing = [
@@ -167,8 +164,8 @@ onBeforeUnmount(() => {
     </header>
     <nav class="tabs" role="tablist">
       <button type="button" role="tab" :aria-selected="tab === 'voice'" :class="{ active: tab === 'voice' }" @click="tab = 'voice'">Voice</button>
-      <button type="button" role="tab" :aria-selected="tab === 'll'" :class="{ active: tab === 'll' }" @click="tab = 'll'">
-        Low Latency <span class="badge">Beta</span>
+      <button type="button" role="tab" :aria-selected="tab === 'latency'" :class="{ active: tab === 'latency' }" @click="tab = 'latency'">
+        Latency
       </button>
       <button
         v-if="overlaySupported"
@@ -181,7 +178,7 @@ onBeforeUnmount(() => {
         Overlay
       </button>
     </nav>
-    <LLSettings v-if="tab === 'll'" />
+    <LLSettings v-if="tab === 'latency'" />
     <OverlaySettings v-else-if="tab === 'overlay'" />
     <template v-else>
 
@@ -363,12 +360,6 @@ onBeforeUnmount(() => {
       />
       <p class="note">The browser's own. All three off is the lowest latency: the browser hands your mic over untouched. Echo cancellation is for when you're not on headphones.</p>
       </template>
-      <Switch
-        label="Silence Suppression (DTX)"
-        hint="People stop sending you audio while they're quiet. Saves bandwidth, adds ~9 ms of buffering. Changing it reconnects you for a moment."
-        :model-value="call.prefs.dtx"
-        @update:model-value="setDtx"
-      />
     </div>
     </template>
   </div>
@@ -430,16 +421,6 @@ onBeforeUnmount(() => {
 .tabs button.active {
   color: var(--header-primary);
   border-bottom-color: var(--brand);
-}
-.badge {
-  margin-left: 4px;
-  padding: 1px 5px;
-  border-radius: 8px;
-  background: var(--brand);
-  color: #fff;
-  font-size: 10px;
-  font-weight: 700;
-  vertical-align: 2px;
 }
 header {
   display: flex;

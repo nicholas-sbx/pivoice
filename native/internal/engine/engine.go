@@ -22,6 +22,8 @@ const LoopID = "__loop"
 const (
 	levelsEvery = 50 * time.Millisecond
 	pingEvery   = time.Second
+	// A room holds 12 people; links come and go, but never anywhere near this many at once.
+	maxLinks = 64
 )
 
 type Options struct {
@@ -62,7 +64,6 @@ type Engine struct {
 	deafened  atomic.Bool
 	capturing atomic.Bool
 	rawLoop   atomic.Bool
-	dtx       atomic.Bool
 	jitter    atomic.Pointer[jitterCfg]
 	llConfig  atomic.Pointer[proto.LLConfig]
 	targets   atomic.Pointer[targets]
@@ -96,7 +97,7 @@ func New(opts Options) *Engine {
 	for range capSlots {
 		e.capFree <- make([]float32, 0, 1024)
 	}
-	e.mixer = &mixer{e: e}
+	e.mixer = &mixer{e: e, mix: make([]float32, audio.MaxBlock)}
 	e.remotes.Store(&[]*remote{})
 	e.targets.Store(&targets{})
 	llc := proto.DefaultLL
@@ -211,10 +212,9 @@ func (e *Engine) setLL(c proto.LLConfig) {
 }
 
 func (e *Engine) configure(c proto.Config) {
+	c.LL, c.Processing = c.LL.Sanitize(), c.Processing.Sanitize()
 	e.setLL(c.LL)
 	e.setProcessing(c.Processing)
-	// Applies to links made from now on: it's in the SDP (the page reconnects you when it changes).
-	e.dtx.Store(c.DTX)
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	devicesChanged := c.InputID != e.cfg.InputID || c.OutputID != e.cfg.OutputID
@@ -267,7 +267,7 @@ func (e *Engine) peer(m proto.In) {
 	if m.Silenced != nil {
 		p.silenced = *m.Silenced
 	}
-	if m.Angle != nil {
+	if m.Angle != nil && !math.IsNaN(*m.Angle) && !math.IsInf(*m.Angle, 0) {
 		p.angle = *m.Angle
 	}
 	if r := e.people[m.ID]; r != nil {
@@ -373,40 +373,25 @@ func (e *Engine) attach(l *link) {
 		e.people[l.peer] = r
 		e.applyPrefsLocked(l.peer, r)
 	}
-	if l.kind == "ll" {
-		r.ll.Store(l.src)
-	} else {
-		r.voice.Store(l.src)
-	}
+	r.src.Store(l.src)
 	e.publishLocked()
 	e.rebuildLocked()
 }
 
 // rebuildLocked works out who gets what we say, the way the browser does
-// (updateSenders in session.ts, send() in worker.ts): nobody while we're
-// muted, nobody who's deafened, and people on the low-latency engine
-// don't get it twice over the call.
+// (send() in worker.ts): nobody while we're muted, nobody who's deafened.
 func (e *Engine) rebuildLocked() {
 	t := &targets{muted: e.muted}
-	llUp := map[string]bool{}
 	for _, l := range e.links {
-		if l.kind == "ll" && l.up.Load() {
-			llUp[l.peer] = true
-			if !e.deafSet[l.peer] {
-				t.ll = append(t.ll, l)
-			}
-		}
-	}
-	for _, l := range e.links {
-		if l.kind == "voice" && l.up.Load() && !e.deafSet[l.peer] && !llUp[l.peer] {
-			t.voice = append(t.voice, l)
+		if l.up.Load() && !e.deafSet[l.peer] {
+			t.ll = append(t.ll, l)
 		}
 	}
 	if e.loop != nil {
-		t.loop = e.loop.ll.Load()
+		t.loop = e.loop.src.Load()
 	}
 	e.targets.Store(t)
-	e.capturing.Store(e.stream != nil && (t.loop != nil || (!t.muted && (len(t.ll) > 0 || len(t.voice) > 0))))
+	e.capturing.Store(e.stream != nil && (t.loop != nil || (!t.muted && len(t.ll) > 0)))
 }
 
 func (e *Engine) rebuildTargets() {
@@ -425,10 +410,16 @@ func (e *Engine) linkOp(m proto.In) {
 			e.mu.Unlock()
 			return
 		}
+		if len(e.links) >= maxLinks {
+			e.mu.Unlock()
+			log.Printf("link %s: already %d links", m.Link, maxLinks)
+			e.emit(proto.LinkState{T: "link", Link: m.Link, State: "closed"})
+			return
+		}
 		e.mu.Unlock()
 		l, err := e.openLink(m)
 		if err != nil {
-			log.Printf("%s link %s: %v", m.Kind, m.Link, err)
+			log.Printf("link %s: %v", m.Link, err)
 			e.emit(proto.LinkState{T: "link", Link: m.Link, State: "closed"})
 			return
 		}
@@ -461,9 +452,8 @@ func (e *Engine) closeLinkLocked(id string) {
 	delete(e.links, id)
 	l.close()
 	if r := e.people[l.peer]; r != nil {
-		r.ll.CompareAndSwap(l.src, nil)
-		r.voice.CompareAndSwap(l.src, nil)
-		if r.ll.Load() == nil && r.voice.Load() == nil {
+		r.src.CompareAndSwap(l.src, nil)
+		if r.src.Load() == nil {
 			delete(e.people, l.peer)
 		}
 	}
@@ -477,7 +467,7 @@ func (e *Engine) pinger() {
 		e.mu.Lock()
 		var up []*link
 		for _, l := range e.links {
-			if l.kind == "ll" && l.up.Load() {
+			if l.up.Load() {
 				up = append(up, l)
 			}
 		}
@@ -580,7 +570,7 @@ func (e *Engine) startTestLocked(path string) {
 	case "ll":
 		r := newRemote(LoopID)
 		r.test = true
-		r.ll.Store(newSource())
+		r.src.Store(newSource())
 		e.loop = r
 		e.publishLocked()
 		e.rebuildLocked()

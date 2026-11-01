@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -104,9 +105,14 @@ func TestHello(t *testing.T) {
 	if m["t"] != "hello" || m["version"] != "1.2.3" || m["protocol"] != float64(proto.Protocol) {
 		t.Fatalf("hello: %v", m)
 	}
-	send(t, c, proto.In{T: "devices"})
+	send(t, c, proto.In{T: "devices", Token: b.Token})
 	if m, err := read(c); err != nil || m["t"] != "devices" {
 		t.Fatalf("devices: %v %v", m, err)
+	}
+	// After hello too, nothing without the token: in the window, any frame of the page could be talking.
+	send(t, c, proto.In{T: "devices"})
+	if m, err := read(c); err == nil {
+		t.Fatalf("answered a message without the token: %v", m)
 	}
 }
 
@@ -123,7 +129,7 @@ func TestOtherProtocolOnlyGetsHello(t *testing.T) {
 	if m, err := read(c); err != nil || m["t"] != "hello" {
 		t.Fatalf("hello: %v %v", m, err)
 	}
-	send(t, c, proto.In{T: "audio", On: true})
+	send(t, c, proto.In{T: "audio", On: true, Token: b.Token})
 	if m, err := read(c); err == nil {
 		t.Fatalf("answered a page on another protocol: %v", m)
 	}
@@ -169,9 +175,9 @@ func TestOverlay(t *testing.T) {
 	if got := <-ov.calls; got != "reset" {
 		t.Fatalf("a fresh page should reset the overlay first, got %q", got)
 	}
-	send(t, c, proto.In{T: "overlay", Op: "show", Place: &proto.OverlayPlace{Anchor: "bottom-left"}})
-	send(t, c, proto.In{T: "overlay", Op: "state", State: json.RawMessage(`{"selfId":"me"}`)})
-	send(t, c, proto.In{T: "monitors"})
+	send(t, c, proto.In{T: "overlay", Op: "show", Place: &proto.OverlayPlace{Anchor: "bottom-left"}, Token: b.Token})
+	send(t, c, proto.In{T: "overlay", Op: "state", State: json.RawMessage(`{"selfId":"me"}`), Token: b.Token})
+	send(t, c, proto.In{T: "monitors", Token: b.Token})
 	for _, want := range []string{"show bottom-left", `state {"selfId":"me"}`} {
 		if got := <-ov.calls; got != want {
 			t.Fatalf("got %q, want %q (nothing before hello should have got through)", got, want)
@@ -185,5 +191,31 @@ func TestOverlay(t *testing.T) {
 		if err != nil {
 			t.Fatalf("no %s answer: %v", want, err)
 		}
+	}
+}
+
+// --browser's link: on to the page once, then never again.
+func TestStartURLWorksOnce(t *testing.T) {
+	b, _ := serve(t)
+	start := b.StartURL("https://site.example/#native=1.secret")
+	if strings.Contains(start, "secret") {
+		t.Fatalf("the token is in the start link: %s", start)
+	}
+	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	res, err := client.Get(start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode != http.StatusSeeOther || res.Header.Get("Location") != "https://site.example/#native=1.secret" {
+		t.Fatalf("first time: %d %q", res.StatusCode, res.Header.Get("Location"))
+	}
+	res, err = client.Get(start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode != http.StatusNotFound {
+		t.Fatalf("second time: %d", res.StatusCode)
 	}
 }

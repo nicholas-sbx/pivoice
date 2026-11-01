@@ -98,7 +98,6 @@ const hello = (key: string, extra: Record<string, unknown> = {}) => ({
   name: 'Ada',
   muted: false,
   deafened: false,
-  ll: false,
   resume: null,
   ...extra
 })
@@ -127,7 +126,7 @@ describe('room', () => {
     const { ws, id } = await join()
     expect(ws.closed).toBeNull()
     expect(ws.last('welcome')).toEqual({ t: 'welcome', id })
-    expect(roster(ws)).toEqual([{ id, name: 'Ada', joinedAt: Date.now(), muted: false, deafened: false, ll: false, away: false }])
+    expect(roster(ws)).toEqual([{ id, name: 'Ada', joinedAt: Date.now(), muted: false, deafened: false, away: false }])
     // Taken now: nobody else can claim the code.
     expect(await room.reserve()).toBe(false)
   })
@@ -143,12 +142,12 @@ describe('room', () => {
     const a = await join()
     const b = await join()
     expect(roster(a.ws).map(m => m.id)).toEqual([a.id, b.id])
-    await say(a.ws, { t: 'signal', to: b.id, from: 'forged', signal: { kind: 'voice', link, sdp: { type: 'offer', sdp: 'v=0' } } })
-    expect(b.ws.last('signal')).toEqual({ t: 'signal', from: a.id, signal: { kind: 'voice', link, sdp: { type: 'offer', sdp: 'v=0' } } })
+    await say(a.ws, { t: 'signal', to: b.id, from: 'forged', signal: { link, sdp: { type: 'offer', sdp: 'v=0' } } })
+    expect(b.ws.last('signal')).toEqual({ t: 'signal', from: a.id, signal: { link, sdp: { type: 'offer', sdp: 'v=0' } } })
     // To nobody in particular, or themselves: nothing.
     const before = a.ws.sent.length + b.ws.sent.length
-    await say(a.ws, { t: 'signal', to: 'f'.repeat(32), signal: { kind: 'voice', link, bye: true } })
-    await say(a.ws, { t: 'signal', to: a.id, signal: { kind: 'voice', link, bye: true } })
+    await say(a.ws, { t: 'signal', to: 'f'.repeat(32), signal: { link, bye: true } })
+    await say(a.ws, { t: 'signal', to: a.id, signal: { link, bye: true } })
     expect(a.ws.sent.length + b.ws.sent.length).toBe(before)
     expect(a.ws.closed).toBeNull()
   })
@@ -157,14 +156,14 @@ describe('room', () => {
     await room.reserve()
     const a = await join()
     const b = await join()
-    await say(b.ws, { t: 'state', muted: true, deafened: false, ll: true })
-    expect(roster(a.ws).find(m => m.id === b.id)).toMatchObject({ muted: true, ll: true })
+    await say(b.ws, { t: 'state', muted: true, deafened: false })
+    expect(roster(a.ws).find(m => m.id === b.id)).toMatchObject({ muted: true })
   })
 
   it('wants a hello first, and well-formed messages always', async () => {
     await room.reserve()
     const ws = connect()
-    await say(ws, { t: 'state', muted: true, deafened: false, ll: false })
+    await say(ws, { t: 'state', muted: true, deafened: false })
     expect(ws.closed?.code).toBe(CLOSE.bad)
     const ws2 = connect()
     await say(ws2, '{not json')
@@ -260,11 +259,48 @@ describe('room', () => {
     expect(ws.closed?.code).toBe(CLOSE.bad)
   })
 
+  it('wakes for a silent socket when its time to say hello is up, not at the next sweep', async () => {
+    await room.reserve()
+    await join()
+    const b = await join()
+    const silent = connect()
+    await say(b.ws, { t: 'leave' })
+    expect(state.alarmAt).toBe(Date.now() + 10_000)
+    vi.advanceTimersByTime(10_001)
+    await room.alarm()
+    expect(silent.closed?.code).toBe(CLOSE.bad)
+  })
+
+  it('turns sockets away while a roomful are still to say hello', async () => {
+    await room.reserve()
+    for (let i = 0; i < MAX_MEMBERS; i++) connect()
+    const upgrade = () => room.fetch(new Request('http://room/', { headers: { Upgrade: 'websocket' } }))
+    expect((await upgrade()).status).toBe(503)
+  })
+
+  it('passes only so many signals from one person to another', async () => {
+    await room.reserve()
+    const a = await join()
+    const b = await join()
+    const c = await join()
+    for (let i = 0; i < 100; i++) await say(a.ws, { t: 'signal', to: b.id, signal: { link, bye: true } })
+    const got = b.ws.msgs().filter(m => m.t === 'signal').length
+    expect(got).toBe(60)
+    expect(a.ws.closed).toBeNull()
+    // Someone else is a different pair.
+    await say(a.ws, { t: 'signal', to: c.id, signal: { link, bye: true } })
+    expect(c.ws.last('signal')).toBeDefined()
+    // And it refills.
+    vi.advanceTimersByTime(1000)
+    await say(a.ws, { t: 'signal', to: b.id, signal: { link, bye: true } })
+    expect(b.ws.msgs().filter(m => m.t === 'signal').length).toBe(61)
+  })
+
   it('cuts off a flood', async () => {
     await room.reserve()
     const a = await join()
     const b = await join()
-    for (let i = 0; i < 400 && !a.ws.closed; i++) await say(a.ws, { t: 'signal', to: b.id, signal: { kind: 'voice', link, bye: true } })
+    for (let i = 0; i < 400 && !a.ws.closed; i++) await say(a.ws, { t: 'signal', to: b.id, signal: { link, bye: true } })
     expect(a.ws.closed?.code).toBe(CLOSE.slow)
   })
 })

@@ -1,21 +1,21 @@
 #!/usr/bin/env bash
 # Builds the app's C libraries as static ones into build/deps (or DEPS_DIR):
-# PortAudio and Opus, and for the mic's processing RNNoise (noise
-# suppression) and SpeexDSP (echo cancellation). So the app needs nothing
+# PortAudio, and for the mic's processing RNNoise (noise suppression) and
+# SpeexDSP (echo cancellation). None of them ever sees a byte anyone else
+# sent: what comes over the network is raw PCM, read in Go (see the
+# README, "Why no Opus"). So the app needs nothing
 # from the system but its webview and its sound server (on Linux even ALSA
 # is only looked for when the app starts: PA_ALSA_DYNAMIC). Then build
 # with STATIC_AUDIO=1 ./build.sh. CI does both.
 #
-# ./deps.sh [library…] builds just those (opus portaudio rnnoise speexdsp);
-# CI's tests use the system's PortAudio and Opus and only these two.
+# ./deps.sh [library…] builds just those (portaudio rnnoise speexdsp);
+# CI's tests use the system's PortAudio and only these two.
 #
 # Needs cmake, a C compiler, curl and git. CMAKE_ARGS adds to every cmake
 # configure (CI: one macOS architecture at a time, each into its own DEPS_DIR).
 set -euo pipefail
 cd "$(dirname "$0")"
 
-OPUS_VERSION=1.5.2
-OPUS_SHA256=65c1d2f78b9f2fb20082c38cbe47c951ad5839345876e46941612ee87f9a7ce1
 PA_TAG=v19.7.0
 PA_COMMIT=147dd722548358763a8b649b3e4b41dfffbcfbb6
 RNNOISE_VERSION=0.2
@@ -24,15 +24,28 @@ SPEEXDSP_TAG=SpeexDSP-1.2.1
 SPEEXDSP_COMMIT=1b28a0f61bc31162979e1f26f3981fc3637095c8
 
 want=("$@")
-[[ ${#want[@]} -gt 0 ]] || want=(opus portaudio rnnoise speexdsp)
+[[ ${#want[@]} -gt 0 ]] || want=(portaudio rnnoise speexdsp)
 wants() { [[ " ${want[*]} " == *" $1 "* ]]; }
 
 prefix=${DEPS_DIR:-$PWD/deps}
 src=$prefix-src
 rm -rf "$prefix" "$src"
 mkdir -p "$src"
+# The usual hardening, where the toolchain has it without extra runtime
+# libraries: bounds-checked libc calls, stack canaries, and on Linux stack
+# clash probes and (x86) control-flow protection. Not on Windows: MinGW's
+# canaries and fortify need libssp, one more DLL or static library to carry.
+case "$(uname -s)" in
+  Linux)
+    harden="-D_FORTIFY_SOURCE=2 -fstack-protector-strong -fstack-clash-protection"
+    [[ $(uname -m) == x86_64 ]] && harden+=" -fcf-protection"
+    ;;
+  Darwin) harden="-D_FORTIFY_SOURCE=2 -fstack-protector-strong" ;;
+  *) harden="" ;;
+esac
 # shellcheck disable=SC2206
-common=(-DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$prefix" -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_POSITION_INDEPENDENT_CODE=ON ${CMAKE_ARGS:-})
+common=(-DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$prefix" -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_POSITION_INDEPENDENT_CODE=ON
+  "-DCMAKE_C_FLAGS=${CFLAGS:-} $harden" ${CMAKE_ARGS:-})
 
 sha256() { if command -v sha256sum >/dev/null; then sha256sum "$1" | cut -d' ' -f1; else shasum -a 256 "$1" | cut -d' ' -f1; fi; }
 
@@ -52,18 +65,6 @@ Libs: -L\${libdir} -l$1 -lm
 Cflags: -I\${includedir}
 EOF
 }
-
-if wants opus; then
-echo "== Opus $OPUS_VERSION"
-curl -sSfL "https://github.com/xiph/opus/releases/download/v$OPUS_VERSION/opus-$OPUS_VERSION.tar.gz" -o "$src/opus.tar.gz"
-got=$(sha256 "$src/opus.tar.gz")
-[[ $got == "$OPUS_SHA256" ]] || { echo "opus tarball checksum mismatch: $got" >&2; exit 1; }
-tar -xzf "$src/opus.tar.gz" -C "$src"
-cmake -S "$src/opus-$OPUS_VERSION" -B "$src/opus-build" "${common[@]}" \
-  -DOPUS_BUILD_SHARED_LIBRARY=OFF -DOPUS_BUILD_TESTING=OFF -DOPUS_BUILD_PROGRAMS=OFF
-cmake --build "$src/opus-build" --config Release --parallel
-cmake --install "$src/opus-build" --config Release
-fi
 
 if wants portaudio; then
 echo "== PortAudio $PA_TAG"

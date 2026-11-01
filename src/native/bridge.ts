@@ -81,6 +81,8 @@ export const isNative = where !== null
 
 export class NativeBridge {
   private transport: Transport | null = null
+  /** The app's token: on every message, so nothing but this page (a frame inside it, say) can speak for it. */
+  private token = ''
   private listeners = new Set<(m: FromApp) => void>()
 
   constructor(
@@ -120,6 +122,7 @@ export class NativeBridge {
 
   private open(hello: (token: string) => void, lost: () => void) {
     if (where?.kind === 'window') {
+      this.token = window.__pivoiceNative!.token
       const api = window.__pivoiceNative!
       api.onmessage = msg => this.dispatch(msg)
       this.transport = { send: s => api.send(s), close: () => (api.onmessage = null) }
@@ -129,6 +132,7 @@ export class NativeBridge {
       return
     }
     if (where?.kind !== 'socket') return lost()
+    this.token = where.token
     const ws = new WebSocket(`ws://127.0.0.1:${where.port}/bridge`)
     this.transport = { send: s => ws.readyState === WebSocket.OPEN && ws.send(s), close: () => ws.close() }
     ws.onopen = () => hello(where.token)
@@ -163,7 +167,7 @@ export class NativeBridge {
   }
 
   send(msg: ToApp) {
-    this.transport?.send(JSON.stringify(msg))
+    this.transport?.send(JSON.stringify({ ...msg, token: this.token }))
   }
 
   on(listener: (m: FromApp) => void): () => void {

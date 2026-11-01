@@ -14,7 +14,8 @@ no-retransmit data channel (src/audio/ll/packet.ts).
 
 	u8  version (1)
 	u8  flags   bit 0: a capture-time stamp follows
-	            bit 1: frames are raw 16-bit little-endian PCM, not Opus
+	            bit 1: frames are raw 16-bit little-endian PCM (always, now:
+	                   Opus without it is dropped, see the README's "Why no Opus")
 	u8  frame count n
 	[f64 capture time of the newest frame, ms since the epoch]   if flagged
 	n × { u32 timestamp (sender's 48 kHz sample clock), u16 length, bytes }

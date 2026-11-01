@@ -1,7 +1,7 @@
 import type { LLConfig } from '../audio/ll/config'
 import type { SpatialMode } from '../audio/engine'
 import type { Placed } from '../lib/seats'
-import type { IceCandidate, LinkKind, Member, SessionDescription } from '../net/protocol'
+import type { IceCandidate, Member, SessionDescription } from '../net/protocol'
 import type { LinkStats } from '../net/stats'
 
 /**
@@ -11,18 +11,21 @@ import type { LinkStats } from '../net/stats'
  * In the app, the page is only the UI: it keeps the room's WebSocket and
  * the call's logic (who calls whom, retries; see net/session.ts), and the
  * app does everything with audio in it: the sound card, the WebRTC
- * connections, encoding, decoding, mixing. Signalling goes through the
+ * connections, mixing. Signalling goes through the
  * page: the app's offers, answers and candidates out to the room, the
  * room's in to the app.
  */
 
-/** Bump with native/internal/proto.Protocol when the two stop understanding each other. */
-export const NATIVE_PROTOCOL = 1
+/**
+ * Bump with native/internal/proto.Protocol when the two stop understanding
+ * each other. 2: no more Opus calls, only the low-latency engine's raw PCM;
+ * every message after hello carries the token (bridge.ts adds it).
+ */
+export const NATIVE_PROTOCOL = 2
 
 export interface AppConfig {
   ll: LLConfig
   spatial: SpatialMode
-  dtx: boolean
   inputId: string
   outputId: string
   /** Windows: WASAPI exclusive mode. */
@@ -48,7 +51,7 @@ export interface ProcessingConfig {
   gainFallMs: number
 }
 
-/** One of our signals' bodies, as the app sends it: the page adds `kind` and `link` for the room. */
+/** One of our signals' bodies, as the app sends it: the page adds `link` for the room. */
 export type AppSignal = { sdp: SessionDescription } | { ice: IceCandidate }
 
 export type ToApp =
@@ -57,7 +60,7 @@ export type ToApp =
   | { t: 'self'; muted: boolean; deafened: boolean }
   | { t: 'members'; members: { id: string; deafened: boolean }[] }
   | { t: 'peer'; id: string; volume?: number; silenced?: boolean; angle?: number }
-  | { t: 'link'; op: 'open'; link: string; peer: string; kind: LinkKind; offerer: boolean; iceServers: RTCIceServer[] }
+  | { t: 'link'; op: 'open'; link: string; peer: string; offerer: boolean; iceServers: RTCIceServer[] }
   | { t: 'link'; op: 'signal'; link: string; signal: AppSignal }
   | { t: 'link'; op: 'close'; link: string }
   | { t: 'audio'; on: boolean }
@@ -187,7 +190,8 @@ export interface AppStats {
 export type FromApp =
   | ({ t: 'hello' } & AppInfo)
   | { t: 'signal'; link: string; signal: AppSignal }
-  | { t: 'link'; link: string; state: 'connected' | 'closed' | 'll-up' | 'll-down' }
+  /** `up` and `down`: the link's audio channel opened or closed. */
+  | { t: 'link'; link: string; state: 'connected' | 'closed' | 'up' | 'down' }
   | { t: 'levels'; self: number; remotes: Record<string, number> }
   | { t: 'audio'; on: boolean; error?: string; micProblem?: 'missing'; info?: AudioInfo }
   | ({ t: 'stats' } & AppStats)

@@ -300,3 +300,14 @@ func TestPullDoesNotAllocate(t *testing.T) {
 		t.Fatalf("Pull allocates %v times a call: it runs on the audio thread", allocs)
 	}
 }
+
+// A flood of frames that all start in the future fills the buffer to MaxFrames and no further.
+func TestJitterBufferHoldsAtMostMaxFrames(t *testing.T) {
+	j := NewJitterBuffer(JitterConfig{SampleRate: 48000, MaxMs: 80, Multiplier: 1, Percentile: 99, WindowSec: 3})
+	for i := range 4 * MaxFrames {
+		j.Push(float64(i*128), make([]float32, 128), 0)
+	}
+	if len(j.frames) != MaxFrames {
+		t.Fatalf("%d frames held, want %d", len(j.frames), MaxFrames)
+	}
+}

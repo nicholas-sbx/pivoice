@@ -1,38 +1,22 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { LL_DEFAULTS, LL_RANGES, type FrameMs, type LLConfig, type OpusApplication, captureFrame, sendDelayMs, type LLCodec } from '../audio/ll/config'
-import { call, getEngine, getNative, llSupported, micLevel, setAppDevices, setOutputBuffer, updateLL } from '../call'
+import { LL_DEFAULTS, LL_RANGES, PCM_FRAME, SEND_DELAY_MS, type LLConfig } from '../audio/ll/config'
+import { call, getEngine, getNative, micLevel, setAppDevices, setOutputBuffer, updateLL } from '../call'
 import { isNative, native } from '../native/bridge'
 import type { AudioInfo, Glitches } from '../native/protocol'
 import Segmented from './Segmented.vue'
 import Slider from './Slider.vue'
 import Switch from './Switch.vue'
 
-/** Every knob of the experimental low-latency engine. All of them apply live. */
+/**
+ * The latency tab: how your voice gets to everyone and theirs to you (the
+ * low-latency engine, the only way there is), every knob of it. All of
+ * them apply live.
+ */
 
 const c = computed(() => call.prefs.ll)
 const set = <K extends keyof LLConfig>(k: K, v: LLConfig[K]) => updateLL({ [k]: v } as Partial<LLConfig>)
 
-const frames: { value: FrameMs; label: string }[] = [
-  { value: 2.5, label: '2.5 ms' },
-  { value: 5, label: '5 ms' },
-  { value: 10, label: '10 ms' },
-  { value: 20, label: '20 ms' }
-]
-const apps: { value: OpusApplication; label: string }[] = [
-  { value: 'lowdelay', label: 'Low delay' },
-  { value: 'voip', label: 'VoIP' },
-  { value: 'audio', label: 'Audio' }
-]
-const appHints: Record<OpusApplication, string> = {
-  lowdelay: 'CELT only: 2.5 ms lookahead. Lowest delay.',
-  voip: 'Tuned for speech: 6.5 ms lookahead. Below 10 ms frames it’s CELT anyway.',
-  audio: 'Tuned for music: 6.5 ms lookahead.'
-}
-const codecs: { value: LLCodec; label: string }[] = [
-  { value: 'opus', label: 'Opus' },
-  { value: 'pcm', label: 'Raw PCM (LAN)' }
-]
 const redundancy: { value: 0 | 1 | 2; label: string }[] = [
   { value: 0, label: 'Off' },
   { value: 1, label: '+1 frame' },
@@ -80,16 +64,14 @@ const glitchRows = computed(() => {
 })
 
 // What these choices cost: fixed delay, and bandwidth per listener.
-const fixedMs = computed(() => +sendDelayMs(c.value).toFixed(1))
-const frameMsNow = computed(() => (captureFrame(c.value) * 1000) / 48_000)
-const packetsPerSecond = computed(() => 1000 / frameMsNow.value)
+const fixedMs = +SEND_DELAY_MS.toFixed(1)
+const packetsPerSecond = 48_000 / PCM_FRAME
 const wireKbps = computed(() => {
-  // PCM: 2 bytes a sample. Opus: whatever the bitrate gives for one frame.
-  const payload =
-    c.value.codec === 'pcm' ? captureFrame(c.value) * 2 : (c.value.bitrateKbps * 1000 * c.value.frameMs) / 1000 / 8
+  // 2 bytes a sample.
+  const payload = PCM_FRAME * 2
   // Our header, plus a rough 80 bytes of SCTP, DTLS, UDP and IP per packet.
   const perPacket = payload * (1 + c.value.redundancy) + 3 + 6 * (1 + c.value.redundancy) + 80
-  return (perPacket * 8 * packetsPerSecond.value) / 1000
+  return (perPacket * 8 * packetsPerSecond) / 1000
 })
 
 const r = LL_RANGES
@@ -109,20 +91,13 @@ const buffer = computed(() => {
 
 <template>
   <div class="ll">
-    <Switch
-      label="Low-Latency Engine (Experimental)"
-      :hint="
-        llSupported
-          ? 'Replaces WebRTC’s audio with people who have it on too: the browser’s Opus at frame sizes WebRTC won’t do, our own jitter buffer, and packets that are never retransmitted.'
-          : 'This browser doesn’t have WebCodecs audio, which the engine needs.'
-      "
-      :model-value="c.enabled && llSupported"
-      @update:model-value="v => set('enabled', v)"
-    />
-
+    <p class="note first">
+      Everyone hears everyone as raw 16-bit PCM, one 2.7 ms block a packet, the moment it’s captured: no codec, no
+      lookahead, and packets that are never retransmitted, with our own jitter buffer at the other end.
+    </p>
     <div class="cost">
-      Fixed delay <strong>{{ fixedMs }} ms</strong> ({{ c.codec === 'pcm' ? 'one block' : 'frame + lookahead' }}) ·
-      {{ packetsPerSecond.toFixed(0) }} packets/s · ≈ {{ wireKbps.toFixed(0) }} kbps per listener ·
+      Fixed delay <strong>{{ fixedMs }} ms</strong> (one block) · {{ packetsPerSecond.toFixed(0) }} packets/s · ≈
+      {{ wireKbps.toFixed(0) }} kbps per listener ·
       <template v-if="isNative">straight from the sound card’s callback</template>
       <template v-else>{{ transport === 'shared' ? 'shared memory' : 'messages' }} between audio thread and worker</template>
     </div>
@@ -158,7 +133,7 @@ const buffer = computed(() => {
       </template>
     </template>
     <template v-else>
-    <span class="eyebrow">Both engines</span>
+    <span class="eyebrow">Output</span>
     <Segmented
       label="Audio output buffer"
       :options="[
@@ -170,40 +145,22 @@ const buffer = computed(() => {
       @update:model-value="setOutputBuffer"
     />
     <p class="note">
-      Web Audio’s buffer to your speakers (this engine always plays through it). Smaller is less delay and steadier timing,
-      but crackles sooner on a busy machine: if this engine sounds choppy, try a bigger one with the Raw mic test. Changing it
+      Web Audio’s buffer to your speakers, which everyone plays through. Smaller is less delay and steadier timing, but
+      crackles sooner on a busy machine: if people sound choppy, try a bigger one with the Raw mic test. Changing it
       reconnects you for a moment.
       <template v-if="buffer"><br />Now: {{ buffer }}</template>
     </p>
     </template>
 
     <span class="eyebrow">Sending</span>
-    <Segmented label="Codec" :options="codecs" :model-value="c.codec" @update:model-value="v => set('codec', v)" />
-    <p class="note">
-      {{
-        c.codec === 'pcm'
-          ? 'Raw 16-bit PCM: no encoder and no lookahead, one 2.7 ms block per packet, as soon as it’s captured. Megabits per listener (see above): for local networks.'
-          : 'The browser’s Opus: a fraction of the bandwidth, at the cost of a frame to fill and the encoder’s lookahead.'
-      }}
-    </p>
-    <template v-if="c.codec === 'opus'">
-    <Segmented label="Frame size" :options="frames" :model-value="c.frameMs" @update:model-value="v => set('frameMs', v)" />
-    <Segmented label="Opus mode" :options="apps" :model-value="c.application" @update:model-value="v => set('application', v)" />
-    <p class="note">{{ appHints[c.application] }}</p>
-    <Slider label="Bitrate" unit=" kbps" :min="r.bitrateKbps[0]" :max="r.bitrateKbps[1]" :step="r.bitrateKbps[2]" :model-value="c.bitrateKbps" @update:model-value="v => set('bitrateKbps', v)" />
-    <Slider
-      label="Encoder complexity"
-      :min="r.complexity[0]"
-      :max="r.complexity[1]"
-      :step="r.complexity[2]"
-      hint="CPU against quality. No effect on delay."
-      :model-value="c.complexity"
-      @update:model-value="v => set('complexity', v)"
-    />
-    </template>
     <Segmented label="Redundancy" :options="redundancy" :model-value="c.redundancy" @update:model-value="v => set('redundancy', v)" />
     <p class="note">Each packet repeats the frames before it, so one lost packet costs nothing. More bandwidth, no extra delay.</p>
-    <Switch label="Silence Suppression (DTX)" hint="Send nothing while you’re quiet." :model-value="c.dtx" @update:model-value="v => set('dtx', v)" />
+    <Switch
+      label="Silence Suppression"
+      hint="Send nothing while you’re quiet, instead of a steady stream of silence to everyone."
+      :model-value="c.dtx"
+      @update:model-value="v => set('dtx', v)"
+    />
     <Slider
       v-if="c.dtx"
       label="Silence threshold"
@@ -277,7 +234,7 @@ const buffer = computed(() => {
       @update:model-value="v => set('concealMs', v)"
     />
 
-    <button type="button" class="reset" @click="updateLL({ ...LL_DEFAULTS, enabled: c.enabled })">Reset to defaults</button>
+    <button type="button" class="reset" @click="updateLL({ ...LL_DEFAULTS })">Reset to defaults</button>
   </div>
 </template>
 
@@ -296,6 +253,9 @@ const buffer = computed(() => {
   margin: 0 0 4px;
   font-size: 12px;
   color: var(--text-muted);
+}
+.note.first {
+  margin-top: 0;
 }
 .cost {
   margin-top: 8px;

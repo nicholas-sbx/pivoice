@@ -1,21 +1,17 @@
 import type { LLRemoteStats } from '../audio/ll/engine'
-import { OPUS_LOOKAHEAD_MS, PTIME_MS } from './sdp'
 
 /**
- * What one call's RTCPeerConnection stats say about the link to that person:
- * ping, the route the audio is taking (same network, straight through the
- * NATs, or bounced off a TURN relay), and what the receiving side is doing
- * to it (jitter buffer, loss, bitrate).
- *
- * Pure: takes the stats report (anything iterable of stats objects) and the
- * snapshot from last time, so rates come from the change since then rather
- * than averages over the whole call.
+ * What the link to one person looks like: ping, the route their audio takes
+ * (same network, straight through the NATs, or bounced off a TURN relay),
+ * and what our end does with it (the low-latency engine's jitter buffer,
+ * loss, bitrate). The route comes from the peer connection's stats
+ * (routeOf); the rest from the engine.
  */
 
 export type RouteKind = 'local' | 'direct' | 'relay'
 
-export interface LinkStats {
-  /** Round trip on the network path the audio uses, ms. */
+export interface RouteStats {
+  /** Round trip on the network path, ms. */
   rttMs: number | null
   route: RouteKind | null
   /** Transport between the two ends of the pair: udp or tcp. */
@@ -27,43 +23,32 @@ export interface LinkStats {
   /** host / srflx / prflx / relay. */
   localType: string | null
   remoteType: string | null
+}
+
+export interface LinkStats extends RouteStats {
   jitterMs: number | null
-  /** Audio packets lost since the last sample, %. */
+  /** Audio concealed (lost or late) since the last sample, %. */
   lossPct: number | null
-  /** How long incoming audio sits in the jitter buffer, ms (since the last sample). */
+  /** How long incoming audio sits in the jitter buffer, ms. */
   bufferMs: number | null
   /** Incoming audio bitrate, kbit/s. */
   kbps: number | null
-  codec: string | null
-  /** From the jitter buffer to your speakers: the browser's playout path, sound card included (Chrome reports it). */
+  /** From the jitter buffer to your speakers: the audio output path, sound card included. */
   playoutMs: number | null
-  /** Microphone to the encoder, as the browser reports it for *your* mic (we can't see theirs). */
+  /** Microphone to us, as the browser reports it for *your* mic (we can't see theirs). */
   captureMs: number | null
-  /** One Opus frame plus its lookahead. */
-  codecMs: number
+  /** Filling one 128-sample block before it goes out. */
+  sendMs: number
   /**
-   * Mouth to ear, best estimate: capture + codec + half the round trip +
-   * jitter buffer + playout. Stages the browser doesn't report count as 0,
-   * so it's a floor rather than a measurement.
+   * Mouth to ear, best estimate: capture + send + half the round trip +
+   * jitter buffer + playout. Stages that aren't reported count as 0, so
+   * it's a floor rather than a measurement.
    */
   mouthToEarMs: number | null
-  /** Which engine is carrying their voice to you. */
-  engine: 'webrtc' | 'll'
   /** Mouth to ear as actually measured from capture timestamps (exact on one machine), ms. */
   measuredMs: number | null
-  /** The low-latency engine's own receive-side numbers, when it's the one in use. */
+  /** The low-latency engine's own receive-side numbers. */
   ll: LLRemoteStats | null
-}
-
-export interface Snapshot {
-  at: number
-  bytes: number
-  lost: number
-  received: number
-  bufferDelay: number
-  bufferEmitted: number
-  playoutDelay: number
-  playoutSamples: number
 }
 
 type Stat = Record<string, unknown> & { type?: unknown; id?: unknown }
@@ -71,11 +56,8 @@ type Stat = Record<string, unknown> & { type?: unknown; id?: unknown }
 const num = (x: unknown): number | null => (typeof x === 'number' && Number.isFinite(x) ? x : null)
 const str = (x: unknown): string | null => (typeof x === 'string' && x ? x : null)
 
-export function summarise(
-  report: Iterable<Stat>,
-  prev?: Snapshot | null,
-  opts: { captureMs?: number | null } = {}
-): { stats: LinkStats; snapshot: Snapshot | null } {
+/** The route and ping, from a peer connection's stats report (anything iterable of stats objects). */
+export function routeOf(report: Iterable<Stat>): RouteStats {
   const byId = new Map<string, Stat>()
   const all: Stat[] = []
   for (const s of report) {
@@ -83,8 +65,8 @@ export function summarise(
     if (typeof s.id === 'string') byId.set(s.id, s)
   }
 
-  // The pair actually carrying the audio: the transport says which (Chrome),
-  // or the pair says it's selected (Firefox), or the nominated, working one.
+  // The pair actually in use: the transport says which (Chrome), or the
+  // pair says it's selected (Firefox), or the nominated, working one.
   let pair: Stat | undefined
   for (const s of all) {
     if (s.type === 'transport' && typeof s.selectedCandidatePairId === 'string') {
@@ -99,14 +81,7 @@ export function summarise(
   const remote = pair && typeof pair.remoteCandidateId === 'string' ? byId.get(pair.remoteCandidateId) : undefined
   const localType = str(local?.candidateType)
   const remoteType = str(remote?.candidateType)
-
-  let rttMs = num(pair?.currentRoundTripTime)
-  if (rttMs === null) {
-    // Firefox doesn't fill currentRoundTripTime in; RTCP's view of it is the next best.
-    const rr = all.find(s => s.type === 'remote-inbound-rtp' && s.kind === 'audio')
-    rttMs = num(rr?.roundTripTime)
-  }
-  if (rttMs !== null) rttMs *= 1000
+  const rtt = num(pair?.currentRoundTripTime)
 
   let route: RouteKind | null = null
   if (localType || remoteType) {
@@ -115,74 +90,15 @@ export function summarise(
     else route = 'direct'
   }
 
-  const inbound = all.find(s => s.type === 'inbound-rtp' && (s.kind === 'audio' || s.mediaType === 'audio'))
-  const codecStat = inbound && typeof inbound.codecId === 'string' ? byId.get(inbound.codecId) : undefined
-  const mime = str(codecStat?.mimeType)
-  const playout =
-    (inbound && typeof inbound.playoutId === 'string' ? byId.get(inbound.playoutId) : undefined) ??
-    all.find(s => s.type === 'media-playout' && s.kind === 'audio')
-
-  let snapshot: Snapshot | null = null
-  let lossPct: number | null = null
-  let bufferMs: number | null = null
-  let kbps: number | null = null
-  let playoutMs: number | null = null
-  const jitter = num(inbound?.jitter)
-  if (inbound) {
-    snapshot = {
-      at: num(inbound.timestamp) ?? Date.now(),
-      bytes: num(inbound.bytesReceived) ?? 0,
-      lost: Math.max(0, num(inbound.packetsLost) ?? 0),
-      received: num(inbound.packetsReceived) ?? 0,
-      bufferDelay: num(inbound.jitterBufferDelay) ?? 0,
-      bufferEmitted: num(inbound.jitterBufferEmittedCount) ?? 0,
-      playoutDelay: num(playout?.totalPlayoutDelay) ?? 0,
-      playoutSamples: num(playout?.totalSamplesCount) ?? 0
-    }
-    const base: Snapshot =
-      prev && prev.at < snapshot.at
-        ? prev
-        : { at: 0, bytes: 0, lost: 0, received: 0, bufferDelay: 0, bufferEmitted: 0, playoutDelay: 0, playoutSamples: 0 }
-    const packets = snapshot.lost - base.lost + (snapshot.received - base.received)
-    if (packets > 0) lossPct = (Math.max(0, snapshot.lost - base.lost) / packets) * 100
-    const emitted = snapshot.bufferEmitted - base.bufferEmitted
-    if (emitted > 0) bufferMs = ((snapshot.bufferDelay - base.bufferDelay) / emitted) * 1000
-    const played = snapshot.playoutSamples - base.playoutSamples
-    if (played > 0) playoutMs = ((snapshot.playoutDelay - base.playoutDelay) / played) * 1000
-    if (base.at > 0) {
-      const seconds = (snapshot.at - base.at) / 1000
-      if (seconds > 0) kbps = ((snapshot.bytes - base.bytes) * 8) / 1000 / seconds
-    }
-  }
-
-  const captureMs = opts.captureMs ?? null
-  const codecMs = PTIME_MS + OPUS_LOOKAHEAD_MS
-  const mouthToEarMs =
-    rttMs !== null && bufferMs !== null ? (captureMs ?? 0) + codecMs + rttMs / 2 + bufferMs + (playoutMs ?? 0) : null
-
   return {
-    stats: {
-      rttMs,
-      route,
-      protocol: str(local?.protocol) ?? str(pair?.protocol),
-      relayProtocol: localType === 'relay' ? str(local?.relayProtocol) : null,
-      relayHost: localType === 'relay' ? hostOf(str(local?.url)) : null,
-      localType,
-      remoteType,
-      jitterMs: jitter === null ? null : jitter * 1000,
-      lossPct,
-      bufferMs,
-      kbps,
-      codec: mime ? mime.replace(/^audio\//i, '').toLowerCase() : null,
-      playoutMs,
-      captureMs,
-      codecMs,
-      mouthToEarMs,
-      engine: 'webrtc',
-      measuredMs: null,
-      ll: null
-    },
-    snapshot
+    // Firefox doesn't fill it in; the engine's own pings stand in.
+    rttMs: rtt === null ? null : rtt * 1000,
+    route,
+    protocol: str(local?.protocol) ?? str(pair?.protocol),
+    relayProtocol: localType === 'relay' ? str(local?.relayProtocol) : null,
+    relayHost: localType === 'relay' ? hostOf(str(local?.url)) : null,
+    localType,
+    remoteType
   }
 }
 
@@ -193,7 +109,7 @@ export function hostOf(url: string | null): string | null {
   return m ? (m[1] ?? m[2]) : null
 }
 
-export function routeLabel(s: LinkStats): string {
+export function routeLabel(s: RouteStats): string {
   switch (s.route) {
     case 'local':
       return 'Same network'
@@ -209,22 +125,4 @@ export function routeLabel(s: LinkStats): string {
 /** Discord's colours for a connection: good, okay, bad. */
 export function pingLevel(ms: number): 'good' | 'ok' | 'bad' {
   return ms < 80 ? 'good' : ms < 160 ? 'ok' : 'bad'
-}
-
-const NTP_EPOCH_OFFSET_MS = 2_208_988_800_000
-
-/**
- * Mouth to ear on the WebRTC path, from the abs-capture-time header (see
- * sdp.ts): when the newest played frame was captured at the sender, when it
- * was handed to our audio output, plus Chrome's figure for the output's own
- * delay. Null when there's no stamp, or the numbers are nonsense (a source
- * that's gone quiet repeats its last frame).
- */
-export function captureToSpeakerMs(src: RTCRtpSynchronizationSource | null | undefined, playoutMs: number | null): number | null {
-  const s = src as (RTCRtpSynchronizationSource & { captureTimestamp?: number }) | null | undefined
-  if (!s?.captureTimestamp) return null
-  // Chrome reports this on the wall clock; the spec says the performance timeline.
-  const delivered = s.timestamp > 1e12 ? s.timestamp : performance.timeOrigin + s.timestamp
-  const ms = delivered - (s.captureTimestamp - NTP_EPOCH_OFFSET_MS) + (playoutMs ?? 0)
-  return ms > -1000 && ms < 5000 ? ms : null
 }

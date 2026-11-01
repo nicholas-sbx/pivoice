@@ -4,7 +4,7 @@
 # (CI passes the repo's VITE_PUBLIC_URL); without it, pass --url when you
 # run it.
 #
-# Needs Go, a C compiler and pkg-config, PortAudio, Opus and SpeexDSP, and
+# Needs Go, a C compiler and pkg-config, PortAudio and SpeexDSP, and
 # RNNoise if you have it (your system's, or static ones from build/deps.sh
 # with STATIC_AUDIO=1, which is how CI makes a binary that runs anywhere),
 # and on Linux WebKitGTK 4.1 and GTK 3. Without RNNoise the app just
@@ -22,6 +22,7 @@ export CGO_ENABLED=1
 
 tags=()
 buildtags=()
+buildmode=()
 [[ ${NOWEBVIEW:-} == 1 ]] && buildtags+=(nowebview)
 ldflags="-s -w -X main.siteURL=${PIVOICE_URL:-}"
 # Link the audio libraries statically (CI): the libraries build/deps.sh made,
@@ -35,6 +36,14 @@ if [[ ${STATIC_AUDIO:-} == 1 ]]; then
     linux) export CGO_LDFLAGS="${CGO_LDFLAGS:-} -lm" ;;
     windows) export CGO_LDFLAGS="${CGO_LDFLAGS:-} -lwinmm -lole32 -luuid -lsetupapi" ;;
   esac
+fi
+# On Linux, a position-independent binary (Go's own default elsewhere) with
+# its relocations read-only once loaded, and our own C hardened the way
+# build/deps.sh builds the libraries.
+if [[ "$(go env GOOS)" == linux ]]; then
+  buildmode=(-buildmode=pie)
+  export CGO_CFLAGS="${CGO_CFLAGS:--g -O2} -D_FORTIFY_SOURCE=2 -fstack-protector-strong -fstack-clash-protection"
+  export CGO_LDFLAGS="${CGO_LDFLAGS:-} -Wl,-z,relro,-z,now"
 fi
 # No console window on Windows. And go.exe and pkg-config.exe are Windows
 # programs: hand them the search path the Windows way, not MSYS2's.
@@ -50,5 +59,5 @@ if ! pkg-config --exists rnnoise; then
 fi
 [[ ${#buildtags[@]} -gt 0 ]] && tags=(-tags "$(IFS=,; echo "${buildtags[*]}")")
 
-go build -trimpath ${tags[@]+"${tags[@]}"} -ldflags "$ldflags" -o "$out" .
+go build -trimpath ${buildmode[@]+"${buildmode[@]}"} ${tags[@]+"${tags[@]}"} -ldflags "$ldflags" -o "$out" .
 echo "built $out ($(du -h "$out" | cut -f1))"

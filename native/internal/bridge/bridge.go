@@ -6,14 +6,19 @@
 //     (webview.Bind / Eval), no network involved at all, so there's no
 //     socket for anything else on the machine to find;
 //   - a WebSocket on 127.0.0.1, for opening the UI in an ordinary browser
-//     (--browser, development, the end-to-end tests).
+//     (--browser, development, the end-to-end tests). --browser opens a
+//     one-time link on the same port (StartURL) that sends the browser on
+//     to the page, so the token is never on a command line.
 //
 // Either way, nothing gets through until the page says hello with the
-// token this run of the app made up (32 random bytes). The app only hands
-// the token to pages on the site's own origin: in the window, through a
-// script that runs before anything else on each page and checks
-// location.origin first; in a browser, in the address's #fragment, which
-// never leaves the machine. Every new page starts unauthenticated again.
+// token this run of the app made up (32 random bytes), and nothing after
+// that without it either: in the window, every frame of the page can reach
+// the bound functions, and only the page itself has the token. The app
+// only hands the token to pages on the site's own origin: in the window,
+// through a script that runs before anything else on each top-level page
+// and checks location.origin first; in a browser, in the address's
+// #fragment, which never leaves the machine. Every new page starts
+// unauthenticated again.
 package bridge
 
 import (
@@ -46,6 +51,11 @@ type Bridge struct {
 
 	mu      sync.Mutex
 	current *Conn
+
+	// Serve's port, and StartURL's one-time links to the page.
+	port    int
+	startMu sync.Mutex
+	starts  map[string]startLink
 }
 
 // Overlay is what the bridge needs of internal/overlay.
@@ -151,7 +161,7 @@ func (c *Conn) handle(m proto.In) {
 			}
 		}
 	case m.T == "hello":
-		if subtle.ConstantTimeCompare([]byte(m.Token), []byte(b.Token)) != 1 {
+		if !b.tokenOK(m.Token) {
 			log.Print("bridge: a page said hello with the wrong token; ignoring it")
 			if c.close != nil {
 				c.close()
@@ -182,13 +192,14 @@ func (c *Conn) handle(m proto.In) {
 			// The page tells the person which of us to update.
 			log.Printf("bridge: the page (site %s) speaks bridge protocol %d and we speak %d", m.Site, m.Protocol, proto.Protocol)
 		}
-	case m.T == "open" && c.authed.Load():
+	case m.T == "open" && c.authed.Load() && b.tokenOK(m.Token):
 		// Only web links, never files or other schemes, and only from a page that has the token.
 		if u, err := url.Parse(m.URL); err == nil && u.Scheme == "https" && u.Host != "" && b.OpenURL != nil {
 			b.OpenURL(u.String())
 		}
-	case !c.authed.Load() || !c.compatible:
-		// Not a word until hello, and nothing at all from a page we can't understand.
+	case !c.authed.Load() || !c.compatible || !b.tokenOK(m.Token):
+		// Not a word until hello, nothing at all from a page we can't
+		// understand, and nothing without the token (a frame in the page).
 	default:
 		b.mu.Lock()
 		current := b.current == c
@@ -203,6 +214,10 @@ func (c *Conn) handle(m proto.In) {
 			b.engine.Handle(m)
 		}
 	}
+}
+
+func (b *Bridge) tokenOK(token string) bool {
+	return subtle.ConstantTimeCompare([]byte(token), []byte(b.Token)) == 1
 }
 
 // overlay: the page asking for the overlay, or what to draw in it.

@@ -4,7 +4,7 @@
 //
 // The page stays the UI and keeps the room's WebSocket; the app does
 // everything with audio in it: the sound card, the WebRTC connections to
-// everyone, encoding, decoding and mixing. Signalling goes through the
+// everyone, and mixing. Signalling goes through the
 // page, which hands the app's offers, answers and candidates to the room
 // and the room's to the app.
 package proto
@@ -13,14 +13,15 @@ import "encoding/json"
 
 // Protocol is bumped whenever the app and the page stop understanding
 // each other. The page refuses an app on a different one, and says which
-// of the two needs updating.
-const Protocol = 1
+// of the two needs updating. 2: no more Opus calls, only the low-latency
+// engine's raw PCM; every message after hello carries the token.
+const Protocol = 2
 
 // In is anything the page sends; T says which fields mean anything.
 type In struct {
 	T string `json:"t"`
 
-	// hello: the token the app gave the page, and the page's own versions.
+	// The token the app gave the page: on hello, and on everything after it.
 	Token    string `json:"token,omitempty"`
 	Site     string `json:"site,omitempty"`
 	Protocol int    `json:"protocol,omitempty"`
@@ -45,7 +46,6 @@ type In struct {
 	Op         string          `json:"op,omitempty"`
 	Link       string          `json:"link,omitempty"`
 	Peer       string          `json:"peer,omitempty"`
-	Kind       string          `json:"kind,omitempty"`
 	Offerer    bool            `json:"offerer,omitempty"`
 	IceServers []IceServer     `json:"iceServers,omitempty"`
 	Signal     json.RawMessage `json:"signal,omitempty"`
@@ -94,12 +94,10 @@ type IceServer struct {
 // Config is the page's settings that the app acts on. LL has the same
 // fields as LLConfig in src/audio/ll/config.ts.
 type Config struct {
-	LL      LLConfig `json:"ll"`
-	Spatial string   `json:"spatial"`
-	// Ask the people calling us to pause while they're quiet (Opus DTX in our SDP).
-	DTX      bool   `json:"dtx"`
-	InputID  string `json:"inputId"`
-	OutputID string `json:"outputId"`
+	LL       LLConfig `json:"ll"`
+	Spatial  string   `json:"spatial"`
+	InputID  string   `json:"inputId"`
+	OutputID string   `json:"outputId"`
 	// Windows: WASAPI exclusive mode, the device to ourselves for its smallest buffers.
 	Exclusive bool `json:"exclusive"`
 	// What the app does to the mic before it goes out (all off: nothing at all).
@@ -127,11 +125,6 @@ type Processing struct {
 }
 
 type LLConfig struct {
-	Codec            string  `json:"codec"`
-	FrameMs          float64 `json:"frameMs"`
-	Application      string  `json:"application"`
-	BitrateKbps      float64 `json:"bitrateKbps"`
-	Complexity       float64 `json:"complexity"`
 	DTX              bool    `json:"dtx"`
 	DTXThresholdDb   float64 `json:"dtxThresholdDb"`
 	DTXHangoverMs    float64 `json:"dtxHangoverMs"`
@@ -148,10 +141,48 @@ type LLConfig struct {
 
 // DefaultLL is LL_DEFAULTS in src/audio/ll/config.ts.
 var DefaultLL = LLConfig{
-	Codec: "pcm", FrameMs: 5, Application: "lowdelay", BitrateKbps: 64, Complexity: 8,
 	DTX: false, DTXThresholdDb: -70, DTXHangoverMs: 400, Redundancy: 0,
 	MinBufferMs: 0, MaxBufferMs: 80, MarginMs: 3, JitterMultiplier: 1, JitterPercentile: 99,
 	JitterWindowSec: 3, StretchPct: 2, ConcealMs: 12,
+}
+
+// Sanitize keeps every number in the range the page's settings allow
+// (LL_RANGES in src/audio/ll/config.ts), and anything that isn't a number
+// at the default: a page can't hand the engine a size it can't use.
+func (c LLConfig) Sanitize() LLConfig {
+	d := DefaultLL
+	c.DTXThresholdDb = clamp(c.DTXThresholdDb, -90, -30, d.DTXThresholdDb)
+	c.DTXHangoverMs = clamp(c.DTXHangoverMs, 50, 1500, d.DTXHangoverMs)
+	c.Redundancy = min(2, max(0, c.Redundancy))
+	c.MinBufferMs = clamp(c.MinBufferMs, 0, 60, d.MinBufferMs)
+	c.MaxBufferMs = max(c.MinBufferMs, clamp(c.MaxBufferMs, 10, 300, d.MaxBufferMs))
+	c.MarginMs = clamp(c.MarginMs, 0, 30, d.MarginMs)
+	c.JitterMultiplier = clamp(c.JitterMultiplier, 0.5, 3, d.JitterMultiplier)
+	c.JitterPercentile = clamp(c.JitterPercentile, 80, 100, d.JitterPercentile)
+	c.JitterWindowSec = clamp(c.JitterWindowSec, 1, 10, d.JitterWindowSec)
+	c.StretchPct = clamp(c.StretchPct, 0, 6, d.StretchPct)
+	c.ConcealMs = clamp(c.ConcealMs, 0, 60, d.ConcealMs)
+	return c
+}
+
+// Sanitize keeps the processing settings to the page's ranges (src/lib/prefs.ts); 0 is still "the default" where it was.
+func (p Processing) Sanitize() Processing {
+	p.GateThreshold = clamp(p.GateThreshold, 0, 1, 0)
+	p.GateGraceMs = clamp(p.GateGraceMs, 0, 2000, 0)
+	p.GainTargetDb = clamp(p.GainTargetDb, -30, 0, 0)
+	p.GainMaxDb = clamp(p.GainMaxDb, 0, 40, 0)
+	p.GainCeilingDb = clamp(p.GainCeilingDb, -20, 0, 0)
+	p.GainRiseMs = clamp(p.GainRiseMs, 0, 10000, 0)
+	p.GainFallMs = clamp(p.GainFallMs, 0, 2000, 0)
+	return p
+}
+
+// clamp v to [lo, hi]; NaN (not something JSON makes, but cheap to rule out) is def.
+func clamp(v, lo, hi, def float64) float64 {
+	if v != v {
+		return def
+	}
+	return min(hi, max(lo, v))
 }
 
 // What the app sends.
@@ -203,7 +234,7 @@ type SignalOut struct {
 	Signal any    `json:"signal"`
 }
 
-// LinkState: "connected", "closed", "ll-up", "ll-down".
+// LinkState: "connected", "closed", and "up" or "down" when the audio channel opens or closes.
 type LinkState struct {
 	T     string `json:"t"` // "link"
 	Link  string `json:"link"`

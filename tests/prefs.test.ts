@@ -69,11 +69,4 @@ describe('mic processing defaults', () => {
     expect(mic(IPHONE, { rev: 2, echoCancellation: false, noiseSuppression: false, autoGainControl: true })).toEqual([false, false, true])
     expect(mic(WINDOWS, { rev: 2, echoCancellation: true, noiseSuppression: true, autoGainControl: false })).toEqual([true, true, false])
   })
-
-  it('still honours a DTX choice saved at rev 1', () => {
-    store.set('pv.prefs', JSON.stringify({ rev: 1, dtx: true }))
-    expect(loadPrefs().dtx).toBe(true)
-    store.set('pv.prefs', JSON.stringify({ dtx: true }))
-    expect(loadPrefs().dtx).toBe(false)
-  })
 })

@@ -4,7 +4,8 @@
  *
  *   u8  version (1)
  *   u8  flags   bit 0: a capture-time stamp follows
- *               bit 1: frames are raw 16-bit little-endian PCM, not Opus
+ *               bit 1: frames are raw 16-bit little-endian PCM (always, now:
+ *                      Opus without it was dropped, see the README's "Why no Opus")
  *   u8  frame count n
  *   [f64 capture time of the newest frame, ms since the epoch]   if flagged
  *   n × { u32 timestamp (sender's 48 kHz sample clock), u16 length, bytes }
@@ -25,6 +26,13 @@ export const PING = 0xf0
 export const PONG = 0xf1
 const FLAG_CAPTURE = 1
 const FLAG_PCM = 2
+/**
+ * What a receiver takes (the app the same, receiveLL in link.go): at most
+ * the new frame and two repeats, none longer than 8 of the 128-sample
+ * blocks everyone sends. Anything more isn't ours.
+ */
+export const MAX_PACKET_FRAMES = 3
+export const MAX_FRAME_BYTES = 8 * 2 * 128
 
 export interface Frame {
   ts: number
