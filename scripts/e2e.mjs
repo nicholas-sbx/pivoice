@@ -356,14 +356,15 @@ try {
   ).catch(async () => {
     throw new Error('Eve should reach Dan as raw PCM (hundreds of kbps): ' + (await cardFor(dan, 'Eve')))
   })
-  // And no media at all: every peer connection carries only the data channel.
+  // And no media at all: every peer connection carries only the data channel (dev builds have the handle to look).
   const media = await dan.evaluate(() =>
     window.__pv
-      .session()
+      ?.session()
       .getLLStats()
       .then(m => [...m.values()].flatMap(r => [...r.values()]).filter(s => s.type === 'inbound-rtp' || s.type === 'outbound-rtp').length)
   )
   if (media) throw new Error(`Dan's connections carry ${media} RTP streams; there should be none`)
+  if (media === undefined) ok('(not a dev build: no look at the RTP streams)')
   await eve.click('button[aria-label="Mute"]')
   await eve.click('button[aria-label="Unmute"]')
   await dan.waitForFunction(

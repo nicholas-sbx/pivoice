@@ -76,16 +76,35 @@ const RESERVE_MS = 60_000
 /** Members plus room for reconnects and people being turned away. */
 const MAX_SOCKETS = MAX_MEMBERS * 2
 /**
+ * Sockets that haven't said hello yet. After a deploy everyone in a room
+ * reconnects at once, so a roomful; any more is someone holding sockets
+ * open to keep the room busy.
+ */
+const MAX_WAITING = MAX_MEMBERS
+/**
  * Per socket. Joining a full room sends an answer and a dozen candidates to
  * each of 11 people in a second or two, so the burst is generous; the
  * steady rate is not.
  */
 const BUCKET_SIZE = 300
 const BUCKET_REFILL_PER_S = 30
+/**
+ * And per person they're signalling to: setting up one link is an offer or
+ * answer and a dozen candidates. A sender past it has its signals to that
+ * person dropped, so a few people together can't flood one.
+ */
+const PAIR_BUCKET_SIZE = 60
+const PAIR_REFILL_PER_S = 5
+
+interface Bucket {
+  tokens: number
+  at: number
+}
 
 export class Room extends DurableObject<Env> {
-  /** Rate limiting. Lost on eviction, which only ever refills it. */
-  private buckets = new WeakMap<WebSocket, { tokens: number; at: number }>()
+  /** Rate limiting, per socket and per socket and who it's signalling. Lost on eviction, which only ever refills them. */
+  private buckets = new WeakMap<WebSocket, Bucket>()
+  private pairBuckets = new WeakMap<WebSocket, Map<string, Bucket>>()
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env)
@@ -106,7 +125,12 @@ export class Room extends DurableObject<Env> {
   /** From the Worker, already checked for origin and rate: a WebSocket upgrade. */
   async fetch(request: Request): Promise<Response> {
     if (request.headers.get('Upgrade')?.toLowerCase() !== 'websocket') return new Response('Expected a WebSocket', { status: 426 })
-    if (this.ctx.getWebSockets().length >= MAX_SOCKETS) return new Response('Room is busy', { status: 503 })
+    const sockets = this.ctx.getWebSockets()
+    const waiting = sockets.filter(ws => {
+      const att = attachment(ws)
+      return att && !att.gone && !att.member
+    }).length
+    if (sockets.length >= MAX_SOCKETS || waiting >= MAX_WAITING) return new Response('Room is busy', { status: 503 })
     const { 0: client, 1: server } = new WebSocketPair()
     this.ctx.acceptWebSocket(server)
     server.serializeAttachment({ member: null, at: Date.now() } satisfies Attachment)
@@ -140,7 +164,7 @@ export class Room extends DurableObject<Env> {
         // Only to someone in the room right now, and always saying who it's from.
         if (msg.to === me.id) return
         const target = this.live().find(l => l.member.id === msg.to)
-        if (target) send(target.ws, { t: 'signal', from: me.id, signal: msg.signal })
+        if (target && this.takeFor(ws, msg.to)) send(target.ws, { t: 'signal', from: me.id, signal: msg.signal })
         return
       }
       case 'leave': {
@@ -162,6 +186,14 @@ export class Room extends DurableObject<Env> {
     const away = await this.away()
     const live = this.live()
     const reserved = ((await this.ctx.storage.get<number>('reserved')) ?? 0) > now
+    // A room nobody's in turns people away, unless they say they were in it
+    // (`resume`): a deploy forgets every room, and this is how it's made
+    // again around the people coming back. So anyone can make a room under a
+    // code of their choosing, and pick their place in line, by saying so.
+    // Left that way on purpose (see the README, "Coming back after a
+    // deploy"): stopping it takes a signed proof in every welcome, and all
+    // it stops is someone spinning up rooms for random codes. Don't tighten
+    // it without a reason people would notice.
     if (!live.length && !Object.keys(away).length && !reserved && msg.resume === null) return this.reject(ws, CLOSE.notFound, 'no such room')
 
     // Back as someone we know (a reconnect, or a second socket replacing the first): same seat, same place in line.
@@ -260,7 +292,13 @@ export class Room extends DurableObject<Env> {
     const away = await this.away()
     const reserved = (await this.ctx.storage.get<number>('reserved')) ?? 0
     let next = Infinity
-    if (this.ctx.getWebSockets().some(ws => !attachment(ws)?.gone)) next = now + SWEEP_EVERY_MS
+    for (const ws of this.ctx.getWebSockets()) {
+      const att = attachment(ws)
+      if (!att || att.gone) continue
+      next = Math.min(next, now + SWEEP_EVERY_MS)
+      // A socket that hasn't said hello goes when its time's up, not at the next sweep.
+      if (!att.member) next = Math.min(next, att.at + HELLO_TIMEOUT_MS)
+    }
     for (const a of Object.values(away)) next = Math.min(next, a.until)
     if (reserved > now) next = Math.min(next, reserved)
     if (next === Infinity) {
@@ -305,14 +343,17 @@ export class Room extends DurableObject<Env> {
   }
 
   private take(ws: WebSocket): boolean {
-    const now = Date.now()
-    const b = this.buckets.get(ws) ?? { tokens: BUCKET_SIZE, at: now }
-    b.tokens = Math.min(BUCKET_SIZE, b.tokens + ((now - b.at) / 1000) * BUCKET_REFILL_PER_S)
-    b.at = now
+    const b = this.buckets.get(ws) ?? { tokens: BUCKET_SIZE, at: Date.now() }
     this.buckets.set(ws, b)
-    if (b.tokens < 1) return false
-    b.tokens -= 1
-    return true
+    return drain(b, BUCKET_SIZE, BUCKET_REFILL_PER_S)
+  }
+
+  private takeFor(ws: WebSocket, to: string): boolean {
+    let pairs = this.pairBuckets.get(ws)
+    if (!pairs) this.pairBuckets.set(ws, (pairs = new Map()))
+    let b = pairs.get(to)
+    if (!b) pairs.set(to, (b = { tokens: PAIR_BUCKET_SIZE, at: Date.now() }))
+    return drain(b, PAIR_BUCKET_SIZE, PAIR_REFILL_PER_S)
   }
 
   /** Stops counting a socket, then closes it. */
@@ -337,6 +378,16 @@ export class Room extends DurableObject<Env> {
     if (att?.member && !att.gone) await this.goAway(att.member, ws)
     else await this.schedule()
   }
+}
+
+/** Refill a token bucket for the time since it was last used, and take one if there is one. */
+function drain(b: Bucket, size: number, perSecond: number): boolean {
+  const now = Date.now()
+  b.tokens = Math.min(size, b.tokens + ((now - b.at) / 1000) * perSecond)
+  b.at = now
+  if (b.tokens < 1) return false
+  b.tokens -= 1
+  return true
 }
 
 function attachment(ws: WebSocket): Attachment | null {

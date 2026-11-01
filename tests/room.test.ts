@@ -259,6 +259,43 @@ describe('room', () => {
     expect(ws.closed?.code).toBe(CLOSE.bad)
   })
 
+  it('wakes for a silent socket when its time to say hello is up, not at the next sweep', async () => {
+    await room.reserve()
+    await join()
+    const b = await join()
+    const silent = connect()
+    await say(b.ws, { t: 'leave' })
+    expect(state.alarmAt).toBe(Date.now() + 10_000)
+    vi.advanceTimersByTime(10_001)
+    await room.alarm()
+    expect(silent.closed?.code).toBe(CLOSE.bad)
+  })
+
+  it('turns sockets away while a roomful are still to say hello', async () => {
+    await room.reserve()
+    for (let i = 0; i < MAX_MEMBERS; i++) connect()
+    const upgrade = () => room.fetch(new Request('http://room/', { headers: { Upgrade: 'websocket' } }))
+    expect((await upgrade()).status).toBe(503)
+  })
+
+  it('passes only so many signals from one person to another', async () => {
+    await room.reserve()
+    const a = await join()
+    const b = await join()
+    const c = await join()
+    for (let i = 0; i < 100; i++) await say(a.ws, { t: 'signal', to: b.id, signal: { link, bye: true } })
+    const got = b.ws.msgs().filter(m => m.t === 'signal').length
+    expect(got).toBe(60)
+    expect(a.ws.closed).toBeNull()
+    // Someone else is a different pair.
+    await say(a.ws, { t: 'signal', to: c.id, signal: { link, bye: true } })
+    expect(c.ws.last('signal')).toBeDefined()
+    // And it refills.
+    vi.advanceTimersByTime(1000)
+    await say(a.ws, { t: 'signal', to: b.id, signal: { link, bye: true } })
+    expect(b.ws.msgs().filter(m => m.t === 'signal').length).toBe(61)
+  })
+
   it('cuts off a flood', async () => {
     await room.reserve()
     const a = await join()
