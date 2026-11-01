@@ -27,11 +27,15 @@ export const SEND_DELAY_MS = (PCM_FRAME * 1000) / 48_000
  * keeps it on); tuning carried over. 5: on in a browser again, and
  * redundancy and silence suppression went off by default, for everyone.
  * 6: Opus went, and with it the switch: the engine is the only way;
- * tuning carried over.
+ * tuning carried over. 7: silence suppression on by default again, now
+ * that a talkspurt starts without a click (the gate's look-back, gate.ts,
+ * and the jitter buffer's fade-in); the rest of the tuning carried over.
  */
-export const LL_REV = 6
+export const LL_REV = 7
 /** Saved tuning from before this resets to the defaults, once. */
 const TUNING_SINCE = 5
+/** A saved `dtx` from before this was everyone's default (off), not a choice. */
+const DTX_SINCE = 7
 
 export interface LLConfig {
   rev: number
@@ -64,7 +68,7 @@ export interface LLConfig {
 /** The defaults, the same in the app and in a browser. */
 export const LL_DEFAULTS: LLConfig = {
   rev: LL_REV,
-  dtx: false,
+  dtx: true,
   dtxThresholdDb: -70,
   dtxHangoverMs: 400,
   redundancy: 0,
@@ -102,7 +106,7 @@ export function sanitizeLL(raw: unknown): LLConfig {
   const r = raw as Record<string, unknown>
   const rev = typeof r.rev === 'number' ? r.rev : 0
   if (rev < TUNING_SINCE || rev > LL_REV) return c
-  if (typeof r.dtx === 'boolean') c.dtx = r.dtx
+  if (typeof r.dtx === 'boolean' && rev >= DTX_SINCE) c.dtx = r.dtx
   if (r.redundancy === 0 || r.redundancy === 1 || r.redundancy === 2) c.redundancy = r.redundancy
   for (const [k, [min, max]] of Object.entries(LL_RANGES) as [keyof typeof LL_RANGES, readonly [number, number, number]][]) {
     const v = r[k]

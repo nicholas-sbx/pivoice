@@ -55,7 +55,7 @@ describe('packets', () => {
 describe('config', () => {
   it('fills in defaults and clamps', () => {
     expect(sanitizeLL(null)).toEqual(LL_DEFAULTS)
-    expect(LL_DEFAULTS).toMatchObject({ redundancy: 0, dtx: false })
+    expect(LL_DEFAULTS).toMatchObject({ redundancy: 0, dtx: true })
     expect(llDefaults()).toEqual(LL_DEFAULTS)
     // Settings saved before rev 5 reset to the defaults.
     expect(sanitizeLL({ rev: 4, redundancy: 1, dtx: true, dtxThresholdDb: -55 })).toEqual(LL_DEFAULTS)
@@ -64,6 +64,9 @@ describe('config', () => {
     expect(kept).toEqual({ ...LL_DEFAULTS, redundancy: 1, dtx: true })
     expect(kept).not.toHaveProperty('codec')
     expect(kept).not.toHaveProperty('enabled')
+    // Silence suppression's on by default since rev 7: an "off" saved before then was the old default; one saved since is a choice.
+    expect(sanitizeLL({ rev: 6, dtx: false, marginMs: 5 })).toEqual({ ...LL_DEFAULTS, marginMs: 5 })
+    expect(sanitizeLL({ rev: 7, dtx: false }).dtx).toBe(false)
     const c = sanitizeLL({ rev: LL_DEFAULTS.rev, minBufferMs: 50, maxBufferMs: 20, redundancy: 7, concealMs: 9999 })
     expect(c.maxBufferMs).toBe(50)
     expect(c.redundancy).toBe(LL_DEFAULTS.redundancy)

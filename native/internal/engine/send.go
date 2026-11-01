@@ -2,7 +2,6 @@ package engine
 
 import (
 	"log"
-	"math"
 
 	"github.com/nicholas-sbx/pivoice/native/internal/audio"
 	"github.com/nicholas-sbx/pivoice/native/internal/dsp"
@@ -50,7 +49,7 @@ type sender struct {
 	frameInMs  float64
 	history    []ll.Frame
 	sent       int
-	quietFor   float64
+	gate       ll.Gate
 	wasActive  bool
 
 	// The mic's processing, while any of it is on, and what it was last
@@ -159,33 +158,24 @@ func (s *sender) feedLL(b capBlock, t *targets) {
 	}
 }
 
-// Our DTX: skip a frame once you've been below the threshold for a
-// moment. Each frame decides from its own level, so the first one with
-// sound in it goes out, and the hangover keeps the tails of words.
-func (s *sender) isSilence(pcm []float32) bool {
-	var sum float64
-	for _, v := range pcm {
-		sum += float64(v * v)
-	}
-	db := 10 * math.Log10(sum/float64(len(pcm))+1e-12)
-	if db >= s.cfg.DTXThresholdDb {
-		s.quietFor = 0
-		return false
-	}
-	s.quietFor += float64(len(pcm))
-	return s.quietFor > s.cfg.DTXHangoverMs*48
-}
-
+// encodeLL sends a finished frame, unless our silence gate (ll.Gate) holds it back.
 func (s *sender) encodeLL(t *targets) {
-	if s.cfg.DTX && s.isSilence(s.frame) {
+	if s.cfg.DTX && !s.gate.Pass(s.frameStart, s.frame, s.cfg.DTXThresholdDb, s.cfg.DTXHangoverMs) {
 		return
 	}
-	s.emit(ll.Frame{TS: uint32(s.frameStart), Data: ll.PCMToBytes(s.frame)}, t)
+	lead := 0
+	if s.cfg.DTX {
+		// The first frame after a silence takes the frames just before it along (see gate.go), in place of repeats of frames from before the silence.
+		if l := s.gate.Lead(nil); len(l) > 0 {
+			s.history, lead = l, len(l)
+		}
+	}
+	s.emit(ll.Frame{TS: uint32(s.frameStart), Data: ll.PCMToBytes(s.frame)}, lead, t)
 }
 
-// emit a finished frame: the repeats of the ones before it, now and then a capture stamp, and off it goes.
-func (s *sender) emit(f ll.Frame, t *targets) {
-	red := max(0, min(s.cfg.Redundancy, len(s.history)))
+// emit a finished frame: the repeats of the ones before it (at least lead of them), now and then a capture stamp, and off it goes.
+func (s *sender) emit(f ll.Frame, lead int, t *targets) {
+	red := max(0, min(max(s.cfg.Redundancy, lead), len(s.history)))
 	frames := append(append(make([]ll.Frame, 0, red+1), s.history[len(s.history)-red:]...), f)
 	s.history = append(s.history, f)
 	if len(s.history) > 2 {
