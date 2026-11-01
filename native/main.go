@@ -10,6 +10,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net"
 	"net/url"
 	"os"
 	"os/exec"
@@ -59,6 +60,10 @@ func main() {
 	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
 		log.Fatalf("bad --url %q", *site)
 	}
+	// Plain http only to this machine (development, tests): anywhere else, anyone on the way could change the page.
+	if u.Scheme == "http" && !loopbackHost(u.Hostname()) {
+		log.Fatalf("--url %q: https only, except to this machine", *site)
+	}
 	origin := u.Scheme + "://" + u.Host
 	code := invite(flag.Arg(0))
 
@@ -91,7 +96,7 @@ func main() {
 		page.Fragment = joinHash(code, fmt.Sprintf("native=%d.%s", port, b.Token))
 		if *headless {
 			fmt.Println(page.String())
-		} else if err := openBrowser(page.String()); err != nil {
+		} else if err := openBrowser(b.StartURL(page.String())); err != nil {
 			fmt.Println("Open this in your browser:", page.String())
 		}
 		stop := make(chan os.Signal, 1)
@@ -125,6 +130,14 @@ func tuneForAudio() {
 	if runtime.GOOS == "linux" && os.Getenv("PIPEWIRE_LATENCY") == "" {
 		_ = os.Setenv("PIPEWIRE_LATENCY", "128/48000")
 	}
+}
+
+func loopbackHost(h string) bool {
+	if strings.EqualFold(h, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(h)
+	return ip != nil && ip.IsLoopback()
 }
 
 // invite takes a room code from an invite link (…/#CODE) or a bare code.

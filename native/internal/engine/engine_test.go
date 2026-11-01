@@ -343,3 +343,27 @@ func mlines(sdp string) []string {
 	}
 	return out
 }
+
+func TestICEServersKeepsOnlyRealOnes(t *testing.T) {
+	in := []proto.IceServer{
+		{URLs: "stun:stun.cloudflare.com:3478"},
+		{URLs: []any{"turn:turn.example.com:3478?transport=udp", "turns:turn.example.com:5349?transport=tcp", "https://evil.example/", "turn:127.0.0.1:22", "stun:[::1]:3478", "stun:localhost", "stun:169.254.169.254:80", "stun:0.0.0.0"}, Username: "u", Credential: "c"},
+		{URLs: "turn:10.0.0.1:3478"},
+		{URLs: []any{"stun:127.0.0.1"}},
+	}
+	got := iceServers(in, false)
+	var urls []string
+	for _, s := range got {
+		urls = append(urls, s.URLs...)
+	}
+	want := []string{"stun:stun.cloudflare.com:3478", "turn:turn.example.com:3478?transport=udp", "turns:turn.example.com:5349?transport=tcp", "turn:10.0.0.1:3478"}
+	if strings.Join(urls, " ") != strings.Join(want, " ") {
+		t.Fatalf("kept %q, want %q", urls, want)
+	}
+	if len(got) != 3 || got[1].Username != "u" {
+		t.Fatalf("servers: %+v", got)
+	}
+	if n := len(iceServers(in, true)); n != 4 {
+		t.Fatalf("with loopback on, %d servers, want all 4", n)
+	}
+}

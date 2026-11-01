@@ -3,6 +3,8 @@ package engine
 import (
 	"encoding/json"
 	"log"
+	"net"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -59,17 +61,36 @@ func (e *Engine) newAPI() *webrtc.API {
 	return webrtc.NewAPI(webrtc.WithMediaEngine(&webrtc.MediaEngine{}), webrtc.WithSettingEngine(se))
 }
 
-func iceServers(in []proto.IceServer) []webrtc.ICEServer {
+// The most ICE servers a link takes, and URLs each: the site hands out a
+// STUN server and maybe a TURN one, a few URLs apiece.
+const (
+	maxICEServers   = 8
+	maxICEServerURL = 8
+)
+
+// iceServers is the page's list as pion wants it, keeping only STUN and
+// TURN URLs to hosts out on the network: never this machine or its local
+// links (unless loopback is on, for tests), so a page can't use the app to
+// knock on ports it couldn't reach itself.
+func iceServers(in []proto.IceServer, loopback bool) []webrtc.ICEServer {
 	var out []webrtc.ICEServer
 	for _, s := range in {
+		if len(out) == maxICEServers {
+			break
+		}
 		var urls []string
+		add := func(u string) {
+			if len(urls) < maxICEServerURL && iceURLOK(u, loopback) {
+				urls = append(urls, u)
+			}
+		}
 		switch u := s.URLs.(type) {
 		case string:
-			urls = []string{u}
+			add(u)
 		case []any:
 			for _, x := range u {
 				if str, ok := x.(string); ok {
-					urls = append(urls, str)
+					add(str)
 				}
 			}
 		}
@@ -85,9 +106,36 @@ func iceServers(in []proto.IceServer) []webrtc.ICEServer {
 	return out
 }
 
+// iceURLOK: stun:, turn: or turns:, to a host that isn't loopback, link-local or unspecified.
+func iceURLOK(u string, loopback bool) bool {
+	scheme, rest, ok := strings.Cut(u, ":")
+	if !ok || (scheme != "stun" && scheme != "turn" && scheme != "turns") {
+		return false
+	}
+	rest, _, _ = strings.Cut(rest, "?")
+	host := rest
+	if h, _, err := net.SplitHostPort(rest); err == nil {
+		host = h
+	}
+	host = strings.Trim(host, "[]")
+	if host == "" {
+		return false
+	}
+	if loopback {
+		return true
+	}
+	if strings.EqualFold(host, "localhost") || strings.HasSuffix(strings.ToLower(host), ".localhost") {
+		return false
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return !ip.IsLoopback() && !ip.IsLinkLocalUnicast() && !ip.IsUnspecified() && !ip.IsMulticast()
+	}
+	return true
+}
+
 func (e *Engine) openLink(m proto.In) (*link, error) {
 	pc, err := e.newAPI().NewPeerConnection(webrtc.Configuration{
-		ICEServers:    iceServers(m.IceServers),
+		ICEServers:    iceServers(m.IceServers, e.opts.Loopback),
 		BundlePolicy:  webrtc.BundlePolicyMaxBundle,
 		RTCPMuxPolicy: webrtc.RTCPMuxPolicyRequire,
 	})

@@ -58,8 +58,8 @@ type source struct {
 	nextTS int64
 	stamp  atomic.Pointer[stamp]
 	// Frames thrown away because the audio thread hadn't taken the last 64 yet.
-	dropped  atomic.Int64
-	bytes    atomic.Int64
+	dropped atomic.Int64
+	bytes   atomic.Int64
 }
 
 type sourceStats struct {
