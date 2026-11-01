@@ -1,8 +1,8 @@
 // End-to-end, the app: the Go binary doing the audio (on a fake sound card
 // that beeps), its UI in Chromium, and people on the plain website in the
-// same room. Checks the app and the website hear each other over both
-// engines, that the app's mic test works, and that a page with the wrong
-// key gets nowhere.
+// same room. Checks the app and the website hear each other (raw PCM over
+// the low-latency engine, the only way), that the app's mic test works,
+// and that a page with the wrong key gets nowhere.
 //
 //   npm run dev                                         # terminal 1
 //   (cd native && ./build.sh) && npm run e2e:native     # terminal 2
@@ -63,7 +63,7 @@ const hears = (page, name, label) =>
 const cardFor = (page, name) =>
   page.$$eval('.seat', (els, name) => els.find(e => e.querySelector('.name')?.textContent.trim() === name)?.querySelector('.route')?.innerText ?? '', name)
 
-const engineOf = (page, name, re, label) =>
+const routeSays = (page, name, re, label) =>
   page
     .waitForFunction(
       ([name, src]) => {
@@ -106,8 +106,7 @@ try {
 
   // Ada's mic test, both paths the app has.
   await ada.click('button[aria-label="Voice Settings"]')
-  if (await ada.$('.seg button:has-text("WebRTC audio")')) throw new Error('the app has no WebRTC audio path to test')
-  for (const label of ['Raw', 'Low latency']) {
+  for (const label of ['Raw', 'As in a call']) {
     await ada.click(`.seg button:has-text("${label}")`)
     if (!(await ada.$('.test-btn.stop'))) await ada.click('.test-btn')
     await ada.waitForFunction(() => /\d+ ms/.test(document.querySelector('.test-out strong')?.textContent ?? ''), null, { timeout: 15_000 }).catch(() => {
@@ -129,29 +128,15 @@ try {
 
   await showRoute(bob)
   await showRoute(ada)
-  // The website has the low-latency engine off by default (the app has it on): a plain call, Opus over RTP to the app.
-  await engineOf(bob, 'Ada', /webrtc audio/, 'Bob (engine off by default), Ada over a plain call')
-  await engineOf(ada, 'Bob', /webrtc audio/, 'Ada, Bob over a plain call')
-  await bob.waitForTimeout(3000)
-  ok('a plain call to start with: ' + one(await cardFor(ada, 'Bob')))
-
-  // Bob turns the engine on: the pair moves over to it.
-  await bob.click('button[aria-label="Voice Settings"]')
-  await bob.click('button[role="tab"]:has-text("Low Latency")')
-  await bob.click('text=Low-Latency Engine (Experimental)')
-  await bob.click('button[aria-label="Voice Settings"]')
-  await engineOf(bob, 'Ada', /low-latency engine/, 'Bob, Ada on the engine')
-  await engineOf(ada, 'Bob', /low-latency engine/, 'Ada, Bob on the engine')
-  await bob.waitForFunction(
-    () => [...document.querySelectorAll('.route')].some(r => /pcm/i.test(r.textContent) && /mouth to ear/i.test(r.textContent)),
-    null,
-    { timeout: 15_000 }
-  )
+  // One way between them: the low-latency engine, raw PCM over a data channel.
+  await routeSays(bob, 'Ada', /\d{3,} kbps/, 'Bob, Ada as raw PCM')
+  await routeSays(ada, 'Bob', /\d{3,} kbps/, 'Ada, Bob as raw PCM')
+  await bob.waitForFunction(() => [...document.querySelectorAll('.route')].some(r => /mouth to ear/i.test(r.textContent)), null, { timeout: 15_000 })
   await ada.waitForFunction(() => [...document.querySelectorAll('.route')].some(r => /mouth to ear/i.test(r.textContent)), null, { timeout: 15_000 })
   await bob.click('button[aria-label="Mute"]')
   await bob.click('button[aria-label="Unmute"]')
-  await hears(ada, 'Bob', 'Ada (app), Bob on the engine')
-  await hears(bob, 'Ada', 'Bob (website), Ada on the engine')
+  await hears(ada, 'Bob', 'Ada (app), Bob after muting and unmuting')
+  await hears(bob, 'Ada', 'Bob (website), Ada after Bob unmuted')
   ok("Bob's card for Ada: " + one(await cardFor(bob, 'Ada')))
   ok("Ada's card for Bob: " + one(await cardFor(ada, 'Bob')))
 
@@ -180,16 +165,14 @@ try {
   ok('Ada on Binaural: still hears Bob')
   await ada.click('button[aria-label^="Spatial Audio"]')
 
-  // A setting that needs a fresh connection: Ada drops and comes straight back, the app's sound card closed and reopened.
-  await ada.click('button[aria-label="Voice Settings"]')
-  await ada.click('text=Silence Suppression (DTX)')
-  await ada.click('button[aria-label="Voice Settings"]')
+  // Ada drops and comes straight back (what a setting that needs a fresh connection does), the app's sound card closed and reopened.
+  await ada.evaluate(() => window.__pv.rejoin())
   await ada.waitForSelector('.status:has-text("Reconnecting")', { timeout: 5_000 }).catch(() => {})
   await ada.waitForSelector('.status:has-text("Voice Connected")', { timeout: 20_000 })
   if (await ada.$('text=nobody can hear you')) throw new Error('reconnecting lost the microphone')
   await hears(ada, 'Bob', 'Ada (app) after reconnecting')
   await hears(bob, 'Ada', 'Bob (website) after Ada reconnected')
-  ok('Ada reconnected to apply a setting: same seat, mic and all')
+  ok('Ada reconnected: same seat, mic and all')
 
   // Ada mutes: the app stops sending (Bob sees her bitrate go to 0).
   await ada.click('button[aria-label="Mute"]')

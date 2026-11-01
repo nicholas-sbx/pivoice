@@ -741,5 +741,5 @@ window.addEventListener('pagehide', () => session?.leave())
 
 // Dev builds only: a handle for poking at a live call from the console or the e2e run.
 if (import.meta.env.DEV) {
-  ;(window as unknown as { __pv: unknown }).__pv = { call, session: () => session, ll: () => ll, engine: () => engine, native: () => nv }
+  ;(window as unknown as { __pv: unknown }).__pv = { call, session: () => session, ll: () => ll, engine: () => engine, native: () => nv, rejoin: rejoinCall }
 }
