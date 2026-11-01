@@ -3,11 +3,13 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/url"
 
 	"github.com/nicholas-sbx/pivoice/native/internal/bridge"
+	"github.com/nicholas-sbx/pivoice/native/internal/offline"
 	"github.com/nicholas-sbx/pivoice/native/internal/overlay"
 	webview "github.com/webview/webview_go"
 )
@@ -40,8 +42,28 @@ func runWindow(b *bridge.Bridge, page, origin string, devtools bool) error {
 	ov := overlay.New(overlay.Config{Dispatch: w.Dispatch, Main: w.Window(), URL: overlayPage(page), Origin: origin, Debug: devtools})
 	b.Overlay = ov
 
-	w.Navigate(page)
+	// The site is only opened once it answers: the webview's own error page
+	// for a failed load is generic, and can't be replaced on every platform.
+	// Until then the window shows the offline page (internal/offline).
+	retry := make(chan struct{}, 1)
+	if err := w.Bind("__pivoiceRetry", func() {
+		select {
+		case retry <- struct{}{}:
+		default:
+		}
+	}); err != nil {
+		return err
+	}
+	ctx, stop := context.WithCancel(context.Background())
+	w.SetHtml(offline.Blank)
+	go offline.Watch(ctx, offline.Config{
+		URL:   home(page),
+		Show:  func(html string) { w.Dispatch(func() { w.SetHtml(html) }) },
+		Open:  func() { w.Dispatch(func() { w.Navigate(page) }) },
+		Retry: retry,
+	})
 	w.Run()
+	stop()
 	ov.Close()
 	conn.Gone()
 	return nil
