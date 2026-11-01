@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Pivoice
+Comment=Voice rooms around a round table
+Exec=pivoice
+Icon=io.github.nicholas_sbx.Pivoice
+Categories=AudioVideo;Audio;Network;
+Keywords=voice;chat;call;
+Terminal=false
+StartupWMClass=pivoice

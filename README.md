@@ -915,11 +915,17 @@ The app releases the same way, keyed on `native/VERSION` and tagged
 vet`, `go test -race`, where the engine's tests run two engines on fake sound
 cards over real WebRTC, against RNNoise and SpeexDSP built as the release
 builds them, then the processing benchmarks) and **build** on Linux (Ubuntu 22.04, so glibc
-2.35+) and Windows. **release** waits for all of them, so nothing ships
+2.35+) and Windows. **flatpak** wraps the Linux binary
+(`native/flatpak/`; GNOME runtime, so WebKitGTK comes from there). **release** waits for all of them, so nothing ships
 unless the tests passed too, and publishes a GitHub release with the files
 and how to run each. Each file has the version in its name
-(`pivoice-0.2.0-linux-amd64.tar.gz`, `pivoice-0.2.0-windows-amd64.exe`),
-which the site's download buttons build from `native/VERSION`. macOS is switched off for now (its runners can queue
+(`pivoice-0.2.0-linux-amd64.tar.gz`, `pivoice-0.2.0-linux-x86_64.flatpak`,
+`pivoice-0.2.0-windows-amd64.exe`),
+which the site's download buttons build from `native/VERSION` (they don't
+link the Flatpak yet). The Flatpak's sandbox has the network, PipeWire or
+PulseAudio and the display, and no file access at all: the app's own code
+never opens a file. The always-on-top overlay inside it is untested, and
+global shortcuts don't exist in Flatpak. macOS is switched off for now (its runners can queue
 for a long time): uncomment its entry in the build matrix to bring it back,
 as one universal binary. It needs no secrets, only
 `VITE_PUBLIC_URL`, the site it opens: without it, a main push builds but
