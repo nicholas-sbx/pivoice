@@ -1,15 +1,15 @@
 <script setup lang="ts">
 /** A labelled slider with its value shown, Discord-style. */
 const props = withDefaults(
-  defineProps<{ label: string; modelValue: number; min: number; max: number; step?: number; unit?: string; hint?: string; digits?: number }>(),
-  { step: 1, unit: '', hint: '', digits: 0 }
+  defineProps<{ label: string; modelValue: number; min: number; max: number; step?: number; unit?: string; hint?: string; digits?: number; disabled?: boolean }>(),
+  { step: 1, unit: '', hint: '', digits: 0, disabled: false }
 )
 defineEmits<{ 'update:modelValue': [value: number] }>()
 const fill = () => ((props.modelValue - props.min) / (props.max - props.min)) * 100 + '%'
 </script>
 
 <template>
-  <label class="slider">
+  <label class="slider" :class="{ disabled }">
     <span class="top">
       <span class="label">{{ label }}</span>
       <span class="value">{{ modelValue.toFixed(digits) }}{{ unit }}</span>
@@ -20,6 +20,7 @@ const fill = () => ((props.modelValue - props.min) / (props.max - props.min)) * 
       :max="max"
       :step="step"
       :value="modelValue"
+      :disabled="disabled"
       :style="{ '--fill': fill() }"
       @input="$emit('update:modelValue', Number(($event.target as HTMLInputElement).value))"
     />
@@ -45,6 +46,13 @@ const fill = () => ((props.modelValue - props.min) / (props.max - props.min)) * 
 .value {
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
+}
+/* Greyed out (not hidden) when it doesn't apply: the same words, the same place. */
+.slider.disabled {
+  opacity: 0.45;
+}
+.slider.disabled input[type='range'] {
+  cursor: not-allowed;
 }
 small {
   display: block;

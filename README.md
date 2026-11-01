@@ -570,7 +570,8 @@ In the app, the button in the top bar puts the table over everything else on
 your screen instead: small, see-through, and with clicks going straight
 through it to whatever's underneath, so you can see where everyone sits
 (and who's talking) while you're in a game or anything else, and hear them
-from there. It stays switched on for later calls. **Voice Settings →
+from there. It stays switched on for later calls. The button is filled while
+it's on, and shows a spinner for the second it takes to come up. **Voice Settings →
 Overlay** places it:
 
 - **Screen**: any of yours, or the one Pivoice is on (the default). Screens
@@ -578,10 +579,12 @@ Overlay** places it:
   they're plugged in; if the one you picked isn't connected, it goes on the
   one Pivoice is on until it is.
 - **Position**: a corner, the middle of an edge, or the middle, on a map of
-  that screen with the overlay drawn on it to scale. It's kept as a side and
+  that screen with the overlay drawn on it to scale (the pointer on another
+  side shows where it would go). It's kept as a side and
   a **distance from the edge**, not a position, so it stays in its corner
   through a change of resolution or a moved panel, and that distance counts
   from the part of the screen windows get, so it never sits under a taskbar.
+  (In the middle there's no edge, so that slider is greyed out.)
 - **Size** (its width and height), **Scale** (how big the faces and names
   are in it) and **Opacity**: the table (only its rim) and anyone quiet fade
   back to that, and whoever's speaking always shows in full.

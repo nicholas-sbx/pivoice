@@ -52,21 +52,28 @@ const anchors: { value: OverlayAnchor; label: string }[] = [
   { value: 'bottom-right', label: 'Bottom right' }
 ]
 
-/** The screen in miniature, its own shape, and the overlay on it where it'll be, to scale. */
-const map = computed(() => {
+/** The screen in miniature, its own shape. */
+const shape = computed(() => {
   const w = screen.value?.width || 1920
   const h = screen.value?.height || 1080
+  // As wide as the panel, but no taller than 240 px (a screen on its side).
+  return { w, h, style: { aspectRatio: `${w} / ${h}`, width: `min(100%, ${Math.round((240 * w) / h)}px)` } }
+})
+
+/** Where the overlay would sit on that screen at a side, to scale. */
+function boxAt(a: OverlayAnchor) {
+  const { w, h } = shape.value
   const size = o.value.size
-  const a = o.value.anchor
   const left = a.endsWith('left') ? o.value.margin : a.endsWith('right') ? w - size - o.value.margin : (w - size) / 2
   const top = a.startsWith('top') ? o.value.margin : a.startsWith('bottom') ? h - size - o.value.margin : (h - size) / 2
   const pct = (v: number, of: number) => ((100 * v) / of).toFixed(2) + '%'
-  return {
-    // As wide as the panel, but no taller than 240 px (a screen on its side).
-    style: { aspectRatio: `${w} / ${h}`, width: `min(100%, ${Math.round((240 * w) / h)}px)` },
-    box: { left: pct(left, w), top: pct(top, h), width: pct(size, w), height: pct(size, h) }
-  }
-})
+  return { left: pct(left, w), top: pct(top, h), width: pct(size, w), height: pct(size, h) }
+}
+
+/** The side the pointer (or the keyboard) is on, to show where it would go before you pick it. */
+const peek = ref<OverlayAnchor | null>(null)
+const peeked = computed(() => (peek.value && peek.value !== o.value.anchor ? boxAt(peek.value) : null))
+const sideLabel = computed(() => anchors.find(a => a.value === (peek.value ?? o.value.anchor))?.label ?? '')
 </script>
 
 <template>
@@ -98,8 +105,7 @@ const map = computed(() => {
     <p v-if="missing" class="note">The screen you picked isn't connected, so it's on the one Pivoice is on until it is.</p>
 
     <span class="eyebrow">Position</span>
-    <div class="map" :class="{ disabled: !placeable }" :style="map.style">
-      <div class="shown" :style="map.box" />
+    <div class="map" :class="{ disabled: !placeable }" :style="shape.style" @mouseleave="peek = null">
       <div class="grid" role="radiogroup" aria-label="Position">
         <button
           v-for="a in anchors"
@@ -111,12 +117,16 @@ const map = computed(() => {
           :aria-label="a.label"
           :title="a.label"
           :class="{ active: o.anchor === a.value }"
+          @mouseenter="peek = a.value"
+          @focus="peek = a.value"
+          @blur="peek = null"
           @click="set({ anchor: a.value })"
-        >
-          <span class="dot" />
-        </button>
+        />
       </div>
+      <div v-if="peeked" class="ghost" :style="peeked" />
+      <div class="shown" :style="boxAt(o.anchor)" />
     </div>
+    <p class="side">{{ sideLabel }}</p>
 
     <Slider
       label="Distance from the edge"
@@ -125,7 +135,8 @@ const map = computed(() => {
       :max="200"
       :step="2"
       unit=" px"
-      :hint="o.anchor === 'center' ? 'Not in the middle: it has no edge to keep from.' : 'From the part of the screen windows get, so it never sits under a taskbar or panel.'"
+      :disabled="o.anchor === 'center'"
+      hint="From the part of the screen windows get, so it never sits under a taskbar or panel. Not used in the middle, which has no edge."
       @update:model-value="v => set({ margin: v })"
     />
     <Slider label="Size" :model-value="o.size" :min="160" :max="600" :step="10" unit=" px" hint="Its width and height." @update:model-value="v => set({ size: v })" />
@@ -189,51 +200,67 @@ select:disabled {
   color: var(--red);
 }
 
-/* The screen, seen small: a hard edge round it, the overlay where it'll be. */
+/* The screen, seen small: a hard edge round it, nine sides to pick from with the lines between them, the overlay where it'll be. */
 .map {
   position: relative;
   border: 1px solid var(--border-strong);
   border-radius: 4px;
-  background: var(--bg-tertiary);
+  background: var(--border-subtle);
   overflow: hidden;
 }
 .map.disabled {
   opacity: 0.5;
-}
-.shown {
-  position: absolute;
-  border: 1px solid var(--brand);
-  background: rgba(88, 101, 242, 0.25);
-  pointer-events: none;
 }
 .grid {
   position: absolute;
   inset: 0;
   display: grid;
   grid-template: repeat(3, 1fr) / repeat(3, 1fr);
+  gap: 1px;
 }
 .grid button {
-  display: grid;
-  place-items: center;
   border: 0;
   padding: 0;
-  background: none;
+  background: var(--bg-tertiary);
   cursor: pointer;
+}
+.grid button:hover:not(:disabled) {
+  background: var(--bg-secondary);
+}
+.grid button.active {
+  background: rgba(88, 101, 242, 0.12);
 }
 .grid button:disabled {
   cursor: default;
 }
-.dot {
-  width: 10px;
-  height: 10px;
+.grid button:focus-visible {
+  outline-offset: -2px;
+}
+/* The overlay (a square, with the round table in it) where it is, and a hairline one where the pointer is. */
+.shown,
+.ghost {
+  position: absolute;
+  box-sizing: border-box;
+  pointer-events: none;
+}
+.shown {
+  border: 1px solid var(--brand);
+  background: rgba(88, 101, 242, 0.35);
+}
+.shown::after {
+  content: '';
+  position: absolute;
+  inset: 14%;
+  border: 1px solid var(--brand-soft);
   border-radius: 50%;
-  border: 1px solid var(--interactive-normal);
 }
-.grid button:hover:not(:disabled) .dot {
-  border-color: var(--interactive-hover);
+.ghost {
+  border: 1px dashed var(--brand-soft);
 }
-.grid button.active .dot {
-  border-color: var(--brand);
-  background: var(--brand);
+.side {
+  margin: 6px 0 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
 }
 </style>

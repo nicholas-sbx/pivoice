@@ -3,7 +3,7 @@ import { nextTick, reactive } from 'vue'
 import { Seating } from '../src/lib/seating'
 import { DEFAULT_PREFS } from '../src/lib/prefs'
 import { native, type NativeBridge } from '../src/native/bridge'
-import { driveOverlay, overlayPlacing, type OverlayCall } from '../src/native/overlay'
+import { driveOverlay, overlayOpening, overlayPlacing, type OverlayCall } from '../src/native/overlay'
 import type { FromApp, ToApp } from '../src/native/protocol'
 import type { Member } from '../src/net/protocol'
 
@@ -88,5 +88,56 @@ describe('the overlay, from the page', () => {
     call.phase = 'home'
     await settle()
     expect(sent).toEqual([{ t: 'overlay', op: 'hide' }])
+  })
+
+  it('is opening from the ask until the app answers, and moving it afterwards is not a wait', async () => {
+    native.state = 'ready'
+    native.app = { version: '1', protocol: 1, os: 'linux', arch: 'amd64', overlay: true }
+    const call = reactive<OverlayCall>({
+      phase: 'room',
+      selfId: 'me',
+      members: [member('me')],
+      muted: false,
+      deafened: false,
+      micProblem: null,
+      silenced: {},
+      prefs: { ...DEFAULT_PREFS, overlay: { ...DEFAULT_PREFS.overlay } }
+    })
+    const seating = new Seating(() => {})
+    seating.sync(['me'], 'me')
+    let answer: () => void = () => {}
+    const bridge = {
+      send: () => {},
+      on: () => () => {},
+      request: (m: ToApp) =>
+        m.t === 'overlay' && m.op === 'show' ? new Promise(res => (answer = () => res({ t: 'overlay', on: true }))) : Promise.resolve(null)
+    } as unknown as NativeBridge
+    driveOverlay(bridge, call, seating)
+    await settle()
+    expect(overlayOpening.value).toBe(false)
+
+    call.prefs.overlay = { ...call.prefs.overlay, on: true }
+    await settle()
+    expect(overlayOpening.value).toBe(true)
+    answer()
+    await settle()
+    expect(overlayOpening.value).toBe(false)
+
+    // Already up: placing it somewhere else asks again, but there's nothing to wait for.
+    call.prefs.overlay = { ...call.prefs.overlay, anchor: 'bottom' }
+    await settle()
+    expect(overlayOpening.value).toBe(false)
+    answer()
+    await settle()
+
+    // Switched off while it's still coming up: the spinner goes straight away.
+    call.prefs.overlay = { ...call.prefs.overlay, on: false }
+    await settle()
+    call.prefs.overlay = { ...call.prefs.overlay, on: true }
+    await settle()
+    expect(overlayOpening.value).toBe(true)
+    call.prefs.overlay = { ...call.prefs.overlay, on: false }
+    await settle()
+    expect(overlayOpening.value).toBe(false)
   })
 })

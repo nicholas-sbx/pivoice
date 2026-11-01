@@ -25,7 +25,7 @@ import { isNative } from '../native/bridge'
 import { useCompact } from '../lib/viewport'
 import { vSnap } from '../lib/snap'
 import { closePip, pipRoot, pipSupported, pipWindow, togglePip } from '../pip'
-import { overlayError, overlaySupported } from '../native/overlay'
+import { overlayError, overlayOpening, overlaySupported } from '../native/overlay'
 
 const settingsOpen = ref(false)
 const displayOpen = ref(false)
@@ -49,6 +49,8 @@ function toggleOverlay() {
   updatePrefs({ overlay: { ...call.prefs.overlay, on: !call.prefs.overlay.on } })
 }
 const overlayOn = computed(() => call.prefs.overlay.on && !overlayError.value)
+/** Switched on, and the app's still bringing it up. */
+const overlayWaiting = computed(() => call.prefs.overlay.on && overlayOpening.value)
 
 const isMac = /Mac|iPhone|iPad/.test(navigator.platform)
 const mod = isMac ? '⌘⇧' : 'Ctrl+Shift+'
@@ -133,12 +135,14 @@ onBeforeUnmount(() => {
           type="button"
           class="bar-btn"
           :class="{ active: overlayOn }"
-          :title="overlayOn ? 'Hide overlay' : 'Show overlay'"
+          :title="overlayWaiting ? 'Opening the overlay…' : overlayOn ? 'Hide overlay' : 'Show overlay'"
           :aria-label="overlayOn ? 'Hide overlay' : 'Show overlay'"
           :aria-pressed="overlayOn"
+          :aria-busy="overlayWaiting"
           @click="toggleOverlay"
         >
-          <Icon name="pip" :size="20" />
+          <span v-if="overlayWaiting" class="spinner" aria-hidden="true" />
+          <Icon v-else name="overlay" :size="20" />
         </button>
         <div class="display-anchor">
           <button
@@ -370,10 +374,30 @@ h1 {
   color: var(--interactive-normal);
   cursor: pointer;
 }
-.bar-btn:hover,
-.bar-btn.active {
+.bar-btn:hover {
   color: var(--interactive-active);
   background: var(--bg-modifier-hover);
+}
+/* On is a solid fill, so it reads at a glance and under the pointer: hovering only darkens it, and an off button never looks like that. */
+.bar-btn.active {
+  color: #fff;
+  background: var(--brand);
+}
+.bar-btn.active:hover {
+  background: var(--brand-hover);
+}
+.spinner {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-top-color: #fff;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 .people {
   display: inline-flex;
