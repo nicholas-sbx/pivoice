@@ -20,7 +20,10 @@ now − base − target − block. Playback steers toward that by changing speed
 by up to ±stretch (only in the quiet between words, or while someone's
 talking when it must: see jitter.ts), conceals gaps by fading a repeat of
 the last frame, and goes idle after an underrun so the next talkspurt
-starts fresh.
+starts fresh, fading in over a millisecond. A silence doesn't age the
+estimate: nothing is re-estimated while idle, a thin window can raise the
+jitter but not lower it, and frames landing together while idle count as
+one arrival (the sender's look-back, see gate.go).
 
 Not safe for concurrent use: the audio callback owns it. Frames reach it
 through a channel (see engine).
@@ -63,6 +66,12 @@ type arrivalRec struct{ at, off float64 }
 
 const idleAfterMs = 80
 
+// How long a fresh start fades in.
+const fadeInMs = 1
+
+// A window with fewer arrivals than this is too thin to lower the jitter estimate (about 0.27 s of 128-sample frames).
+const thinWindow = 100
+
 // MaxFrames is the most frames the buffer holds: 256 of the 128-sample
 // frames everyone sends is 680 ms, more than twice the longest target.
 const MaxFrames = 256
@@ -93,6 +102,8 @@ type JitterBuffer struct {
 	lastGoodEnd float64
 	emptySince  float64
 	empty       bool
+	// Samples played since the last fresh start, for its fade-in.
+	sinceStart float64
 	// How loud the last block played was (RMS), and the speed now (1 is normal), gliding to what steering wants.
 	lastRMS float64
 	rate    float64
@@ -105,7 +116,7 @@ type JitterBuffer struct {
 }
 
 func NewJitterBuffer(cfg JitterConfig) *JitterBuffer {
-	return &JitterBuffer{cfg: cfg, estimatedAt: math.Inf(-1), rate: 1}
+	return &JitterBuffer{cfg: cfg, estimatedAt: math.Inf(-1), rate: 1, sinceStart: math.Inf(1)}
 }
 
 func (j *JitterBuffer) Configure(cfg JitterConfig) { j.cfg = cfg }
@@ -116,7 +127,12 @@ func (j *JitterBuffer) samples(ms float64) float64 { return ms * j.cfg.SampleRat
 // Push takes a decoded frame: ts on the sender's clock, arrival on ours.
 func (j *JitterBuffer) Push(ts float64, pcm []float32, arrival float64) {
 	off := arrival - ts
-	j.arrivals = append(j.arrivals, arrivalRec{arrival, off})
+	if n := len(j.arrivals); !j.playing && n > 0 && j.arrivals[n-1].at == arrival {
+		// Idle, in the same block as the frame before: one arrival, as late as the newest of them.
+		j.arrivals[n-1].off = math.Min(j.arrivals[n-1].off, off)
+	} else {
+		j.arrivals = append(j.arrivals, arrivalRec{arrival, off})
+	}
 	if !j.hasBase || off < j.base {
 		j.base = off
 		j.hasBase = true
@@ -143,6 +159,10 @@ func (j *JitterBuffer) Push(ts float64, pcm []float32, arrival float64) {
 }
 
 func (j *JitterBuffer) estimate(now float64) {
+	// A silence leaves the estimate as the last talkspurt left it (once there is one).
+	if !j.playing && j.hasBase {
+		return
+	}
 	if now-j.estimatedAt < j.samples(50) {
 		return
 	}
@@ -169,7 +189,11 @@ func (j *JitterBuffer) estimate(now float64) {
 	sort.Float64s(j.scratch)
 	j.base = base
 	k := int(math.Floor(float64(len(j.scratch)) * j.cfg.Percentile / 100))
-	j.jitter = j.scratch[min(len(j.scratch)-1, k)]
+	jitter := j.scratch[min(len(j.scratch)-1, k)]
+	if len(j.scratch) < thinWindow {
+		jitter = math.Max(j.jitter, jitter)
+	}
+	j.jitter = jitter
 }
 
 func (j *JitterBuffer) TargetSamples() float64 {
@@ -203,6 +227,7 @@ func (j *JitterBuffer) Pull(out []float32, now float64) {
 		j.playing = true
 		j.hasCursor = false
 		j.empty = false
+		j.sinceStart = 0
 	}
 
 	err := j.pos - desired
@@ -224,6 +249,7 @@ func (j *JitterBuffer) Pull(out []float32, now float64) {
 	want := 1 - math.Max(-1, math.Min(1, err/k))*stretch
 	j.rate += math.Max(-rateGlide, math.Min(rateGlide, want-j.rate))
 	rate := j.rate
+	fade := j.samples(fadeInMs)
 
 	for i := range out {
 		if !j.playing {
@@ -240,6 +266,10 @@ func (j *JitterBuffer) Pull(out []float32, now float64) {
 			b = j.sample(ip+1, at)
 		}
 		out[i] = a + (b-a)*float32(frac)
+		if j.sinceStart < fade {
+			out[i] *= float32(j.sinceStart / fade)
+			j.sinceStart++
+		}
 		if j.playing {
 			j.pos += rate
 		}

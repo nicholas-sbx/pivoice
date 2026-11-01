@@ -302,13 +302,20 @@ mic → pv-capture AudioWorklet: one 128-sample block (2.7 ms) at a time, on the
     more than 20 ms too deep (and then gently), and only slows down when
     the buffer is about to run dry. The speed glides, never jumps. Gaps are
     covered by fading out the last frame. After a silence it starts the
-    next sentence fresh at the target.
+    next sentence fresh at the target, fading in over 1 ms, on the jitter
+    it knew before the pause (a silence doesn't age the estimate).
   - Unit tests drive it with simulated streams: clean, jittery, lossy and
     silent ones.
-- **Our own silence gate**, off by default. It decides per block from that
+- **Our own silence gate**, on by default. It decides per block from that
   block's own level, with a hangover (400 ms), so the start of a word is
   never waited on. The threshold is low (−70 dBFS) because the mic comes in
   raw with no auto gain: in 0.2.0 it was −55, which could chop quiet speech.
+  The first block after a silence takes the two quiet blocks before it
+  along in its packet: the far end starts a talkspurt partway into its
+  first block, and without them that was partway into the attack, a click
+  at the start of every sentence (in a simulation, 30–37 times the voice's
+  own largest second difference; now none, and not a sample later than
+  with the gate off: `tests/dtx.test.ts`, `dtx_test.go`).
 - **Redundancy**, off by default: each packet can repeat the previous one or
   two blocks, so one lost packet costs nothing, with no extra delay, at
   double or triple the bandwidth.
@@ -338,7 +345,7 @@ starts, so changing it reconnects you on the spot:
 | --- | --- | --- |
 | Audio output buffer | Smallest | Web Audio's buffer to the speakers, which everyone plays through: Smallest (Chrome: 128 frames, 2.7 ms), Small (~5 ms where the device offers it), or Browser default (~10 ms). The tab shows what you actually got. Bigger if it crackles. |
 | Redundancy | Off | Each packet repeats 0–2 previous blocks. |
-| Silence suppression | Off | Send nothing while you're quiet. |
+| Silence suppression | On | Send nothing while you're quiet. |
 | Silence threshold | −70 dBFS | What counts as quiet. The tab shows your mic's level live. |
 | Silence hangover | 400 ms | How long it keeps sending after you go quiet. |
 | Jitter percentile | 99 | How much of the measured lateness to cover. 100 covers the worst packet seen. |
@@ -356,7 +363,7 @@ and worker share memory.
 #### Bigger rooms
 
 Raw PCM is about 1 Mbit/s up to each person you're talking to, and with
-silence suppression off (the default) that's all the time, not only while
+silence suppression off that's all the time, not only while
 you talk: ~5 Mbit/s in a room of six, ~11 Mbit/s at the 12-person limit,
 375 packets a second to each. Fine on a LAN or fibre; a lot for some home
 uplinks and for phones on mobile data. There's no lower rate to fall back

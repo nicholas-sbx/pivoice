@@ -15,6 +15,7 @@
 /// <reference lib="webworker" />
 import { LOOP_ID, type LLConfig } from './config'
 import { MAX_FRAME_BYTES, MAX_PACKET_FRAMES, PING, PONG, Unwrapper, bytesToPcm, decodePacket, decodePing, encodePacket, encodePing, pcmToBytes, type Frame } from './packet'
+import { SilenceGate } from './gate'
 import { FrameRing, RING_MAX_FRAME, RING_SLOTS } from './ring'
 import type { CaptureFrame, PlaybackMessage } from './worklet'
 
@@ -89,40 +90,25 @@ const remotes = new Map<string, Remote>()
 
 let history: Frame[] = []
 let sent = 0
-let quietFor = 0
+const gate = new SilenceGate()
 
 function post(msg: FromWorker, transfer: Transferable[] = []) {
   self.postMessage(msg, transfer)
 }
 
-/**
- * Our DTX: skip a frame once you've been below the threshold for a moment.
- * Each frame decides from its own level, so the first frame with any sound
- * in it goes out (nothing waits on a detector), and the hangover keeps the
- * tails of words.
- */
-function isSilence(pcm: Float32Array): boolean {
-  let sum = 0
-  for (let i = 0; i < pcm.length; i++) sum += pcm[i] * pcm[i]
-  const db = 10 * Math.log10(sum / pcm.length + 1e-12)
-  if (db >= cfg.dtxThresholdDb) {
-    quietFor = 0
-    return false
-  }
-  quietFor += pcm.length
-  return quietFor > cfg.dtxHangoverMs * 48
-}
-
 function encode(f: CaptureFrame) {
   if (!active || !cfg || (muted && !loop)) return
-  if (cfg.dtx && isSilence(f.pcm)) return
+  if (cfg.dtx && !gate.pass(f.ts, f.pcm, cfg.dtxThresholdDb, cfg.dtxHangoverMs)) return
+  // The first frame after a silence takes the frames just before it along (see gate.ts), in place of repeats of frames from before the silence.
+  const lead = cfg.dtx ? gate.lead() : []
+  if (lead.length) history = lead.map(l => ({ ts: l.ts, data: pcmToBytes(l.pcm) }))
   // The samples go out as they are, the moment they're captured.
-  emit({ ts: f.ts, data: pcmToBytes(f.pcm) })
+  emit({ ts: f.ts, data: pcmToBytes(f.pcm) }, lead.length)
 }
 
-/** A finished frame: add the repeats of the ones before it, now and then a capture stamp, and send. */
-function emit(frame: Frame) {
-  const frames = [...history.slice(history.length - cfg.redundancy), frame]
+/** A finished frame: add the repeats of the ones before it (at least `lead` of them), now and then a capture stamp, and send. */
+function emit(frame: Frame, lead = 0) {
+  const frames = [...history.slice(history.length - Math.max(cfg.redundancy, lead)), frame]
   history.push(frame)
   if (history.length > 2) history.shift()
   const stamp = sent++ % STAMP_EVERY === 0 ? captureEpoch(frame.ts) : null

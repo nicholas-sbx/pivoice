@@ -34,7 +34,20 @@
  * - **Underruns** (nothing left: the talker went quiet, DTX, or the network
  *   stalled) do the same and then go idle. The next frame to arrive starts
  *   a fresh talkspurt exactly `target` behind, which is where most
- *   adaptation happens for free.
+ *   adaptation happens for free. That start lands wherever in its frame
+ *   the clock has got to, so it fades in over a millisecond rather than
+ *   jumping in mid-waveform. (A sender's silence gate also sends the two
+ *   quiet frames before the sound with the first one, so the start lands
+ *   in those: see gate.ts.)
+ * - **Silences don't age the estimate.** While idle nothing is
+ *   re-estimated, and a window that holds only a few arrivals (the first
+ *   moments of a talkspurt after a silence longer than the window) can
+ *   raise the jitter but not lower it. Otherwise every sentence after a
+ *   pause of a few seconds started on a jitter of zero and a target of
+ *   just the margin, and on wifi crackled until the estimate caught up.
+ *   And while idle, frames that land in the same block count as one
+ *   arrival, the newest: the ones before it in a packet are the sender's
+ *   look-back, late by design, not by the network.
  */
 
 /** Below this (RMS, about −50 dBFS) the last block played counts as quiet, where a change of speed can't be heard. */
@@ -79,6 +92,10 @@ interface Stored {
 }
 
 const IDLE_AFTER_MS = 80
+/** How long a fresh start fades in. */
+const FADE_IN_MS = 1
+/** A window with fewer arrivals than this is too thin to lower the jitter estimate (about 0.27 s of 128-sample frames). */
+const THIN_WINDOW = 100
 /** The most frames the buffer holds: 256 of the 128-sample frames everyone sends is 680 ms, more than twice the longest target (MaxFrames in jitter.go). */
 export const MAX_FRAMES = 256
 
@@ -98,6 +115,8 @@ export class JitterBuffer {
   private lastGood: Stored | null = null
   private lastGoodEnd = 0
   private emptySince: number | null = null
+  /** Samples played since the last fresh start, for its fade-in. */
+  private sinceStart = Infinity
   // Counters since the last stats() call.
   private late = 0
   private concealed = 0
@@ -123,7 +142,10 @@ export class JitterBuffer {
   /** A decoded frame: `ts` on the sender's clock, `arrival` on ours. */
   push(ts: number, pcm: Float32Array, arrival: number) {
     const off = arrival - ts
-    this.arrivals.push({ at: arrival, off })
+    const prev = this.arrivals[this.arrivals.length - 1]
+    // Idle, in the same block as the frame before: one arrival, as late as the newest of them.
+    if (this.pos === null && prev && prev.at === arrival) prev.off = Math.min(prev.off, off)
+    else this.arrivals.push({ at: arrival, off })
     if (this.base === null || off < this.base) this.base = off
     if (this.pos !== null && ts + pcm.length <= this.pos) {
       this.late++
@@ -139,6 +161,8 @@ export class JitterBuffer {
   }
 
   private estimate(now: number) {
+    // A silence leaves the estimate as the last talkspurt left it (once there is one).
+    if (this.pos === null && this.base !== null) return
     if (now - this.estimatedAt < this.samples(50)) return
     this.estimatedAt = now
     const cutoff = now - this.cfg.windowSec * this.cfg.sampleRate
@@ -150,7 +174,8 @@ export class JitterBuffer {
     for (const a of this.arrivals) base = Math.min(base, a.off)
     const late = this.arrivals.map(a => a.off - base).sort((x, y) => x - y)
     this.base = base
-    this.jitter = late[Math.min(late.length - 1, Math.floor((late.length * this.cfg.percentile) / 100))]
+    const jitter = late[Math.min(late.length - 1, Math.floor((late.length * this.cfg.percentile) / 100))]
+    this.jitter = late.length < THIN_WINDOW ? Math.max(this.jitter, jitter) : jitter
   }
 
   targetSamples(): number {
@@ -184,6 +209,7 @@ export class JitterBuffer {
       this.rate = 1
       this.cursor = null
       this.emptySince = null
+      this.sinceStart = 0
     }
 
     let err = this.pos - desired
@@ -202,6 +228,7 @@ export class JitterBuffer {
     const want = 1 - Math.max(-1, Math.min(1, err / k)) * stretch
     this.rate += Math.max(-RATE_GLIDE, Math.min(RATE_GLIDE, want - this.rate))
     const rate = this.rate
+    const fade = this.samples(FADE_IN_MS)
 
     for (let i = 0; i < n; i++) {
       if (this.pos === null) {
@@ -214,6 +241,7 @@ export class JitterBuffer {
       const a = this.sample(ip, now + i)
       const b = frac > 0 ? this.sample(ip + 1, now + i) : a
       out[i] = a + (b - a) * frac
+      if (this.sinceStart < fade) out[i] *= this.sinceStart++ / fade
       if (this.pos !== null) this.pos += rate
     }
     let sum = 0

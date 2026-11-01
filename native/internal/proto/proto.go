@@ -141,7 +141,7 @@ type LLConfig struct {
 
 // DefaultLL is LL_DEFAULTS in src/audio/ll/config.ts.
 var DefaultLL = LLConfig{
-	DTX: false, DTXThresholdDb: -70, DTXHangoverMs: 400, Redundancy: 0,
+	DTX: true, DTXThresholdDb: -70, DTXHangoverMs: 400, Redundancy: 0,
 	MinBufferMs: 0, MaxBufferMs: 80, MarginMs: 3, JitterMultiplier: 1, JitterPercentile: 99,
 	JitterWindowSec: 3, StretchPct: 2, ConcealMs: 12,
 }
