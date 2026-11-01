@@ -165,14 +165,17 @@ try {
   ok('Ada on Binaural: still hears Bob')
   await ada.click('button[aria-label^="Spatial Audio"]')
 
-  // Ada drops and comes straight back (what a setting that needs a fresh connection does), the app's sound card closed and reopened.
-  await ada.evaluate(() => window.__pv.rejoin())
-  await ada.waitForSelector('.status:has-text("Reconnecting")', { timeout: 5_000 }).catch(() => {})
-  await ada.waitForSelector('.status:has-text("Voice Connected")', { timeout: 20_000 })
-  if (await ada.$('text=nobody can hear you')) throw new Error('reconnecting lost the microphone')
-  await hears(ada, 'Bob', 'Ada (app) after reconnecting')
-  await hears(bob, 'Ada', 'Bob (website) after Ada reconnected')
-  ok('Ada reconnected: same seat, mic and all')
+  // Ada drops and comes straight back (what a setting that needs a fresh connection does), the app's sound card
+  // closed and reopened. Through the dev handle, so only against a dev build (npm run dev).
+  if (await ada.evaluate(() => !!window.__pv)) {
+    await ada.evaluate(() => window.__pv.rejoin())
+    await ada.waitForSelector('.status:has-text("Reconnecting")', { timeout: 5_000 }).catch(() => {})
+    await ada.waitForSelector('.status:has-text("Voice Connected")', { timeout: 20_000 })
+    if (await ada.$('text=nobody can hear you')) throw new Error('reconnecting lost the microphone')
+    await hears(ada, 'Bob', 'Ada (app) after reconnecting')
+    await hears(bob, 'Ada', 'Bob (website) after Ada reconnected')
+    ok('Ada reconnected: same seat, mic and all')
+  } else ok('(not a dev build: no reconnect)')
 
   // Ada mutes: the app stops sending (Bob sees her bitrate go to 0).
   await ada.click('button[aria-label="Mute"]')
