@@ -4,8 +4,10 @@ go 1.24.7
 
 require (
 	github.com/coder/websocket v1.8.15
+	github.com/godbus/dbus/v5 v5.1.0
 	github.com/pion/webrtc/v4 v4.2.25
 	github.com/webview/webview_go v0.0.0-20240831120633-6173450d4dd6
+	golang.org/x/sys v0.41.0
 )
 
 require (
@@ -28,6 +30,5 @@ require (
 	github.com/wlynxg/anet v0.0.5 // indirect
 	golang.org/x/crypto v0.48.0 // indirect
 	golang.org/x/net v0.50.0 // indirect
-	golang.org/x/sys v0.41.0 // indirect
 	golang.org/x/time v0.14.0 // indirect
 )

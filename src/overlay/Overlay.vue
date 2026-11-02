@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onBeforeUnmount, reactive, shallowRef, watch } from 'vue'
+import { onBeforeUnmount, reactive, ref, shallowRef, watch } from 'vue'
 import OverlayTable from '../components/OverlayTable.vue'
 import { Seating } from '../lib/seating'
 import type { OverlayLook, OverlayState, ToOverlay } from '../native/protocol'
@@ -17,7 +17,8 @@ import type { OverlayLook, OverlayState, ToOverlay } from '../native/protocol'
  *    call wakes this page not at all, and the main window being minimised,
  *    which slows its timers, doesn't slow the rings);
  *  - `look`: how faded it is, and whether it's being placed (an outline, so
- *    you can see where it is while you move it).
+ *    you can see where it is while you move it);
+ *  - `repaint`: it's just been placed (or moved, or resized).
  *
  * It can't say anything back but that it's ready for them.
  */
@@ -34,9 +35,39 @@ const look = reactive<OverlayLook>({ opacity: 0.8, scale: 1, placing: false })
 const speaking = shallowRef(new Set<string>())
 const audible = shallowRef(new Set<string>())
 
+/**
+ * Paints the whole window again, not only what changed. The window is
+ * see-through and drawn without the GPU, and a frame of it can be lost as
+ * it's placed or resized (seen on Linux): then only what's painted again
+ * afterwards shows, which in a quiet call is a face and the bit of the
+ * table's rim behind it, whenever its ring changes. A sheet over all of it,
+ * too faint to see, for two frames, has it all painted again. Only when it's
+ * placed, resized or the call changes, so the rings still cost one small
+ * paint each.
+ */
+const fresh = ref(false)
+let repainting = false
+function repaint() {
+  if (repainting) return
+  repainting = true
+  fresh.value = true
+  requestAnimationFrame(() =>
+    requestAnimationFrame(() => {
+      fresh.value = false
+      repainting = false
+    })
+  )
+}
+window.addEventListener('resize', repaint)
+
 function receive(m: ToOverlay) {
-  if (m.t === 'state') state.value = m.state
-  else if (m.t === 'look') Object.assign(look, m.look)
+  if (m.t === 'state') {
+    state.value = m.state
+    repaint()
+  } else if (m.t === 'look') {
+    Object.assign(look, m.look)
+    repaint()
+  } else if (m.t === 'repaint') repaint()
   else if (m.t === 'rings') {
     // Your own mic is '' to the app, which doesn't know who you are.
     const you = (ids: string[]) => new Set(ids.map(id => id || (state.value?.selfId ?? '')))
@@ -57,11 +88,12 @@ if (api) {
 }
 onBeforeUnmount(() => {
   if (api) api.onmessage = null
+  window.removeEventListener('resize', repaint)
 })
 </script>
 
 <template>
-  <div class="frame" :class="{ placing: look.placing }">
+  <div class="frame" :class="{ placing: look.placing, fresh }">
     <OverlayTable
       v-if="state"
       bare
@@ -91,6 +123,14 @@ onBeforeUnmount(() => {
 .frame.placing {
   border-color: var(--brand);
   background: rgba(88, 101, 242, 0.12);
+}
+/* Over the whole window and as faint as there is (1/255): it's there only to be painted. */
+.frame.fresh::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.004);
+  pointer-events: none;
 }
 .label {
   position: absolute;

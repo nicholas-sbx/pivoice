@@ -30,8 +30,17 @@ export interface AppConfig {
   outputId: string
   /** Windows: WASAPI exclusive mode. */
   exclusive: boolean
+  /**
+   * The speakers' buffer: the app manages it (the smallest, and more each
+   * time they keep running dry), or `bufferMs` on top of the smallest.
+   */
+  bufferAuto: boolean
+  bufferMs: number
   processing: ProcessingConfig
 }
+
+/** What the speakers' buffer can be set to, ms on top of the smallest (native/internal/engine/buffer.go's steps). */
+export const APP_BUFFER_STEPS = [0, 3, 6, 12, 24] as const
 
 /** What the app does to your mic before it goes out (all off: nothing at all, at no cost). */
 export interface ProcessingConfig {
@@ -122,6 +131,8 @@ export type ToOverlay =
   | { t: 'look'; look: OverlayLook }
   /** Who's speaking and who's making any sound at all, as the app hears it, whenever that changes. You're ''. */
   | { t: 'rings'; speaking: string[]; audible: string[] }
+  /** It's just been placed: paint all of it again, in case a frame of it was lost. */
+  | { t: 'repaint' }
 
 export interface AppMonitor {
   id: string
@@ -156,6 +167,10 @@ export interface AudioInfo {
   block: number
   /** Windows: how WASAPI was opened (exclusive, raw, shared). */
   mode?: string
+  /** What it was opened with on top of the speakers' smallest buffer, ms. */
+  extraOutputMs?: number
+  /** Linux: the audio thread's realtime priority and how it got it, or "no: why". */
+  realtime?: string
 }
 
 /** Everything on the app's side that can put a click in the audio, since the sound card opened. */

@@ -138,7 +138,7 @@ onBeforeUnmount(() => {
           :aria-pressed="overlayOn"
           @click="toggleOverlay"
         >
-          <Icon name="pip" :size="20" />
+          <Icon name="overlay" :size="20" />
         </button>
         <div class="display-anchor">
           <button
@@ -370,10 +370,17 @@ h1 {
   color: var(--interactive-normal);
   cursor: pointer;
 }
-.bar-btn:hover,
-.bar-btn.active {
+.bar-btn:hover {
   color: var(--interactive-active);
   background: var(--bg-modifier-hover);
+}
+/* On is a solid fill, so it reads at a glance and under the pointer: hovering only darkens it, and an off button never looks like that. */
+.bar-btn.active {
+  color: #fff;
+  background: var(--brand);
+}
+.bar-btn.active:hover {
+  background: var(--brand-hover);
 }
 .people {
   display: inline-flex;

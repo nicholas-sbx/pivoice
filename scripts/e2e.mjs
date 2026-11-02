@@ -536,6 +536,16 @@ try {
     const cut = await app.evaluate(() => [...document.querySelectorAll('.overlay-settings *')].filter(e => e.getBoundingClientRect().right > innerWidth).length)
     if (cut) throw new Error('overlay: its settings run off the screen')
     if (SHOTS) await app.screenshot({ path: `${SHOTS}/overlay-settings.png` })
+    // The pointer on another side previews it; the middle has no edge, so its distance is greyed out, with the same words.
+    const slider = '.overlay-settings .slider:has-text("Distance from the edge") input'
+    if (await app.isDisabled(slider)) throw new Error('overlay: distance from the edge should work at a corner')
+    await app.hover('.overlay-settings button[aria-label="Top right"]')
+    if (!(await app.$('.overlay-settings .ghost'))) throw new Error('overlay: no preview of the side under the pointer')
+    const hint = await app.textContent('.overlay-settings .slider:has-text("Distance from the edge") small')
+    await app.click('.overlay-settings button[aria-label="Middle"]')
+    if (!(await app.isDisabled(slider))) throw new Error('overlay: distance from the edge should be off in the middle')
+    if ((await app.textContent('.overlay-settings .slider:has-text("Distance from the edge") small')) !== hint) throw new Error('overlay: its hint changed in the middle')
+    await app.click('.overlay-settings button[aria-label="Bottom left"]')
     await app.click('button[aria-label="Voice Settings"]')
     ok('overlay: shown with the call when switched on, on the screen and side its settings say')
 

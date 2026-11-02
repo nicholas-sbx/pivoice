@@ -112,6 +112,7 @@ func (o *Overlay) Show(p proto.OverlayPlace) error {
 			o.mu.Unlock()
 		}
 		o.win.place(p)
+		o.win.eval(recv(repaintMsg))
 	}) {
 		return errors.New("the window didn't answer")
 	}
@@ -247,8 +248,14 @@ func (o *Overlay) screensChanged() {
 	o.mu.Unlock()
 	if o.win != nil {
 		o.win.place(p)
+		o.win.eval(recv(repaintMsg))
 	}
 }
+
+// repaintMsg has the overlay's page paint all of itself again, after it's
+// placed: a see-through window drawn without the GPU can lose a frame as
+// it's moved or resized, and then only what's painted again afterwards shows.
+var repaintMsg = []byte(`{"t":"repaint"}`)
 
 // onUI runs f on the UI thread and waits for it, from any other goroutine.
 func (o *Overlay) onUI(f func()) bool {

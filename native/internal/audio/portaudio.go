@@ -72,6 +72,8 @@ import (
 	"sync/atomic"
 	"time"
 	"unsafe"
+
+	"github.com/nicholas-sbx/pivoice/native/internal/rt"
 )
 
 // PortAudio is the real sound card, through our own small binding: the
@@ -235,6 +237,12 @@ type paStream struct {
 	block atomic.Int32
 	// Glitch counters (PortAudio's status flags), since the stream opened.
 	inOver, outUnder atomic.Int64
+	// The thread PortAudio calls us on (Linux, for rt.Promote), once it has.
+	tid atomic.Int32
+	// How promoting it went (Info.Realtime); closed: the stream's gone, don't.
+	rtMu     sync.Mutex
+	realtime string
+	closed   bool
 	// The callback's own scratch, so nothing is allocated per block.
 	stereo  []float32
 	silence []float32
@@ -255,6 +263,9 @@ func pvCallback(id C.uintptr_t, in, out *C.float, frames C.ulong, adc, now, dac 
 	}
 	n := int(frames)
 	st.block.Store(int32(n))
+	if rt.Supported && st.tid.Load() == 0 {
+		st.tid.Store(int32(rt.Tid()))
+	}
 	if flags&C.paInputOverflow != 0 {
 		st.inOver.Add(1)
 	}
@@ -291,23 +302,61 @@ func (p *paStream) Info() Info {
 	i.Block = int(p.block.Load())
 	i.InputOverflows = p.inOver.Load()
 	i.OutputUnderflows = p.outUnder.Load()
+	p.rtMu.Lock()
+	i.Realtime = p.realtime
+	p.rtMu.Unlock()
 	return i
 }
 
+// promote the callback's thread to realtime priority (rt), once PortAudio
+// has called us on it: the first block comes within milliseconds of the
+// start, so a stream that hasn't called in 2 s isn't going to.
+func (p *paStream) promote() {
+	deadline := time.Now().Add(2 * time.Second)
+	for p.tid.Load() == 0 {
+		if time.Now().After(deadline) {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	p.rtMu.Lock()
+	closed := p.closed
+	p.rtMu.Unlock()
+	if closed {
+		return
+	}
+	// Not under rtMu: a D-Bus call can take a while, and Close mustn't wait for it.
+	how, err := rt.Promote(int(p.tid.Load()))
+	if err != nil {
+		log.Printf("audio: the audio thread stays at normal priority: %v", err)
+		how = "no: " + err.Error()
+	} else {
+		log.Printf("audio: the audio thread is realtime (%s)", how)
+	}
+	p.rtMu.Lock()
+	p.realtime = how
+	p.rtMu.Unlock()
+}
+
 func (p *paStream) Close() error {
+	p.rtMu.Lock()
+	p.closed = true
+	p.rtMu.Unlock()
 	C.Pa_AbortStream(p.s)
 	err := paErr(C.Pa_CloseStream(p.s))
 	streamSlot[p.id].Store(nil)
 	return err
 }
 
-// Open a duplex stream with each device's own lowest suggested latency,
-// and whatever block size the device likes best (asking for a fixed one
-// makes PortAudio buffer to match). Without a mic it opens output only,
+// Open a duplex stream with each device's own lowest suggested latency
+// (plus o.ExtraOutputMs for the speakers), and whatever block size the
+// device likes best (asking for a fixed one makes PortAudio buffer to
+// match). On Linux the callback's thread is then made realtime where the
+// system allows it (rt.Promote). Without a mic it opens output only,
 // and without speakers input only. Tries each host API in turn (see
 // hostAPIs), and on WASAPI the best mode first: exclusive if asked for,
 // then shared and raw, then shared as Windows likes it.
-func (p *PortAudio) Open(inputID, outputID string, cb Callback) (Stream, error) {
+func (p *PortAudio) Open(o Options, cb Callback) (Stream, error) {
 	type try struct {
 		exclusive, raw bool
 		mode           string
@@ -322,9 +371,12 @@ func (p *PortAudio) Open(inputID, outputID string, cb Callback) (Stream, error) 
 			}
 		}
 		for _, t := range tries {
-			s, err := open(a, inputID, outputID, cb, t.exclusive, t.raw)
+			s, err := open(a, o, cb, t.exclusive, t.raw)
 			if err == nil {
 				s.info.Mode = t.mode
+				if rt.Supported {
+					go s.promote()
+				}
 				return s, nil
 			}
 			what := a.name
@@ -341,9 +393,9 @@ func (p *PortAudio) Open(inputID, outputID string, cb Callback) (Stream, error) 
 	return nil, errors.Join(errs...)
 }
 
-func open(a *paAPI, inputID, outputID string, cb Callback, exclusive, raw bool) (*paStream, error) {
-	in := find(a, inputID, true)
-	out := find(a, outputID, false)
+func open(a *paAPI, o Options, cb Callback, exclusive, raw bool) (*paStream, error) {
+	in := find(a, o.InputID, true)
+	out := find(a, o.OutputID, false)
 	if in == nil && out == nil {
 		return nil, errors.New("no audio devices")
 	}
@@ -366,7 +418,7 @@ func open(a *paAPI, inputID, outputID string, cb Callback, exclusive, raw bool) 
 		inIdx, inLat = C.int(in.index), in.lowIn
 	}
 	if out != nil {
-		outIdx, outLat = C.int(out.index), out.lowOut
+		outIdx, outLat = C.int(out.index), out.lowOut+max(0, o.ExtraOutputMs)/1000
 		st.outCh = min(2, out.maxOut)
 	}
 	// PaStream is a void typedef: cgo sees it as unsafe.Pointer.
@@ -380,7 +432,7 @@ func open(a *paAPI, inputID, outputID string, cb Callback, exclusive, raw bool) 
 		return nil, fmt.Errorf("opening %s / %s: %w", name(in), name(out), err)
 	}
 	st.s = s
-	st.info = Info{Input: name(in), Output: name(out), API: a.name}
+	st.info = Info{Input: name(in), Output: name(out), API: a.name, ExtraOutputMs: max(0, o.ExtraOutputMs)}
 	if si := C.Pa_GetStreamInfo(s); si != nil {
 		st.info.InputLatencyMs = float64(si.inputLatency) * 1000
 		st.info.OutputLatencyMs = float64(si.outputLatency) * 1000

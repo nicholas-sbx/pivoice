@@ -70,3 +70,17 @@ describe('mic processing defaults', () => {
     expect(mic(WINDOWS, { rev: 2, echoCancellation: true, noiseSuppression: true, autoGainControl: false })).toEqual([true, true, false])
   })
 })
+
+describe('the app speaker buffer', () => {
+  it('is managed automatically, from the smallest, by default', () => {
+    const p = loadPrefs()
+    expect([p.appBufferAuto, p.appBufferMs]).toEqual([true, 0])
+  })
+
+  it('keeps a choice made by hand, if it is one of the steps', () => {
+    store.set('pv.prefs', JSON.stringify({ appBufferAuto: false, appBufferMs: 12 }))
+    expect([loadPrefs().appBufferAuto, loadPrefs().appBufferMs]).toEqual([false, 12])
+    store.set('pv.prefs', JSON.stringify({ appBufferAuto: 'no', appBufferMs: 500 }))
+    expect([loadPrefs().appBufferAuto, loadPrefs().appBufferMs]).toEqual([true, 0])
+  })
+})
