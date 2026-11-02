@@ -15,8 +15,14 @@ import type { AppMonitor, OverlayLook, OverlayPlace, OverlayState } from './prot
 
 /** This app can show an overlay here. */
 export const overlaySupported = computed(() => native.state === 'ready' && !!native.app?.overlay)
-/** The overlay's settings are open: it shows its edges, so you can see where it is. */
+/** The overlay's settings are open: it shows its edges, so you can see where it is (while this window has the focus). */
 export const overlayPlacing = ref(false)
+/**
+ * This window has the focus. The edges are for placing it, so they go when
+ * you go to something else with the settings still open, and come back when
+ * you come back. (Kept by `driveOverlay`.)
+ */
+export const mainFocused = ref(true)
 /** Why it isn't up, if it isn't. */
 export const overlayError = ref('')
 
@@ -36,6 +42,11 @@ export interface OverlayCall {
 
 export function driveOverlay(b: NativeBridge, call: OverlayCall, seating: Seating) {
   bridge = b
+  if (typeof window !== 'undefined') {
+    mainFocused.value = document.hasFocus()
+    window.addEventListener('focus', () => (mainFocused.value = true))
+    window.addEventListener('blur', () => (mainFocused.value = false))
+  }
   const shown = computed(() => overlaySupported.value && call.phase === 'room' && call.prefs.overlay.on)
   const place = computed<OverlayPlace>(() => {
     const o = call.prefs.overlay
@@ -55,7 +66,7 @@ export function driveOverlay(b: NativeBridge, call: OverlayCall, seating: Seatin
       silenced: { ...call.silenced }
     }
   })
-  const look = computed<OverlayLook>(() => ({ opacity: call.prefs.overlay.opacity, scale: call.prefs.overlay.scale, placing: overlayPlacing.value }))
+  const look = computed<OverlayLook>(() => ({ opacity: call.prefs.overlay.opacity, scale: call.prefs.overlay.scale, placing: overlayPlacing.value && mainFocused.value }))
 
   // Compared as text: a change to one setting replaces them all, and only what really changed should go across.
   const placeKey = computed(() => JSON.stringify(place.value))
