@@ -501,7 +501,9 @@ becomes just the UI.
   in, the app makes that thread realtime ([`native/internal/rt`](native/internal/rt)):
   SCHED_FIFO if it may (realtime limits, as an `audio` group often gives),
   otherwise through rtkit, the service PipeWire's own clients ask, which
-  says yes to an active desktop session. Priority 18, under PipeWire's
+  says yes to an active desktop session, or, in the Flatpak (whose
+  sandbox has no system bus), through the Realtime portal, which asks
+  rtkit for it. Priority 18, under PipeWire's
   own threads. It first caps RLIMIT_RTTIME at 200 ms (rtkit insists), so a
   realtime thread that never slept would be stopped, not freeze the
   machine. The sound card line in the Latency tab says how it went.
@@ -969,8 +971,10 @@ and how to run each. Each file has the version in its name
 which the site's download buttons build from `native/VERSION` (they don't
 link the Flatpak yet). The Flatpak's sandbox has the network, PipeWire or
 PulseAudio and the display, and no file access at all: the app's own code
-never opens a file. The always-on-top overlay inside it is untested, and
-global shortcuts don't exist in Flatpak. macOS is switched off for now (its runners can queue
+never opens a file; the audio thread goes realtime through the Realtime
+portal there. CI installs the bundle and checks that every library the
+binary links is in the runtime. The always-on-top overlay inside it is
+untested. macOS is switched off for now (its runners can queue
 for a long time): uncomment its entry in the build matrix to bring it back,
 as one universal binary. It needs no secrets, only
 `VITE_PUBLIC_URL`, the site it opens: without it, a main push builds but
