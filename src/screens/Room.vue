@@ -25,7 +25,7 @@ import { isNative } from '../native/bridge'
 import { useCompact } from '../lib/viewport'
 import { vSnap } from '../lib/snap'
 import { closePip, pipRoot, pipSupported, pipWindow, togglePip } from '../pip'
-import { overlayError, overlayOpening, overlaySupported } from '../native/overlay'
+import { overlayError, overlaySupported } from '../native/overlay'
 
 const settingsOpen = ref(false)
 const displayOpen = ref(false)
@@ -49,8 +49,6 @@ function toggleOverlay() {
   updatePrefs({ overlay: { ...call.prefs.overlay, on: !call.prefs.overlay.on } })
 }
 const overlayOn = computed(() => call.prefs.overlay.on && !overlayError.value)
-/** Switched on, and the app's still bringing it up. */
-const overlayWaiting = computed(() => call.prefs.overlay.on && overlayOpening.value)
 
 const isMac = /Mac|iPhone|iPad/.test(navigator.platform)
 const mod = isMac ? '⌘⇧' : 'Ctrl+Shift+'
@@ -135,14 +133,12 @@ onBeforeUnmount(() => {
           type="button"
           class="bar-btn"
           :class="{ active: overlayOn }"
-          :title="overlayWaiting ? 'Opening the overlay…' : overlayOn ? 'Hide overlay' : 'Show overlay'"
+          :title="overlayOn ? 'Hide overlay' : 'Show overlay'"
           :aria-label="overlayOn ? 'Hide overlay' : 'Show overlay'"
           :aria-pressed="overlayOn"
-          :aria-busy="overlayWaiting"
           @click="toggleOverlay"
         >
-          <span v-if="overlayWaiting" class="spinner" aria-hidden="true" />
-          <Icon v-else name="overlay" :size="20" />
+          <Icon name="overlay" :size="20" />
         </button>
         <div class="display-anchor">
           <button
@@ -385,19 +381,6 @@ h1 {
 }
 .bar-btn.active:hover {
   background: var(--brand-hover);
-}
-.spinner {
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  border: 2px solid rgba(255, 255, 255, 0.3);
-  border-top-color: #fff;
-  animation: spin 0.8s linear infinite;
-}
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
 }
 .people {
   display: inline-flex;

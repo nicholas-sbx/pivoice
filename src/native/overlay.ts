@@ -19,8 +19,6 @@ export const overlaySupported = computed(() => native.state === 'ready' && !!nat
 export const overlayPlacing = ref(false)
 /** Why it isn't up, if it isn't. */
 export const overlayError = ref('')
-/** Asked for and not up yet (it takes a second): for a spinner where the button is. */
-export const overlayOpening = ref(false)
 
 let bridge: NativeBridge | null = null
 
@@ -64,7 +62,6 @@ export function driveOverlay(b: NativeBridge, call: OverlayCall, seating: Seatin
   const lookKey = computed(() => JSON.stringify(look.value))
 
   let up = false
-  let opening = 0
   watch(
     [shown, placeKey],
     async ([on]) => {
@@ -72,17 +69,11 @@ export function driveOverlay(b: NativeBridge, call: OverlayCall, seating: Seatin
       if (!on) {
         if (up) b.send({ t: 'overlay', op: 'hide' })
         up = false
-        overlayOpening.value = false
         return
       }
       // The app keeps the latest of these (the state goes when it's worked out, below), and hands them to the overlay's page when it's loaded.
       b.send({ t: 'overlay', op: 'look', look: look.value })
-      // Only the first show is a wait; moving it while it's up is quick, and shouldn't flash a spinner.
-      const wait = !up
-      if (wait) overlayOpening.value = ++opening > 0
-      const r = await b.request({ t: 'overlay', op: 'show', place: p }, 'overlay', 10_000).finally(() => {
-        if (wait) overlayOpening.value = --opening > 0
-      })
+      const r = await b.request({ t: 'overlay', op: 'show', place: p }, 'overlay', 10_000)
       if (!shown.value) return
       up = !!r?.on
       overlayError.value = r ? (r.error ?? '') : "The app didn't answer."
