@@ -12,6 +12,7 @@ import "C"
 
 import (
 	"errors"
+	"os"
 	"unsafe"
 
 	"github.com/nicholas-sbx/pivoice/native/internal/proto"
@@ -124,6 +125,10 @@ func monitors(main unsafe.Pointer) proto.Monitors {
 	m := proto.Monitors{Placeable: mode != 0, OnTop: mode != 0}
 	if C.pv_needs_layer_shell() != 0 {
 		m.Needs = "gtk-layer-shell"
+		// The sandbox sees only its runtime's libraries, which don't include it: installing it outside does nothing.
+		if _, err := os.Stat("/.flatpak-info"); err == nil {
+			m.Needs = "not-in-flatpak"
+		}
 	}
 	on := int(C.pv_monitor_of(main))
 	for i, s := range screens() {

@@ -3,7 +3,7 @@ import type { Seating } from '../lib/seating'
 import type { Prefs } from '../lib/prefs'
 import type { Member } from '../net/protocol'
 import { native, type NativeBridge } from './bridge'
-import type { AppMonitor, OverlayLook, OverlayPlace, OverlayState } from './protocol'
+import type { AppMonitor, OverlayLook, OverlayNeeds, OverlayPlace, OverlayState } from './protocol'
 
 /**
  * The app's overlay (native/internal/overlay), from the page's side: while
@@ -100,7 +100,7 @@ export function driveOverlay(b: NativeBridge, call: OverlayCall, seating: Seatin
 }
 
 /** The screens the overlay can go on, and what this desktop lets it do there. */
-export async function listMonitors(): Promise<{ monitors: AppMonitor[]; placeable: boolean; onTop: boolean; needs?: 'gtk-layer-shell' }> {
+export async function listMonitors(): Promise<{ monitors: AppMonitor[]; placeable: boolean; onTop: boolean; needs?: OverlayNeeds }> {
   const r = bridge ? await bridge.request({ t: 'monitors' }, 'monitors', 5000) : null
   return r
     ? { monitors: r.monitors, placeable: r.placeable, onTop: r.onTop, needs: r.needs }

@@ -217,8 +217,9 @@ type Hello struct {
 // Monitors: the screens the overlay can go on. Placeable: it goes where
 // it's told (not on GNOME, which places windows itself). OnTop: it stays
 // above other windows (GNOME only lets you ask for that from its menu).
-// Needs: what to install for it to (gtk-layer-shell, on a Wayland desktop
-// that offers layer-shell), or "".
+// Needs: on a Wayland desktop that offers layer-shell, what's missing for
+// it to: "gtk-layer-shell" to install, or "not-in-flatpak" (the Flatpak's
+// runtime hasn't got it); else "".
 type Monitors struct {
 	T         string    `json:"t"` // "monitors"
 	Monitors  []Monitor `json:"monitors"`
