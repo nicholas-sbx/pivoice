@@ -100,6 +100,11 @@ type Config struct {
 	OutputID string   `json:"outputId"`
 	// Windows: WASAPI exclusive mode, the device to ourselves for its smallest buffers.
 	Exclusive bool `json:"exclusive"`
+	// The speakers' buffer: managed by the app (it adds to it when they keep
+	// running dry), or BufferMs on top of the smallest the device offers.
+	// A page from before these has neither: the smallest, as it always was.
+	BufferAuto bool    `json:"bufferAuto"`
+	BufferMs   float64 `json:"bufferMs"`
 	// What the app does to the mic before it goes out (all off: nothing at all).
 	Processing Processing `json:"processing"`
 }
@@ -162,6 +167,16 @@ func (c LLConfig) Sanitize() LLConfig {
 	c.JitterWindowSec = clamp(c.JitterWindowSec, 1, 10, d.JitterWindowSec)
 	c.StretchPct = clamp(c.StretchPct, 0, 6, d.StretchPct)
 	c.ConcealMs = clamp(c.ConcealMs, 0, 60, d.ConcealMs)
+	return c
+}
+
+// MaxBufferMs is the most BufferMs may add (the biggest of the page's choices).
+const MaxBufferMs = 24
+
+// Sanitize keeps the speakers' buffer to what the page offers.
+func (c Config) Sanitize() Config {
+	c.LL, c.Processing = c.LL.Sanitize(), c.Processing.Sanitize()
+	c.BufferMs = clamp(c.BufferMs, 0, MaxBufferMs, 0)
 	return c
 }
 

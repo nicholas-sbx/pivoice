@@ -20,13 +20,14 @@ func (Fake) Devices() []DeviceDesc {
 func (Fake) Close() {}
 
 type fakeStream struct {
-	stop chan struct{}
-	once sync.Once
-	done chan struct{}
+	extra float64
+	stop  chan struct{}
+	once  sync.Once
+	done  chan struct{}
 }
 
-func (Fake) Open(_, _ string, cb Callback) (Stream, error) {
-	s := &fakeStream{stop: make(chan struct{}), done: make(chan struct{})}
+func (Fake) Open(o Options, cb Callback) (Stream, error) {
+	s := &fakeStream{extra: o.ExtraOutputMs, stop: make(chan struct{}), done: make(chan struct{})}
 	go s.run(cb)
 	return s, nil
 }
@@ -64,7 +65,7 @@ func (s *fakeStream) run(cb Callback) {
 }
 
 func (s *fakeStream) Info() Info {
-	return Info{Input: "Fake beeper", Output: "Nowhere", API: "fake", Block: fakeBlock}
+	return Info{Input: "Fake beeper", Output: "Nowhere", API: "fake", Block: fakeBlock, OutputLatencyMs: s.extra, ExtraOutputMs: s.extra}
 }
 
 func (s *fakeStream) Close() error {

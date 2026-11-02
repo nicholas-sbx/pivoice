@@ -46,6 +46,20 @@ type Info struct {
 	// before we saw them), and the speakers running dry (we were late with a block).
 	InputOverflows   int64 `json:"inputOverflows"`
 	OutputUnderflows int64 `json:"outputUnderflows"`
+	// What was asked for on top of the speakers' smallest buffer (Options.ExtraOutputMs).
+	ExtraOutputMs float64 `json:"extraOutputMs"`
+	// Whether the audio thread runs at realtime priority, and how ("rtkit,
+	// SCHED_RR 18"), or why not ("no: …"); "" where it isn't asked for (not Linux), or not yet.
+	Realtime string `json:"realtime,omitempty"`
+}
+
+// Options for opening a stream.
+type Options struct {
+	// Devices' IDs ("" for the default ones).
+	InputID, OutputID string
+	// More buffer for the speakers than the smallest they offer, ms: more
+	// delay, more time for a late block to still make it.
+	ExtraOutputMs float64
 }
 
 type DeviceDesc struct {
@@ -65,8 +79,8 @@ type Stream interface {
 // Backend opens streams; PortAudio for real, Fake for tests and headless runs.
 type Backend interface {
 	Devices() []DeviceDesc
-	// Open a duplex stream on these devices ("" for the default ones).
-	Open(inputID, outputID string, cb Callback) (Stream, error)
+	// Open a duplex stream.
+	Open(o Options, cb Callback) (Stream, error)
 	Close()
 }
 

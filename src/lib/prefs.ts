@@ -2,7 +2,7 @@ import type { OutputBuffer, SpatialMode } from '../audio/engine'
 import { llDefaults, sanitizeLL, type LLConfig } from '../audio/ll/config'
 import { isNative } from '../native/bridge'
 import { onMobileDevice } from '../native/downloads'
-import type { OverlayAnchor } from '../native/protocol'
+import { APP_BUFFER_STEPS, type OverlayAnchor } from '../native/protocol'
 
 /** The app's overlay: whether it's up during calls, where (see OverlayPlace), and how faded. */
 export interface OverlayPrefs {
@@ -32,6 +32,9 @@ export interface Prefs {
   appOutputId: string
   /** The app on Windows: WASAPI exclusive mode (smallest buffers; nothing else can play meanwhile). */
   appExclusive: boolean
+  /** The app's speaker buffer: managed by the app, or this many ms on top of the smallest (APP_BUFFER_STEPS). */
+  appBufferAuto: boolean
+  appBufferMs: number
   /**
    * Noise suppression and gain control are on by default: on the website
    * the browser's own, in the app ours (RNNoise and agc.go; the app never
@@ -113,6 +116,8 @@ export const DEFAULT_PREFS: Prefs = {
   appInputId: '',
   appOutputId: '',
   appExclusive: false,
+  appBufferAuto: true,
+  appBufferMs: 0,
   echoCancellation: false,
   noiseSuppression: true,
   autoGainControl: true,
@@ -174,7 +179,8 @@ export function loadPrefs(): Prefs {
     if (inRange(raw.agcCeilingDb, -20, -1)) p.agcCeilingDb = raw.agcCeilingDb
     if (inRange(raw.agcRiseMs, 50, 10000)) p.agcRiseMs = raw.agcRiseMs
     if (inRange(raw.agcFallMs, 5, 2000)) p.agcFallMs = raw.agcFallMs
-    for (const k of ['appExclusive', 'noiseLookahead', 'showCode', 'showPing', 'showRoute', 'keepAwake', 'appBannerDismissed'] as const) {
+    if ((APP_BUFFER_STEPS as readonly unknown[]).includes(raw.appBufferMs)) p.appBufferMs = raw.appBufferMs as number
+    for (const k of ['appExclusive', 'appBufferAuto', 'noiseLookahead', 'showCode', 'showPing', 'showRoute', 'keepAwake', 'appBannerDismissed'] as const) {
       if (typeof raw[k] === 'boolean') p[k] = raw[k]
     }
     // A saved choice only counts if it was made with the default it overrides in place.

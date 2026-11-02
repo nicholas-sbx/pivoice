@@ -489,6 +489,25 @@ becomes just the UI.
   device for the app alone, for WASAPI's smallest buffers, at the cost of
   nothing else being able to use it meanwhile. The sound card line there
   says which one you got (exclusive, raw or shared).
+- **Linux: the audio thread at realtime priority.** PortAudio's callback
+  thread would otherwise wait its turn like any other, and on a desktop
+  that wait sometimes outlasts a 2.7 ms block. Once the first block comes
+  in, the app makes that thread realtime ([`native/internal/rt`](native/internal/rt)):
+  SCHED_FIFO if it may (realtime limits, as an `audio` group often gives),
+  otherwise through rtkit, the service PipeWire's own clients ask, which
+  says yes to an active desktop session. Priority 18, under PipeWire's
+  own threads. It first caps RLIMIT_RTTIME at 200 ms (rtkit insists), so a
+  realtime thread that never slept would be stopped, not freeze the
+  machine. The sound card line in the Latency tab says how it went.
+- **The speakers' buffer.** **Manage Speaker Buffer Automatically**
+  (Latency tab, on by default) opens the speakers with the smallest buffer
+  they offer, and when they run dry twice within 30 s (after the first
+  2 s, when opening can flag one), reopens them with the next of +3, +6,
+  +12 or +24 ms ([`native/internal/engine/buffer.go`](native/internal/engine/buffer.go)).
+  It never comes back down by itself, since each change is a gap in the
+  audio, but it starts from the smallest again for other devices or when
+  the app restarts. Off, you pick one of those yourself. Only the
+  speakers' side grows: the block size, and so the mic's delay, stay put.
 - **Binaural** instead of HRTF: Brown and Duda's spherical head model
   ([`native/internal/engine/head.go`](native/internal/engine/head.go)).
   Each person is heard from where their seat is, as seen from yours (90° −
@@ -645,12 +664,23 @@ Costs, and what isn't done:
 ### When it crackles
 
 The **Latency** tab in the app counts everything on the app's side
-that can put a click in the audio since the sound card opened: the
+that can put a click in the audio since the sound card opened (a reopen
+for more speaker buffer doesn't start them again): the
 driver's own overrun and underrun flags, mic blocks the sender wasn't
 ready for, incoming frames the audio thread was too far behind to take,
 and the longest the Go runtime stopped for garbage collection. Whatever
 counts up when you hear it is the cause; if none do, look at the route
 card's late and concealed figures, which are the network.
+
+Speaker underruns, on Linux through PipeWire, are usually the app's own
+thread being late to fill the small buffer between it and PipeWire.
+PipeWire doesn't count those as errors on the app's nodes (`pw-top`'s
+ERR stays at 0): it plays silence for the missing part, and PortAudio
+restarts the stream, which is the click. The fixes are the two above:
+the thread at realtime priority, and more speaker buffer. ERR climbing
+on the sound card's own node (`alsa_output…`) is something else: the
+card itself not keeping up, which can mean the 128-sample quantum the app
+asks PipeWire for (below) is too fast for it.
 
 The occasional crackle with two copies of the app on one Linux machine
 (each fine alone, in a loopback or the mic test) has two likely causes, both
@@ -975,7 +1005,8 @@ worker/         the Cloudflare Worker: static assets, the rooms (a Durable Objec
 scripts/        dev (app + Worker), e2e runs (website, and the app with the website)
 tests/          unit tests
 native/         the app (Go): main and the window, and in internal/: audio (the PortAudio
-                duplex stream, a fake one), engine (mixer, sending, pion links, stats), dsp
+                duplex stream, a fake one), rt (realtime priority for its thread),
+                engine (mixer, sending, pion links, stats, the speaker buffer), dsp
                 (echo cancellation, noise suppression, gain), ll (packets and jitter buffer,
                 ported), bridge, proto (the bridge's messages), overlay (its window
                 on each desktop, and the rings)

@@ -240,10 +240,15 @@ func route(pc *webrtc.PeerConnection, st *LinkStats) {
 }
 
 func (e *Engine) glitchesLocked() Glitches {
-	g := Glitches{CaptureDropped: e.capDropped.Load(), GCPauseMaxMs: e.gcPauses.maxSince()}
+	c := e.carried
+	g := Glitches{
+		InputOverflows: c.inputOverflows, OutputUnderflows: c.outputUnderflows,
+		CaptureDropped: c.captureDropped + e.capDropped.Load(), GCPauseMaxMs: e.gcPauses.maxSince(),
+	}
 	if e.stream != nil {
 		info := e.stream.Info()
-		g.InputOverflows, g.OutputUnderflows = info.InputOverflows, info.OutputUnderflows
+		g.InputOverflows += info.InputOverflows
+		g.OutputUnderflows += info.OutputUnderflows
 	}
 	for _, l := range e.links {
 		g.FramesDropped += l.src.dropped.Load()

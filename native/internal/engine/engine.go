@@ -58,6 +58,12 @@ type Engine struct {
 	loop     *remote
 	stopTick chan struct{}
 	readAt   map[*source]time.Time
+	// The automatic buffer: how far up bufferSteps it's gone (for these
+	// devices, as long as the app runs), and the glitches counted before it
+	// last reopened the sound card to go up, which still count.
+	autoStep int
+	carried  carried
+	watch    watchTiming
 
 	// Shared with the audio thread and the sender.
 	remotes   atomic.Pointer[[]*remote]
@@ -90,6 +96,7 @@ func New(opts Options) *Engine {
 		prefs:   map[string]*peerPrefs{},
 		deafSet: map[string]bool{},
 		readAt:  map[*source]time.Time{},
+		watch:   defaultWatch,
 		spatial: "off",
 		capture: make(chan capBlock, capSlots),
 		capFree: make(chan []float32, capSlots),
@@ -212,16 +219,24 @@ func (e *Engine) setLL(c proto.LLConfig) {
 }
 
 func (e *Engine) configure(c proto.Config) {
-	c.LL, c.Processing = c.LL.Sanitize(), c.Processing.Sanitize()
+	c = c.Sanitize()
 	e.setLL(c.LL)
 	e.setProcessing(c.Processing)
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	devicesChanged := c.InputID != e.cfg.InputID || c.OutputID != e.cfg.OutputID
+	if devicesChanged {
+		// Other devices: the automatic buffer starts again from the smallest.
+		e.autoStep = 0
+	}
 	if x, ok := e.opts.Backend.(interface{ SetExclusive(bool) bool }); ok && x.SetExclusive(c.Exclusive) {
 		devicesChanged = true
 	}
+	before := e.extraOutputMsLocked()
 	e.cfg = c
+	if e.extraOutputMsLocked() != before {
+		devicesChanged = true
+	}
 	e.spatial = c.Spatial
 	for id, r := range e.people {
 		e.applyPrefsLocked(id, r)
@@ -487,7 +502,9 @@ func (e *Engine) openAudioLocked() {
 		e.emitAudioLocked()
 		return
 	}
-	s, err := e.opts.Backend.Open(e.cfg.InputID, e.cfg.OutputID, e.mixer.process)
+	s, err := e.opts.Backend.Open(audio.Options{
+		InputID: e.cfg.InputID, OutputID: e.cfg.OutputID, ExtraOutputMs: e.extraOutputMsLocked(),
+	}, e.mixer.process)
 	if err != nil {
 		e.audioErr = err.Error()
 		log.Printf("audio: %v", err)
@@ -497,8 +514,10 @@ func (e *Engine) openAudioLocked() {
 	e.stream = s
 	e.audioErr = ""
 	e.capDropped.Store(0)
+	e.carried = carried{}
 	e.stopTick = make(chan struct{})
 	go e.levels(e.stopTick)
+	go e.watchBuffer(e.stopTick, s, e.watch)
 	e.rebuildLocked()
 	e.emitAudioLocked()
 }
