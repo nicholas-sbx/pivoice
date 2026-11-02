@@ -17,8 +17,9 @@ const Supported = true
 // Promote makes thread tid (of this process) realtime, the way PipeWire's
 // own clients do it: straight away if this process may (realtime limits,
 // as members of an audio group often have, or root), and otherwise by
-// asking rtkit, the system service that hands it out to desktop users.
-// It says how it went, for the settings to show. Never from the audio
+// asking rtkit, the system service that hands it out to desktop users,
+// or, where that can't be reached (a Flatpak's sandbox has no system bus),
+// the Realtime portal, which asks rtkit for it. It says how it went, for the settings to show. Never from the audio
 // thread: rtkit is a D-Bus call.
 //
 // Either way it first caps how long a realtime thread here may run
@@ -35,8 +36,12 @@ func Promote(tid int) (string, error) {
 		direct = err
 	}
 	how, err := viaRtkit(tid)
-	if err != nil {
-		return "", fmt.Errorf("not allowed (%v), and rtkit: %w", direct, err)
+	if err == nil {
+		return how, nil
+	}
+	how, perr := viaPortal(tid)
+	if perr != nil {
+		return "", fmt.Errorf("not allowed (%v), rtkit: %v, and the portal: %w", direct, err, perr)
 	}
 	return how, nil
 }
@@ -84,18 +89,41 @@ const (
 	rtkitIface = "org.freedesktop.RealtimeKit1"
 )
 
+// The portal has rtkit's methods and properties, on the session bus, and
+// turns the sandbox's process and thread IDs into the host's before it asks
+// rtkit. Outside a sandbox it isn't needed, since rtkit answers first.
+const (
+	portalName  = "org.freedesktop.portal.Desktop"
+	portalPath  = "/org/freedesktop/portal/desktop"
+	portalIface = "org.freedesktop.portal.Realtime"
+)
+
 func viaRtkit(tid int) (string, error) {
 	conn, err := dbus.ConnectSystemBus()
 	if err != nil {
 		return "", err
 	}
 	defer conn.Close()
-	obj := conn.Object(rtkitName, rtkitPath)
-	maxPrio, err := property[int32](obj, "MaxRealtimePriority")
+	return askRealtime(conn.Object(rtkitName, rtkitPath), rtkitIface, "rtkit", tid)
+}
+
+func viaPortal(tid int) (string, error) {
+	conn, err := dbus.ConnectSessionBus()
 	if err != nil {
 		return "", err
 	}
-	maxRTTime, err := property[int64](obj, "RTTimeUSecMax")
+	defer conn.Close()
+	return askRealtime(conn.Object(portalName, portalPath), portalIface, "portal", tid)
+}
+
+// askRealtime asks rtkit, or the portal, which speak the same interface, to
+// make thread tid realtime.
+func askRealtime(obj dbus.BusObject, iface, via string, tid int) (string, error) {
+	maxPrio, err := property[int32](obj, iface, "MaxRealtimePriority")
+	if err != nil {
+		return "", err
+	}
+	maxRTTime, err := property[int64](obj, iface, "RTTimeUSecMax")
 	if err != nil {
 		return "", err
 	}
@@ -109,16 +137,17 @@ func viaRtkit(tid int) (string, error) {
 	if prio < 1 {
 		return "", errors.New("it allows no realtime priority")
 	}
-	call := obj.Call(rtkitIface+".MakeThreadRealtimeWithPID", 0, uint64(os.Getpid()), uint64(tid), uint32(prio))
+	call := obj.Call(iface+".MakeThreadRealtimeWithPID", 0, uint64(os.Getpid()), uint64(tid), uint32(prio))
 	if call.Err != nil {
 		return "", call.Err
 	}
-	return fmt.Sprintf("rtkit, SCHED_RR %d", prio), nil
+	return fmt.Sprintf("%s, SCHED_RR %d", via, prio), nil
 }
 
-// property reads one of rtkit's properties, which come as int32 or int64.
-func property[T int32 | int64](obj dbus.BusObject, name string) (T, error) {
-	v, err := obj.GetProperty(rtkitIface + "." + name)
+// property reads one of rtkit's (or the portal's) properties, which come as
+// int32 or int64.
+func property[T int32 | int64](obj dbus.BusObject, iface, name string) (T, error) {
+	v, err := obj.GetProperty(iface + "." + name)
 	if err != nil {
 		return 0, err
 	}

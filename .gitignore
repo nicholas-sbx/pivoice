@@ -18,3 +18,8 @@ test-results
 native/pivoice
 native/pivoice.exe
 native/dist
+
+# The Flatpak build: CI puts the binary here
+native/flatpak/pivoice
+native/flatpak/*.flatpak
+native/flatpak/.flatpak-builder

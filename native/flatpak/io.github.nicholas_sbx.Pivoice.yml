@@ -1,0 +1,44 @@
+# The app as a Flatpak. It packages the binary CI already builds (build.sh with
+# STATIC_AUDIO=1: PortAudio, RNNoise and SpeexDSP are inside it), so there's
+# nothing to compile here and no network at build time. The GNOME runtime
+# brings GTK 3 and WebKitGTK 4.1, the only things the binary loads.
+#
+# Locally, with the binary at flatpak/pivoice (a build.sh output):
+#   flatpak-builder --user --install --force-clean build-dir io.github.nicholas_sbx.Pivoice.yml
+#   flatpak run io.github.nicholas_sbx.Pivoice
+# (needs the org.gnome.Platform and Sdk runtimes from Flathub.)
+app-id: io.github.nicholas_sbx.Pivoice
+runtime: org.gnome.Platform
+# Has to ship WebKitGTK 4.1 (the binary links libwebkit2gtk-4.1.so.0).
+runtime-version: '51'
+sdk: org.gnome.Sdk
+command: pivoice
+
+finish-args:
+  # The app's code never touches a file of yours, so the sandbox gets none
+  # (the webview keeps its cookies and cache in ~/.var/app/<id>/).
+  - --share=network
+  - --share=ipc
+  - --socket=wayland
+  - --socket=fallback-x11
+  # The microphone and speakers, through PipeWire's or PulseAudio's socket.
+  - --socket=pulseaudio
+  - --device=dri
+
+modules:
+  - name: pivoice
+    buildsystem: simple
+    build-commands:
+      - install -Dm755 pivoice /app/bin/pivoice
+      - install -Dm644 io.github.nicholas_sbx.Pivoice.desktop /app/share/applications/io.github.nicholas_sbx.Pivoice.desktop
+      - install -Dm644 io.github.nicholas_sbx.Pivoice.metainfo.xml /app/share/metainfo/io.github.nicholas_sbx.Pivoice.metainfo.xml
+      - install -Dm644 io.github.nicholas_sbx.Pivoice.svg /app/share/icons/hicolor/scalable/apps/io.github.nicholas_sbx.Pivoice.svg
+    sources:
+      - type: file
+        path: pivoice
+      - type: file
+        path: io.github.nicholas_sbx.Pivoice.desktop
+      - type: file
+        path: io.github.nicholas_sbx.Pivoice.metainfo.xml
+      - type: file
+        path: io.github.nicholas_sbx.Pivoice.svg
