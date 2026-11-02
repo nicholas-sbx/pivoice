@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -105,9 +106,14 @@ func TestLock(t *testing.T) {
 		fmt.Fprint(w, page)
 	}))
 	defer site.Close()
-	var elsewhere atomic.Int32
+	var (
+		mu   sync.Mutex
+		hits []string
+	)
 	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		elsewhere.Add(1)
+		mu.Lock()
+		hits = append(hits, r.URL.Path+" (Sec-Fetch-Dest "+r.Header.Get("Sec-Fetch-Dest")+", Sec-Purpose "+r.Header.Get("Sec-Purpose")+")")
+		mu.Unlock()
 		fmt.Fprint(w, page)
 	}))
 	defer other.Close()
@@ -150,19 +156,35 @@ func TestLock(t *testing.T) {
 		}
 	})
 
+	// What the other origin was asked for, since the last look.
+	asked := func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		out := hits
+		hits = nil
+		return out
+	}
+
 	t.Run("stays on the site", func(t *testing.T) {
-		eval(`location.href = '` + other.URL + `/'`)
+		eval(`location.href = '` + other.URL + `/away'`)
+		time.Sleep(2 * time.Second)
+		if got := asked(); len(got) > 0 {
+			t.Errorf("going there asked the other origin for %v", got)
+		}
+		eval(`report('at:' + location.href)`)
+		if got := next(t, "at:"); !strings.HasPrefix(got, site.URL+"/") {
+			t.Errorf("the window went to %s", got)
+		}
+	})
+
+	t.Run("no new windows", func(t *testing.T) {
 		eval(`report('popup:' + window.open('` + other.URL + `/popup'))`)
 		if got := next(t, "popup:"); got != "null" {
 			t.Errorf("window.open gave %s", got)
 		}
 		time.Sleep(2 * time.Second)
-		if n := elsewhere.Load(); n != 0 {
-			t.Errorf("the other origin was asked for %d pages", n)
-		}
-		eval(`report('at:' + location.href)`)
-		if got := next(t, "at:"); !strings.HasPrefix(got, site.URL+"/") {
-			t.Errorf("the window went to %s", got)
+		if got := asked(); len(got) > 0 {
+			t.Errorf("a new window asked the other origin for %v", got)
 		}
 	})
 
