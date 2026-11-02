@@ -20,7 +20,11 @@ int pv_mode(void);
 // The desktop could keep the overlay on top and let clicks through (it offers
 // layer-shell), but gtk-layer-shell isn't installed.
 int pv_needs_layer_shell(void);
-pv_overlay *pv_open(int debug, const char *url, const char *js);
+// Made, with nothing in it yet: lock its view (pv_view), then pv_navigate.
+pv_overlay *pv_open(int debug, const char *js);
+// Its WebKitWebView.
+void *pv_view(pv_overlay *o);
+void pv_navigate(pv_overlay *o, const char *url);
 // On `monitor` (-1: the primary one). A layer-shell surface keeps to `edges`
 // (overlay.go's edgeLeft…) `margin` in; an ordinary window goes to x, y.
 void pv_place(pv_overlay *o, int monitor, int edges, int margin, int size, int x, int y);

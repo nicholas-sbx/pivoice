@@ -736,22 +736,35 @@ dealt with; if it still happens, the counters say which it was:
   adds runs at the start of *every* page in its window, before the page's
   own code: it shuts the bridge (whatever the last page was doing stops)
   and hands out the key only if the page is on the site's origin.
-- The window stays on the site. On Linux WebKitGTK asks the app before
-  every navigation, frames included, and the app refuses anything off the
-  site's origin and every new window; on Windows and macOS the same script
-  sends any other page straight back to the site. Links out go to your
-  browser.
+- The window stays on the site, and the page gets nothing it doesn't need.
+  On Linux (WebKitGTK) and Windows (WebView2) the app is asked before every
+  navigation, frames included, and refuses anything off the site's origin;
+  it refuses every new window, every download and every permission a page
+  can ask for (camera, location, reading the clipboard); and it's the app,
+  not the page, that notices a new page loading and ends the call, so
+  nothing in a page can hang up on you. The overlay is held to the same
+  rules. On macOS (not released yet) the script above sends any other page
+  straight back to the site. Links out go to your browser.
+- Nobody in a room learns your machine's own addresses (LAN, VPN, IPv6):
+  as in a browser, the app offers them only as a random `name.local` that
+  machines on your own network can look up, and blanks the address a
+  public or relayed candidate was found through. Where that can't be done
+  (no mDNS), it offers no local addresses at all.
 - `--browser` opens the UI in your ordinary browser instead, over a
   WebSocket on 127.0.0.1 (a port the system picks). The browser is pointed
-  at a one-time link on that port that sends it on to the site with the
-  address and key in the `#fragment`, so the key is never on a command line
-  where other users could see it; the fragment never leaves your machine
+  at a small page in a folder only you can read (removed after a minute)
+  that sends it on to the site with the address and key in the
+  `#fragment`, so neither the key nor anything that leads to it is on a
+  command line where other users could see it; the fragment never leaves your machine
   and is taken out of the address bar straight away. The socket only
   accepts the site's own `Origin`, and still wants the key. This is also
   how development and the end-to-end test work.
 - What the page asks for is checked: settings are clamped to the ranges the
-  page offers, ICE servers must be STUN or TURN somewhere other than this
-  machine, and `--url` must be https unless it's this machine.
+  page offers, ICE servers must be STUN or TURN to an address other than
+  this machine's (names aren't looked up to check), and `--url` must be
+  https unless it's this machine.
+- On Windows, DLLs are only loaded from System32, never the folder the
+  exe is in (people run it from Downloads).
 
 **Two versions.** The site is `package.json`'s version, the app is
 [`native/VERSION`](native/VERSION), and they release separately. What
@@ -781,7 +794,7 @@ tests `--headless --fake-audio --loopback-ice` (no sound card: a beeping
 mic and silent speakers, and it prints the UI's address instead of opening
 it).
 
-**Building it.** Go 1.24, a C compiler, pkg-config, and PortAudio,
+**Building it.** Go 1.27, a C compiler, pkg-config, and PortAudio,
 SpeexDSP and (Linux) WebKitGTK 4.1 headers (`apt install portaudio19-dev
 libspeexdsp-dev libwebkit2gtk-4.1-dev`). RNNoise too if you
 want noise suppression: few distributions package 0.2, so `build/deps.sh
@@ -792,7 +805,8 @@ noise suppression (`-tags nornnoise`) and the settings say so:
 ```sh
 cd native
 ./build.sh                       # ./pivoice, against your system's libraries
-go test -race ./...              # set PKG_CONFIG_PATH=$PWD/build/pkgconfig first (see build.sh)
+go test -race ./...              # set PKG_CONFIG_PATH=$PWD/build/pkgconfig first (see build.sh);
+                                 # internal/webkit's tests need a display (xvfb-run -a go test ...)
 ./pivoice --url http://localhost:5173/   # with npm run dev in another terminal
 ```
 

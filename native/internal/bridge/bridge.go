@@ -7,8 +7,8 @@
 //     socket for anything else on the machine to find;
 //   - a WebSocket on 127.0.0.1, for opening the UI in an ordinary browser
 //     (--browser, development, the end-to-end tests). --browser opens a
-//     one-time link on the same port (StartURL) that sends the browser on
-//     to the page, so the token is never on a command line.
+//     file only you can read that sends the browser on to the page, so the
+//     token is never on a command line.
 //
 // Either way, nothing gets through until the page says hello with the
 // token this run of the app made up (32 random bytes), and nothing after
@@ -46,16 +46,16 @@ type Bridge struct {
 	OpenURL func(url string)
 	// Overlay is the overlay window (set by main when there's a window; nil: none).
 	Overlay Overlay
-	version string
-	engine  *engine.Engine
+	// PageGone: take a page's own word that it's gone, without the token
+	// (set by main before the window opens). Only where the window can't
+	// say so itself (macOS): elsewhere the window does (Conn.Gone), and
+	// nothing in the page can hang up the call.
+	PageGone bool
+	version  string
+	engine   *engine.Engine
 
 	mu      sync.Mutex
 	current *Conn
-
-	// Serve's port, and StartURL's one-time links to the page.
-	port    int
-	startMu sync.Mutex
-	starts  map[string]startLink
 }
 
 // Overlay is what the bridge needs of internal/overlay.
@@ -116,9 +116,11 @@ func (c *Conn) Receive(msg []byte) {
 	}
 }
 
-// Gone: this way in has closed (the socket went, or the window's page is navigating away).
+// Gone: this way in has closed (the socket went, or a new document is
+// loading in the window). From us, so it carries the token.
 func (c *Conn) Gone() {
-	c.Receive([]byte(`{"t":"gone"}`))
+	msg, _ := json.Marshal(proto.In{T: "gone", Token: c.b.Token})
+	c.Receive(msg)
 }
 
 // End: this way in is gone for good (a closed socket). Anything already queued still runs.
@@ -143,7 +145,7 @@ func (c *Conn) run() {
 func (c *Conn) handle(m proto.In) {
 	b := c.b
 	switch {
-	case m.T == "gone":
+	case m.T == "gone" && (b.PageGone || b.tokenOK(m.Token)):
 		// A new page in the window, or the socket's closed: whatever it was doing stops.
 		b.mu.Lock()
 		wasCurrent := b.current == c

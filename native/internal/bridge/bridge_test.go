@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"strings"
 	"testing"
 	"time"
 
@@ -194,28 +193,41 @@ func TestOverlay(t *testing.T) {
 	}
 }
 
-// --browser's link: on to the page once, then never again.
-func TestStartURLWorksOnce(t *testing.T) {
-	b, _ := serve(t)
-	start := b.StartURL("https://site.example/#native=1.secret")
-	if strings.Contains(start, "secret") {
-		t.Fatalf("the token is in the start link: %s", start)
+// Only the app (or a page with the token) can say the page is gone: a
+// frame, or any page the window ends up on, can't hang up the call. Where
+// the window can't say so itself (PageGone), the page's word is taken.
+func TestGoneNeedsTheToken(t *testing.T) {
+	hello := func(pageGone bool) (*Bridge, *websocket.Conn) {
+		b, url := serve(t)
+		b.PageGone = pageGone
+		c, _, err := dial(t, url, site)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { c.CloseNow() })
+		send(t, c, proto.In{T: "hello", Token: b.Token, Protocol: proto.Protocol})
+		if _, err := read(c); err != nil {
+			t.Fatal(err)
+		}
+		return b, c
 	}
-	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	res, err := client.Get(start)
-	if err != nil {
-		t.Fatal(err)
+	// (A read that times out closes the socket, so each ends with the one that should.)
+	b, c := hello(false)
+	send(t, c, proto.In{T: "gone"})
+	send(t, c, proto.In{T: "devices", Token: b.Token})
+	if m, err := read(c); err != nil || m["t"] != "devices" {
+		t.Fatalf("a gone without the token hung up: %v %v", m, err)
 	}
-	res.Body.Close()
-	if res.StatusCode != http.StatusSeeOther || res.Header.Get("Location") != "https://site.example/#native=1.secret" {
-		t.Fatalf("first time: %d %q", res.StatusCode, res.Header.Get("Location"))
+	send(t, c, proto.In{T: "gone", Token: b.Token})
+	send(t, c, proto.In{T: "devices", Token: b.Token})
+	if m, err := read(c); err == nil {
+		t.Fatalf("answered after a gone with the token: %v", m)
 	}
-	res, err = client.Get(start)
-	if err != nil {
-		t.Fatal(err)
-	}
-	res.Body.Close()
-	if res.StatusCode != http.StatusNotFound {
-		t.Fatalf("second time: %d", res.StatusCode)
+
+	b, c = hello(true)
+	send(t, c, proto.In{T: "gone"})
+	send(t, c, proto.In{T: "devices", Token: b.Token})
+	if m, err := read(c); err == nil {
+		t.Fatalf("PageGone: answered after the page's own gone: %v", m)
 	}
 }

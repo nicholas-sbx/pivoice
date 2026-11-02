@@ -1,8 +1,8 @@
-package main
+package nav
 
 import "testing"
 
-func TestAllowNavigation(t *testing.T) {
+func TestAllow(t *testing.T) {
 	const site = "https://pivoice.example"
 	for uri, want := range map[string]bool{
 		"https://pivoice.example/":                  true,
@@ -18,7 +18,7 @@ func TestAllowNavigation(t *testing.T) {
 		"data:text/html,hi":                         false,
 		"":                                          false,
 	} {
-		if got := allowNavigation(site, uri); got != want {
+		if got := Allow(site, uri); got != want {
 			t.Errorf("%q: %v, want %v", uri, got, want)
 		}
 	}

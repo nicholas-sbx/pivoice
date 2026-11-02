@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	"github.com/nicholas-sbx/pivoice/native/internal/bridge"
+	"github.com/nicholas-sbx/pivoice/native/internal/nav"
 	"github.com/nicholas-sbx/pivoice/native/internal/offline"
 	"github.com/nicholas-sbx/pivoice/native/internal/overlay"
 	webview "github.com/webview/webview_go"
@@ -63,8 +64,11 @@ func runWindow(b *bridge.Bridge, page, origin string, devtools bool) error {
 	if err := w.Bind("__pivoiceSend", func(msg string) { conn.Receive([]byte(msg)) }); err != nil {
 		return err
 	}
+	// Held to the site (internal/nav), and each new document in the window
+	// ends whatever the last one was doing. Where the window can't tell us
+	// that (macOS), the page says so itself: see initScript.
+	b.PageGone = !lockWindow(w, nav.Policy{Origin: origin, PageStart: conn.Gone})
 	w.Init(initScript(origin, home(page), b.Token))
-	lockNavigation(w, origin)
 
 	// The overlay, made only when the page asks for it (src/native/overlay.ts).
 	ov := overlay.New(overlay.Config{Dispatch: dispatch, Main: w.Window(), URL: overlayPage(page), Origin: origin, Debug: devtools})
@@ -119,10 +123,12 @@ func overlayPage(page string) string {
 
 // initScript runs at the start of every page in the window, before the
 // page's own scripts. Each page starts with the bridge shut (whatever was
-// there before stops), and only the site's own pages get the token to open
-// it again: if the window ever ends up on another site, that site can't
-// reach the microphone. And it doesn't stay there: it's sent straight back
-// to the site (on Linux the window doesn't even go: lockNavigation).
+// there before stops: the window says so on Linux and Windows, the page's
+// "gone" does on macOS), and only the site's own pages get the token to
+// open it again: if the window ever ends up on another site, that site
+// can't reach the microphone, or catch what the app sends the page. And it
+// doesn't stay there: it's sent straight back to the site (on Linux and
+// Windows the window doesn't even go: lockWindow).
 func initScript(origin, home, token string) string {
 	o, _ := json.Marshal(origin)
 	h, _ := json.Marshal(home)
@@ -132,6 +138,8 @@ func initScript(origin, home, token string) string {
   var send = window.__pivoiceSend;
   send('{"t":"gone"}');
   if (location.origin !== ` + string(o) + `) {
+    // Nobody here gets to stand in for the bridge's end, either.
+    Object.defineProperty(window, '__pivoiceNative', { value: null });
     if (location.protocol !== 'about:') location.replace(` + string(h) + `);
     return;
   }

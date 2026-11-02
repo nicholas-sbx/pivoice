@@ -371,9 +371,8 @@ func (p *PortAudio) Open(o Options, cb Callback) (Stream, error) {
 			}
 		}
 		for _, t := range tries {
-			s, err := open(a, o, cb, t.exclusive, t.raw)
+			s, err := open(a, o, cb, t.exclusive, t.raw, t.mode)
 			if err == nil {
-				s.info.Mode = t.mode
 				if rt.Supported {
 					go s.promote()
 				}
@@ -393,7 +392,9 @@ func (p *PortAudio) Open(o Options, cb Callback) (Stream, error) {
 	return nil, errors.Join(errs...)
 }
 
-func open(a *paAPI, o Options, cb Callback, exclusive, raw bool) (*paStream, error) {
+// mode is what Info says it is ("exclusive", "shared, raw"...). Everything in
+// info is set before the stream starts: the callback reads it on every block.
+func open(a *paAPI, o Options, cb Callback, exclusive, raw bool, mode string) (*paStream, error) {
 	in := find(a, o.InputID, true)
 	out := find(a, o.OutputID, false)
 	if in == nil && out == nil {
@@ -432,7 +433,7 @@ func open(a *paAPI, o Options, cb Callback, exclusive, raw bool) (*paStream, err
 		return nil, fmt.Errorf("opening %s / %s: %w", name(in), name(out), err)
 	}
 	st.s = s
-	st.info = Info{Input: name(in), Output: name(out), API: a.name, ExtraOutputMs: max(0, o.ExtraOutputMs)}
+	st.info = Info{Input: name(in), Output: name(out), API: a.name, Mode: mode, ExtraOutputMs: max(0, o.ExtraOutputMs)}
 	if si := C.Pa_GetStreamInfo(s); si != nil {
 		st.info.InputLatencyMs = float64(si.inputLatency) * 1000
 		st.info.OutputLatencyMs = float64(si.outputLatency) * 1000
