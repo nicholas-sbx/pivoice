@@ -482,6 +482,12 @@ becomes just the UI.
   stand-ins ([`src/native/link.ts`](src/native/link.ts)) that pass the
   signalling between the room and the app.
 
+- **Offline.** The app asks the network before it opens the site. If
+  there's no answer, the window shows a small offline page (in the site's
+  colours) instead of the webview's generic error, checks again every few
+  seconds, and opens the site by itself once it's back; **Try again**
+  checks right away
+  ([`native/internal/offline`](native/internal/offline)).
 - **Windows: the mic as it comes.** WASAPI is opened in raw mode, which
   tells Windows to skip the effects it would otherwise put on the mic
   (its own noise suppression, gain, "enhancements"), at pro-audio thread
