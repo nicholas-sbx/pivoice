@@ -1,10 +1,11 @@
 //go:build windows && !nowebview
 
 // Package wv2 holds the app's WebView2 views (the main window's and the
-// overlay's) to nav.Policy, as internal/webkit does on Linux: navigation
-// only to the site, no new windows, no downloads, and every permission
-// request refused (webview itself allows reading the clipboard; this runs
-// after it and wins).
+// overlay's) to nav.Policy, as internal/webkit does on Linux: navigation,
+// and every request for a page or frame, only to the site (anything else
+// is answered here and never sent), no new windows, no downloads, and
+// every permission request refused (webview itself allows reading the
+// clipboard; this runs after it and wins).
 //
 // webview_go exposes none of WebView2's events, so this speaks WebView2's
 // COM interfaces directly, from Go: no C. The vtable slots and IIDs are
@@ -16,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -32,11 +34,19 @@ const (
 
 	controllerGetCoreWebView2 = 25 // ICoreWebView2Controller
 
-	addNavigationStarting  = 7 // ICoreWebView2
-	addContentLoading      = 9
-	addPermissionRequested = 23
-	addNewWindowRequested  = 44
-	addDownloadStarting    = 75 // ICoreWebView2_4
+	addNavigationStarting         = 7 // ICoreWebView2
+	addContentLoading             = 9
+	addPermissionRequested        = 23
+	addNewWindowRequested         = 44
+	addWebResourceRequested       = 55
+	addWebResourceRequestedFilter = 57
+	getEnvironment                = 67 // ICoreWebView2_2
+	addDownloadStarting           = 75 // ICoreWebView2_4
+
+	createWebResourceResponse = 4 // ICoreWebView2Environment
+	resourceGetRequest        = 3 // ICoreWebView2WebResourceRequestedEventArgs
+	resourcePutResponse       = 5
+	requestGetURI             = 3 // ICoreWebView2WebResourceRequest
 
 	navigationGetURI    = 3 // ICoreWebView2NavigationStartingEventArgs
 	navigationPutCancel = 8
@@ -45,10 +55,23 @@ const (
 	downloadPutCancel   = 5 // ICoreWebView2DownloadStartingEventArgs
 	downloadPutHandled  = 9
 
-	permissionDeny = 2 // COREWEBVIEW2_PERMISSION_STATE_DENY
+	permissionDeny  = 2 // COREWEBVIEW2_PERMISSION_STATE_DENY
+	contextDocument = 1 // COREWEBVIEW2_WEB_RESOURCE_CONTEXT_DOCUMENT
 )
 
-var iidWebView2_4 = windows.GUID{Data1: 0x20d02d59, Data2: 0x6df2, Data3: 0x42dc, Data4: [8]byte{0xbd, 0x06, 0xf9, 0x8a, 0x69, 0x4b, 0x13, 0x02}}
+var (
+	iidWebView2_2 = windows.GUID{Data1: 0x9e8f0cf8, Data2: 0xe670, Data3: 0x4b5e, Data4: [8]byte{0xb2, 0xbc, 0x73, 0xe0, 0x61, 0xe3, 0x18, 0x4c}}
+	iidWebView2_4 = windows.GUID{Data1: 0x20d02d59, Data2: 0x6df2, Data3: 0x42dc, Data4: [8]byte{0xbd, 0x06, 0xf9, 0x8a, 0x69, 0x4b, 0x13, 0x02}}
+)
+
+// query is obj's interface iid (QueryInterface), or nil.
+func query(obj unsafe.Pointer, iid *windows.GUID) unsafe.Pointer {
+	var out unsafe.Pointer
+	if call(obj, 0, uintptr(unsafe.Pointer(iid)), uintptr(unsafe.Pointer(&out))) != 0 {
+		return nil
+	}
+	return out
+}
 
 // call invokes method slot of the COM object obj.
 func call(obj unsafe.Pointer, slot int, args ...uintptr) uintptr {
@@ -110,6 +133,7 @@ func on(obj unsafe.Pointer, adder int, f func(args unsafe.Pointer)) error {
 	aliveMu.Unlock()
 	var token int64 // EventRegistrationToken
 	hr := call(obj, adder, uintptr(unsafe.Pointer(h)), uintptr(unsafe.Pointer(&token)))
+	runtime.KeepAlive(&token)
 	// Ours goes; WebView2 keeps its own while it's registered.
 	call(unsafe.Pointer(h), slotRelease)
 	if hr != 0 {
@@ -148,7 +172,12 @@ func Lock(controller unsafe.Pointer, p nav.Policy) error {
 		return fmt.Errorf("get_CoreWebView2: HRESULT %#x", uint32(hr))
 	}
 	defer release(core)
-	err := errors.Join(
+	block, err := blockElsewhere(core, p)
+	if err != nil {
+		return err
+	}
+	err = errors.Join(
+		on(core, addWebResourceRequested, block),
 		on(core, addNavigationStarting, func(args unsafe.Pointer) {
 			if u := uri(args, navigationGetURI); !allow(p, u) {
 				log.Printf("webview: not going to %q, which isn't the site", u)
@@ -170,8 +199,8 @@ func Lock(controller unsafe.Pointer, p nav.Policy) error {
 	if err != nil {
 		return err
 	}
-	var core4 unsafe.Pointer
-	if call(core, 0, uintptr(unsafe.Pointer(&iidWebView2_4)), uintptr(unsafe.Pointer(&core4))) != 0 || core4 == nil {
+	core4 := query(core, &iidWebView2_4)
+	if core4 == nil {
 		log.Print("webview: this WebView2 runtime can't refuse downloads (it's older than 2021)")
 		return nil
 	}
@@ -183,4 +212,53 @@ func Lock(controller unsafe.Pointer, p nav.Policy) error {
 		log.Printf("webview: %v", err)
 	}
 	return nil
+}
+
+// blockElsewhere makes the handler that answers any request for a document
+// off the site (a page or a frame) with a 403 of our own, so it never goes
+// out: WebView2 holds each request until its handler has run. Cancelling
+// the navigation in NavigationStarting keeps the window where it is, but
+// the request has already been sent by then, and a page could use that to
+// carry data off past the site's CSP (location.href = elsewhere + data).
+func blockElsewhere(core unsafe.Pointer, p nav.Policy) (func(args unsafe.Pointer), error) {
+	core2 := query(core, &iidWebView2_2)
+	if core2 == nil {
+		return nil, errors.New("no ICoreWebView2_2 (a WebView2 runtime from before 2021)")
+	}
+	defer release(core2)
+	// Kept for as long as the view lives: the handler makes its responses with it.
+	var env unsafe.Pointer
+	if hr := call(core2, getEnvironment, uintptr(unsafe.Pointer(&env))); hr != 0 || env == nil {
+		return nil, fmt.Errorf("get_Environment: HRESULT %#x", uint32(hr))
+	}
+	all, _ := windows.UTF16PtrFromString("*")
+	hr := call(core, addWebResourceRequestedFilter, uintptr(unsafe.Pointer(all)), contextDocument)
+	runtime.KeepAlive(all)
+	if hr != 0 {
+		release(env)
+		return nil, fmt.Errorf("AddWebResourceRequestedFilter: HRESULT %#x", uint32(hr))
+	}
+	reason, _ := windows.UTF16PtrFromString("Forbidden")
+	headers, _ := windows.UTF16PtrFromString("")
+	return func(args unsafe.Pointer) {
+		var req unsafe.Pointer
+		if call(args, resourceGetRequest, uintptr(unsafe.Pointer(&req))) != 0 || req == nil {
+			return
+		}
+		u := uri(req, requestGetURI)
+		release(req)
+		if allow(p, u) {
+			return
+		}
+		log.Printf("webview: not asking for %q, which isn't the site", u)
+		var res unsafe.Pointer
+		hr := call(env, createWebResourceResponse, 0, 403, uintptr(unsafe.Pointer(reason)), uintptr(unsafe.Pointer(headers)), uintptr(unsafe.Pointer(&res)))
+		runtime.KeepAlive(reason)
+		runtime.KeepAlive(headers)
+		if hr != 0 || res == nil {
+			return
+		}
+		call(args, resourcePutResponse, uintptr(res))
+		release(res)
+	}, nil
 }

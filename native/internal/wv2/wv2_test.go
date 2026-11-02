@@ -166,10 +166,15 @@ func TestLock(t *testing.T) {
 	}
 
 	t.Run("stays on the site", func(t *testing.T) {
-		eval(`location.href = '` + other.URL + `/away'`)
+		eval(`location.href = '` + other.URL + `/away?data=secret'`)
 		time.Sleep(2 * time.Second)
 		if got := asked(); len(got) > 0 {
 			t.Errorf("going there asked the other origin for %v", got)
+		}
+		eval(`var f = document.createElement('iframe'); f.src = '` + other.URL + `/frame'; document.body.appendChild(f)`)
+		time.Sleep(2 * time.Second)
+		if got := asked(); len(got) > 0 {
+			t.Errorf("a frame asked the other origin for %v", got)
 		}
 		eval(`report('at:' + location.href)`)
 		if got := next(t, "at:"); !strings.HasPrefix(got, site.URL+"/") {
