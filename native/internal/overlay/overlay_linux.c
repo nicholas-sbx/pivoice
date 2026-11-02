@@ -22,7 +22,10 @@
 //
 // Wayland without layer-shell (GNOME) lets no app keep a window on top or
 // say where it goes: there it's an ordinary borderless window you can pin
-// yourself (Alt+Space, Always on Top), so it takes clicks.
+// yourself (Alt+Space, Always on Top), so it takes clicks. The same on a
+// desktop that has layer-shell when gtk-layer-shell isn't installed: the
+// settings say to install it (pv_needs_layer_shell), and it's looked for
+// again each time the overlay's opened, so it's used once it's there.
 
 #include <dlfcn.h>
 #include <string.h>
@@ -59,7 +62,43 @@ static struct {
 	void (*set_keyboard_mode)(GtkWindow *, int);
 	void (*set_keyboard_interactivity)(GtkWindow *, gboolean);
 } ls;
-static int ls_loaded; // 0 not tried, 1 there, -1 not
+#ifdef GDK_WINDOWING_WAYLAND
+static void global(void *data, struct wl_registry *r, uint32_t name, const char *iface, uint32_t version) {
+	(void)r;
+	(void)name;
+	(void)version;
+	if (!strcmp(iface, "zwlr_layer_shell_v1")) *(int *)data = 1;
+}
+
+static void global_remove(void *data, struct wl_registry *r, uint32_t name) {
+	(void)data;
+	(void)r;
+	(void)name;
+}
+
+// Whether the compositor offers layer-shell (KDE, Sway, Hyprland do; GNOME
+// doesn't), asked of it directly, on a queue of our own so GDK's events
+// aren't touched.
+static int offers_layer_shell(void) {
+	struct wl_display *d = gdk_wayland_display_get_wl_display(gdk_display_get_default());
+	struct wl_event_queue *q = wl_display_create_queue(d);
+	struct wl_display *wrapped = wl_proxy_create_wrapper(d);
+	wl_proxy_set_queue((struct wl_proxy *)wrapped, q);
+	struct wl_registry *r = wl_display_get_registry(wrapped);
+	static const struct wl_registry_listener listener = {global, global_remove};
+	int found = 0;
+	wl_registry_add_listener(r, &listener, &found);
+	wl_display_roundtrip_queue(d, q);
+	wl_registry_destroy(r);
+	wl_proxy_wrapper_destroy(wrapped);
+	wl_event_queue_destroy(q);
+	return found;
+}
+#endif
+
+static int ls_loaded; // 0 not tried (or not installed yet), 1 there, -1 not to be had
+// The compositor offers layer-shell, but gtk-layer-shell isn't installed.
+static int ls_missing;
 
 static int layer_shell(void) {
 	if (ls_loaded) return ls_loaded > 0;
@@ -67,7 +106,13 @@ static int layer_shell(void) {
 #ifdef GDK_WINDOWING_WAYLAND
 	if (!GDK_IS_WAYLAND_DISPLAY(gdk_display_get_default())) return 0;
 	void *h = dlopen("libgtk-layer-shell.so.0", RTLD_NOW | RTLD_LOCAL);
-	if (!h) return 0;
+	if (!h) {
+		// Look again next time: it may be installed while the app runs.
+		ls_missing = offers_layer_shell();
+		ls_loaded = 0;
+		return 0;
+	}
+	ls_missing = 0;
 	ls.is_supported = dlsym(h, "gtk_layer_is_supported");
 	ls.init_for_window = dlsym(h, "gtk_layer_init_for_window");
 	ls.set_layer = dlsym(h, "gtk_layer_set_layer");
@@ -84,6 +129,11 @@ static int layer_shell(void) {
 	ls_loaded = 1;
 #endif
 	return ls_loaded > 0;
+}
+
+int pv_needs_layer_shell(void) {
+	pv_mode();
+	return ls_missing;
 }
 
 int pv_mode(void) {
@@ -188,6 +238,7 @@ static const char *layer_namespace(void) {
 pv_overlay *pv_open(int debug, const char *url, const char *js) {
 	int mode = pv_mode();
 	pv_overlay *o = g_new0(pv_overlay, 1);
+	o->mode = mode;
 	GtkWindow *win = GTK_WINDOW(gtk_window_new(mode == 1 ? GTK_WINDOW_POPUP : GTK_WINDOW_TOPLEVEL));
 	o->win = GTK_WIDGET(win);
 	gtk_window_set_title(win, "Pivoice overlay");
@@ -265,7 +316,8 @@ void pv_place(pv_overlay *o, int monitor, int edges, int margin, int size, int x
 	if (!gtk_widget_get_visible(o->win)) {
 		gtk_widget_show_all(o->win);
 		// Clicks go through, except where nothing can keep it on top (GNOME): there you need to reach its menu.
-		int mode = pv_mode();
+		// The way it was made, whatever pv_mode says now.
+		int mode = o->mode;
 		if (mode != 0) {
 			cairo_region_t *none = cairo_region_create();
 			gtk_widget_input_shape_combine_region(o->win, none);

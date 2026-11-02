@@ -215,9 +215,11 @@ export type FromApp =
    * The screens the overlay can go on. `placeable`: it goes where it's told
    * (not on GNOME, which places windows itself). `onTop`: it stays above
    * other windows (not on GNOME either, which only lets you ask for that
-   * yourself, from the window's menu).
+   * yourself, from the window's menu). `needs`: what to install for both
+   * (on a Wayland desktop that could, without gtk-layer-shell); not sent by
+   * apps before it was added.
    */
-  | { t: 'monitors'; monitors: AppMonitor[]; placeable: boolean; onTop: boolean }
+  | { t: 'monitors'; monitors: AppMonitor[]; placeable: boolean; onTop: boolean; needs?: 'gtk-layer-shell' }
   | { t: 'overlay'; on: boolean; error?: string }
 
 // ---- versions ------------------------------------------------------------------

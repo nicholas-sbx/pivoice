@@ -89,7 +89,9 @@ export function driveOverlay(b: NativeBridge, call: OverlayCall, seating: Seatin
 }
 
 /** The screens the overlay can go on, and what this desktop lets it do there. */
-export async function listMonitors(): Promise<{ monitors: AppMonitor[]; placeable: boolean; onTop: boolean }> {
+export async function listMonitors(): Promise<{ monitors: AppMonitor[]; placeable: boolean; onTop: boolean; needs?: 'gtk-layer-shell' }> {
   const r = bridge ? await bridge.request({ t: 'monitors' }, 'monitors', 5000) : null
-  return r ? { monitors: r.monitors, placeable: r.placeable, onTop: r.onTop } : { monitors: [], placeable: false, onTop: false }
+  return r
+    ? { monitors: r.monitors, placeable: r.placeable, onTop: r.onTop, needs: r.needs }
+    : { monitors: [], placeable: false, onTop: false }
 }

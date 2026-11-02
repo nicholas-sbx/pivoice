@@ -629,6 +629,13 @@ own code, and Vue).
 | **Windows** | a topmost popup that's never activated and isn't on the taskbar or in Alt+Tab, layered with no redirection bitmap, so WebView2's see-through background shows the desktop; back on top whenever another app comes to the front (a game going full screen often makes itself topmost, and the last one wins) | WS_EX_TRANSPARENT | the app, in the screen's work area, at its own scaling |
 | **GNOME on Wayland** | an ordinary borderless window: GNOME lets no app keep a window on top or say where it goes | no, so you can reach its menu: pin it with Alt+Space, Always on Top, move it with Super and drag | by you |
 
+On KDE, Sway, Hyprland and the rest, it's on top and clicks go through only
+with gtk-layer-shell installed (`libgtk-layer-shell0` on Debian and Ubuntu,
+`gtk-layer-shell` on Fedora and Arch), which not every distro installs by
+default. Without it the overlay is the ordinary window it is on GNOME, and the
+settings say what to install; it's looked for again each time the overlay's
+switched on, so there's no need to restart the app.
+
 Not on macOS yet (the app isn't released there).
 
 Costs, and what isn't done:
