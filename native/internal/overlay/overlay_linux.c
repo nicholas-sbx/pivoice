@@ -216,6 +216,22 @@ static gboolean placed(GtkWidget *w, GdkEvent *ev, gpointer data) {
 	return FALSE;
 }
 
+// Clicks go through, except where nothing can keep it on top (GNOME): there you need to reach its menu.
+static void click_through(pv_overlay *o) {
+	if (o->mode == 0) return;
+	cairo_region_t *none = cairo_region_create();
+	gtk_widget_input_shape_combine_region(o->win, none);
+	cairo_region_destroy(none);
+}
+
+// Put up, the first time or again: gtk-layer-shell puts it up on a new
+// surface when it goes to another screen (a layer surface can't change
+// screens), and a new surface takes every click until it's told otherwise.
+static gboolean mapped(GtkWidget *w, GdkEvent *ev, gpointer data) {
+	click_through((pv_overlay *)data);
+	return placed(w, ev, data);
+}
+
 #ifdef GDK_WINDOWING_X11
 // Something else was raised, moved or shown: back on top.
 static GdkFilterReturn restack(GdkXEvent *xev, GdkEvent *ev, gpointer data) {
@@ -277,7 +293,7 @@ pv_overlay *pv_open(int debug, const char *url, const char *js) {
 		// A few faces don't need the GPU: drawn in software it holds about 36 MB of its own, against about 130 with it.
 		webkit_settings_set_hardware_acceleration_policy(webkit_web_view_get_settings(WEBKIT_WEB_VIEW(view)), WEBKIT_HARDWARE_ACCELERATION_POLICY_NEVER);
 	}
-	g_signal_connect(o->win, "map-event", G_CALLBACK(placed), o);
+	g_signal_connect(o->win, "map-event", G_CALLBACK(mapped), o);
 	g_signal_connect(o->win, "configure-event", G_CALLBACK(placed), o);
 	webview_bind(o->view, "__pivoiceOverlayReady", ready, o);
 	webview_init(o->view, js);
@@ -315,16 +331,9 @@ void pv_place(pv_overlay *o, int monitor, int edges, int margin, int size, int x
 	}
 	if (!gtk_widget_get_visible(o->win)) {
 		gtk_widget_show_all(o->win);
-		// Clicks go through, except where nothing can keep it on top (GNOME): there you need to reach its menu.
-		// The way it was made, whatever pv_mode says now.
-		int mode = o->mode;
-		if (mode != 0) {
-			cairo_region_t *none = cairo_region_create();
-			gtk_widget_input_shape_combine_region(o->win, none);
-			cairo_region_destroy(none);
-		}
+		click_through(o);
 #ifdef GDK_WINDOWING_X11
-		if (mode == 1 && !o->restacking) {
+		if (o->mode == 1 && !o->restacking) {
 			GdkWindow *root = gdk_get_default_root_window();
 			gdk_window_set_events(root, gdk_window_get_events(root) | GDK_SUBSTRUCTURE_MASK);
 			gdk_window_add_filter(root, restack, o);
