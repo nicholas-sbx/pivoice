@@ -190,7 +190,7 @@ jobs:
     needs: [tag, build]
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-48
+      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-51
       options: --privileged
     steps:
       - uses: actions/checkout@v5
@@ -213,6 +213,17 @@ jobs:
           manifest-path: native/flatpak/io.github.nicholas_sbx.Pivoice.yml
           cache: false
           upload-artifact: false
+      # Building doesn't load the binary, so check here that every library it links is in the
+      # runtime: install the bundle and have the loader list them inside the sandbox.
+      - name: Check its libraries resolve
+        shell: bash
+        run: |
+          flatpak install --user --noninteractive --assumeyes "$FLATPAK"
+          libs=$(flatpak run --env=LD_TRACE_LOADED_OBJECTS=1 io.github.nicholas_sbx.Pivoice)
+          echo "$libs"
+          if grep -q 'not found' <<< "$libs"; then
+            echo "::error::Libraries missing from the runtime:"; grep 'not found' <<< "$libs"; exit 1
+          fi
       - uses: actions/upload-artifact@v5
         with:
           name: ${{ env.FLATPAK }}

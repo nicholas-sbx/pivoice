@@ -10,7 +10,7 @@
 app-id: io.github.nicholas_sbx.Pivoice
 runtime: org.gnome.Platform
 # Has to ship WebKitGTK 4.1 (the binary links libwebkit2gtk-4.1.so.0).
-runtime-version: '48'
+runtime-version: '51'
 sdk: org.gnome.Sdk
 command: pivoice
 
