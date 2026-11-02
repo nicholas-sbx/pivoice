@@ -184,8 +184,55 @@ jobs:
           # Only the release job (minutes later) needs these; the release keeps its own copies.
           retention-days: 1
 
+  # The Linux binary again, in a Flatpak: the GNOME runtime brings WebKitGTK, and the sandbox
+  # gets the network, the sound server and the display but none of your files.
+  flatpak:
+    needs: [tag, build]
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-51
+      options: --privileged
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v5
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Stage
+        shell: bash
+        run: |
+          version=$(tr -d '[:space:]' < native/VERSION)
+          tar -xzf "dist/pivoice-$version-linux-amd64.tar.gz" -C native/flatpak pivoice
+          sed -i "s/@VERSION@/$version/; s/@DATE@/$(date -u +%F)/" native/flatpak/io.github.nicholas_sbx.Pivoice.metainfo.xml
+          desktop-file-validate native/flatpak/io.github.nicholas_sbx.Pivoice.desktop
+          appstreamcli validate --no-net native/flatpak/io.github.nicholas_sbx.Pivoice.metainfo.xml
+          echo "FLATPAK=pivoice-$version-linux-x86_64.flatpak" >> "$GITHUB_ENV"
+      - uses: flatpak/flatpak-github-actions/flatpak-builder@v6
+        with:
+          bundle: ${{ env.FLATPAK }}
+          manifest-path: native/flatpak/io.github.nicholas_sbx.Pivoice.yml
+          cache: false
+          upload-artifact: false
+      # Building doesn't load the binary, so check here that every library it links is in the
+      # runtime: install the bundle and have the loader list them inside the sandbox.
+      - name: Check its libraries resolve
+        shell: bash
+        run: |
+          flatpak install --user --noninteractive --assumeyes "$FLATPAK"
+          libs=$(flatpak run --env=LD_TRACE_LOADED_OBJECTS=1 io.github.nicholas_sbx.Pivoice)
+          echo "$libs"
+          if grep -q 'not found' <<< "$libs"; then
+            echo "::error::Libraries missing from the runtime:"; grep 'not found' <<< "$libs"; exit 1
+          fi
+      - uses: actions/upload-artifact@v5
+        with:
+          name: ${{ env.FLATPAK }}
+          path: ${{ env.FLATPAK }}
+          if-no-files-found: error
+          retention-days: 1
+
   release:
-    needs: [tag, check, build]
+    needs: [tag, check, build, flatpak]
     if: needs.tag.outputs.release == 'true'
     runs-on: ubuntu-latest
     permissions:
@@ -206,6 +253,7 @@ jobs:
           It's one file; there's nothing to install.
 
           - **Linux** (x86-64): \`tar -xzf pivoice-$VERSION-linux-amd64.tar.gz && ./pivoice\`. Needs WebKitGTK 4.1 (\`libwebkit2gtk-4.1-0\` on Debian and Ubuntu, \`webkit2gtk4.1\` on Fedora), which most desktops already have.
+          - **Linux, Flatpak** (x86-64): \`flatpak install --user pivoice-$VERSION-linux-x86_64.flatpak\`, then \`flatpak run io.github.nicholas_sbx.Pivoice\`. Sandboxed: it gets the network, your sound card and the display, and none of your files.
           - **Windows** (10 and 11, x86-64): run \`pivoice-$VERSION-windows-amd64.exe\`. SmartScreen may warn first, since it isn't signed: More info → Run anyway. Uses the WebView2 runtime that comes with Windows.
 
           Pass an invite link or a room code to go straight to it: \`./pivoice https://…/#ABC234\`. \`--browser\` opens the UI in your browser instead of its own window.

@@ -501,7 +501,9 @@ becomes just the UI.
   in, the app makes that thread realtime ([`native/internal/rt`](native/internal/rt)):
   SCHED_FIFO if it may (realtime limits, as an `audio` group often gives),
   otherwise through rtkit, the service PipeWire's own clients ask, which
-  says yes to an active desktop session. Priority 18, under PipeWire's
+  says yes to an active desktop session, or, in the Flatpak (whose
+  sandbox has no system bus), through the Realtime portal, which asks
+  rtkit for it. Priority 18, under PipeWire's
   own threads. It first caps RLIMIT_RTTIME at 200 ms (rtkit insists), so a
   realtime thread that never slept would be stopped, not freeze the
   machine. The sound card line in the Latency tab says how it went.
@@ -960,11 +962,19 @@ The app releases the same way, keyed on `native/VERSION` and tagged
 vet`, `go test -race`, where the engine's tests run two engines on fake sound
 cards over real WebRTC, against RNNoise and SpeexDSP built as the release
 builds them, then the processing benchmarks) and **build** on Linux (Ubuntu 22.04, so glibc
-2.35+) and Windows. **release** waits for all of them, so nothing ships
+2.35+) and Windows. **flatpak** wraps the Linux binary
+(`native/flatpak/`; GNOME runtime, so WebKitGTK comes from there). **release** waits for all of them, so nothing ships
 unless the tests passed too, and publishes a GitHub release with the files
 and how to run each. Each file has the version in its name
-(`pivoice-0.2.0-linux-amd64.tar.gz`, `pivoice-0.2.0-windows-amd64.exe`),
-which the site's download buttons build from `native/VERSION`. macOS is switched off for now (its runners can queue
+(`pivoice-0.2.0-linux-amd64.tar.gz`, `pivoice-0.2.0-linux-x86_64.flatpak`,
+`pivoice-0.2.0-windows-amd64.exe`),
+which the site's download buttons build from `native/VERSION` (they don't
+link the Flatpak yet). The Flatpak's sandbox has the network, PipeWire or
+PulseAudio and the display, and no file access at all: the app's own code
+never opens a file; the audio thread goes realtime through the Realtime
+portal there. CI installs the bundle and checks that every library the
+binary links is in the runtime. The always-on-top overlay inside it is
+untested. macOS is switched off for now (its runners can queue
 for a long time): uncomment its entry in the build matrix to bring it back,
 as one universal binary. It needs no secrets, only
 `VITE_PUBLIC_URL`, the site it opens: without it, a main push builds but
