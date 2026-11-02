@@ -152,6 +152,20 @@ static void screens(GdkDisplay *d, GdkMonitor *m, gpointer data) {
 	pvOverlayScreens();
 }
 
+// The desktop has put it up, or given it its size or place, which can come
+// after the page has drawn all of it (the compositor answers when it gets
+// to it): a frame from before then can be lost, and only what changes
+// afterwards would show. So the page paints all of itself again
+// (src/overlay/Overlay.vue). Only when it's shown or placed, never as it runs.
+static const char repaint_js[] = "window.__pivoiceOverlay&&window.__pivoiceOverlay._recv({\"t\":\"repaint\"})";
+
+static gboolean placed(GtkWidget *w, GdkEvent *ev, gpointer data) {
+	(void)w;
+	(void)ev;
+	webview_eval(((pv_overlay *)data)->view, repaint_js);
+	return FALSE;
+}
+
 #ifdef GDK_WINDOWING_X11
 // Something else was raised, moved or shown: back on top.
 static GdkFilterReturn restack(GdkXEvent *xev, GdkEvent *ev, gpointer data) {
@@ -212,6 +226,8 @@ pv_overlay *pv_open(int debug, const char *url, const char *js) {
 		// A few faces don't need the GPU: drawn in software it holds about 36 MB of its own, against about 130 with it.
 		webkit_settings_set_hardware_acceleration_policy(webkit_web_view_get_settings(WEBKIT_WEB_VIEW(view)), WEBKIT_HARDWARE_ACCELERATION_POLICY_NEVER);
 	}
+	g_signal_connect(o->win, "map-event", G_CALLBACK(placed), o);
+	g_signal_connect(o->win, "configure-event", G_CALLBACK(placed), o);
 	webview_bind(o->view, "__pivoiceOverlayReady", ready, o);
 	webview_init(o->view, js);
 	webview_navigate(o->view, url);
@@ -228,8 +244,13 @@ void pv_place(pv_overlay *o, int monitor, int edges, int margin, int size, int x
 	GdkMonitor *m = monitor >= 0 ? gdk_display_get_monitor(d, monitor) : NULL;
 	if (!m) m = gdk_display_get_primary_monitor(d);
 	if (!m) m = gdk_display_get_monitor(d, 0);
-	gtk_widget_set_size_request(o->win, size, size);
-	gtk_window_resize(win, size, size);
+	// Only when it's changed: each resize has the webview start its picture again.
+	int w = 0, h = 0;
+	gtk_widget_get_size_request(o->win, &w, &h);
+	if (w != size || h != size) {
+		gtk_widget_set_size_request(o->win, size, size);
+		gtk_window_resize(win, size, size);
+	}
 	if (o->layer) {
 		ls.set_monitor(win, m);
 		static const int edge[4] = {LS_EDGE_LEFT, LS_EDGE_RIGHT, LS_EDGE_TOP, LS_EDGE_BOTTOM};

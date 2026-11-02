@@ -596,7 +596,7 @@ your screen instead: small, see-through, and with clicks going straight
 through it to whatever's underneath, so you can see where everyone sits
 (and who's talking) while you're in a game or anything else, and hear them
 from there. It stays switched on for later calls. The button is filled while
-it's on, and shows a spinner for the second it takes to come up. **Voice Settings →
+it's on. **Voice Settings →
 Overlay** places it:
 
 - **Screen**: any of yours, or the one Pivoice is on (the default). Screens
@@ -652,6 +652,12 @@ Costs, and what isn't done:
   rings faded in and out, every frame of a fade painted again in software,
   so they don't fade in the overlay). It holds about 40 MB of its own,
   drawn without the GPU (about 130 MB with it).
+- **Painted in full when it's placed**: shown, moved, resized, or given
+  its place by the desktop, and when the call changes, the overlay's page
+  paints all of itself again (a sheet too faint to see, for two frames). A
+  see-through window drawn without the GPU could lose a frame then, and
+  show only what was painted afterwards: a face and the bit of the rim
+  behind it, without the rest of the table or anyone else.
 - **Off is gone**: switched off (or out of a call), there's no overlay
   window and its web process has exited, checked by counting both before
   it's first shown, while it's up, and after it's taken down, twice over.
