@@ -131,6 +131,8 @@ export type ToOverlay =
   | { t: 'look'; look: OverlayLook }
   /** Who's speaking and who's making any sound at all, as the app hears it, whenever that changes. You're ''. */
   | { t: 'rings'; speaking: string[]; audible: string[] }
+  /** It's just been placed: paint all of it again, in case a frame of it was lost. */
+  | { t: 'repaint' }
 
 export interface AppMonitor {
   id: string
