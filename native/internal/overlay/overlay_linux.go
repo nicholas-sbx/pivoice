@@ -3,7 +3,7 @@
 package overlay
 
 /*
-#cgo pkg-config: gtk+-3.0 webkit2gtk-4.0
+#cgo pkg-config: gtk+-3.0 webkit2gtk-4.0 wayland-client
 #cgo LDFLAGS: -ldl
 #include <stdlib.h>
 #include "overlay_linux.h"
@@ -12,6 +12,7 @@ import "C"
 
 import (
 	"errors"
+	"os"
 	"unsafe"
 
 	"github.com/nicholas-sbx/pivoice/native/internal/proto"
@@ -122,6 +123,13 @@ func screens() []screen {
 func monitors(main unsafe.Pointer) proto.Monitors {
 	mode := C.pv_mode()
 	m := proto.Monitors{Placeable: mode != 0, OnTop: mode != 0}
+	if C.pv_needs_layer_shell() != 0 {
+		m.Needs = "gtk-layer-shell"
+		// The sandbox sees only its runtime's libraries, which don't include it: installing it outside does nothing.
+		if _, err := os.Stat("/.flatpak-info"); err == nil {
+			m.Needs = "not-in-flatpak"
+		}
+	}
 	on := int(C.pv_monitor_of(main))
 	for i, s := range screens() {
 		m.Monitors = append(m.Monitors, proto.Monitor{

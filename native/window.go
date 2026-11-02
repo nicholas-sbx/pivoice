@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"sync"
 
 	"github.com/nicholas-sbx/pivoice/native/internal/bridge"
 	"github.com/nicholas-sbx/pivoice/native/internal/offline"
@@ -22,14 +23,41 @@ func runWindow(b *bridge.Bridge, page, origin string, devtools bool) error {
 	if w == nil {
 		return fmt.Errorf("couldn't open a window (is a webview installed? on Linux: WebKitGTK 4.1); try --browser")
 	}
-	defer w.Destroy()
+	// Everything that runs on the UI thread from elsewhere goes through
+	// dispatch, which does nothing once the window's going: as it closes,
+	// the bridge is still tidying up (the page is gone, so the overlay
+	// goes), and a Dispatch on a destroyed webview crashes the app.
+	var mu sync.Mutex
+	closed := false
+	dispatch := func(f func()) {
+		mu.Lock()
+		defer mu.Unlock()
+		if closed {
+			return
+		}
+		w.Dispatch(func() {
+			// Queued before it closed, run as it's destroyed: not on a webview that's going.
+			mu.Lock()
+			gone := closed
+			mu.Unlock()
+			if !gone {
+				f()
+			}
+		})
+	}
+	defer func() {
+		mu.Lock()
+		closed = true
+		mu.Unlock()
+		w.Destroy()
+	}()
 	w.SetTitle("Pivoice")
 	w.SetSize(1280, 820, webview.HintNone)
 
 	conn := b.NewConn(func(msg []byte) {
 		// JSON is a JavaScript expression, and Go's escapes <, > and & and the line separators, so it's safe to splice in.
 		js := "window.__pivoiceNative&&window.__pivoiceNative._recv(" + string(msg) + ")"
-		w.Dispatch(func() { w.Eval(js) })
+		dispatch(func() { w.Eval(js) })
 	}, nil)
 	// Bound before the init script below, so it exists when that runs.
 	if err := w.Bind("__pivoiceSend", func(msg string) { conn.Receive([]byte(msg)) }); err != nil {
@@ -39,7 +67,7 @@ func runWindow(b *bridge.Bridge, page, origin string, devtools bool) error {
 	lockNavigation(w, origin)
 
 	// The overlay, made only when the page asks for it (src/native/overlay.ts).
-	ov := overlay.New(overlay.Config{Dispatch: w.Dispatch, Main: w.Window(), URL: overlayPage(page), Origin: origin, Debug: devtools})
+	ov := overlay.New(overlay.Config{Dispatch: dispatch, Main: w.Window(), URL: overlayPage(page), Origin: origin, Debug: devtools})
 	b.Overlay = ov
 
 	// The site is only opened once it answers: the webview's own error page
@@ -58,8 +86,8 @@ func runWindow(b *bridge.Bridge, page, origin string, devtools bool) error {
 	w.SetHtml(offline.Blank)
 	go offline.Watch(ctx, offline.Config{
 		URL:   home(page),
-		Show:  func(html string) { w.Dispatch(func() { w.SetHtml(html) }) },
-		Open:  func() { w.Dispatch(func() { w.Navigate(page) }) },
+		Show:  func(html string) { dispatch(func() { w.SetHtml(html) }) },
+		Open:  func() { dispatch(func() { w.Navigate(page) }) },
 		Retry: retry,
 	})
 	w.Run()

@@ -202,6 +202,9 @@ export interface AppStats {
   glitches?: Glitches
 }
 
+/** What an overlay that can't stay on top here is missing (see `monitors`). */
+export type OverlayNeeds = 'gtk-layer-shell' | 'not-in-flatpak'
+
 export type FromApp =
   | ({ t: 'hello' } & AppInfo)
   | { t: 'signal'; link: string; signal: AppSignal }
@@ -215,9 +218,11 @@ export type FromApp =
    * The screens the overlay can go on. `placeable`: it goes where it's told
    * (not on GNOME, which places windows itself). `onTop`: it stays above
    * other windows (not on GNOME either, which only lets you ask for that
-   * yourself, from the window's menu).
+   * yourself, from the window's menu). `needs`: on a Wayland desktop that
+   * could do both, what's missing: gtk-layer-shell to install, or the
+   * Flatpak, whose runtime hasn't got it. Not sent by apps before it was added.
    */
-  | { t: 'monitors'; monitors: AppMonitor[]; placeable: boolean; onTop: boolean }
+  | { t: 'monitors'; monitors: AppMonitor[]; placeable: boolean; onTop: boolean; needs?: OverlayNeeds }
   | { t: 'overlay'; on: boolean; error?: string }
 
 // ---- versions ------------------------------------------------------------------

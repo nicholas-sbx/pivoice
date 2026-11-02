@@ -631,6 +631,15 @@ own code, and Vue).
 | **Windows** | a topmost popup that's never activated and isn't on the taskbar or in Alt+Tab, layered with no redirection bitmap, so WebView2's see-through background shows the desktop; back on top whenever another app comes to the front (a game going full screen often makes itself topmost, and the last one wins) | WS_EX_TRANSPARENT | the app, in the screen's work area, at its own scaling |
 | **GNOME on Wayland** | an ordinary borderless window: GNOME lets no app keep a window on top or say where it goes | no, so you can reach its menu: pin it with Alt+Space, Always on Top, move it with Super and drag | by you |
 
+On KDE, Sway, Hyprland and the rest, it's on top and clicks go through only
+with gtk-layer-shell installed (`libgtk-layer-shell0` on Debian and Ubuntu,
+`gtk-layer-shell` on Fedora and Arch), which not every distro installs by
+default. Without it the overlay is the ordinary window it is on GNOME, and the
+settings say what to install; it's looked for again each time the overlay's
+switched on, so there's no need to restart the app. The Flatpak's runtime
+hasn't got gtk-layer-shell, so its overlay is always that ordinary window
+for now (the settings say so).
+
 Not on macOS yet (the app isn't released there).
 
 Costs, and what isn't done:
@@ -973,8 +982,8 @@ link the Flatpak yet). The Flatpak's sandbox has the network, PipeWire or
 PulseAudio and the display, and no file access at all: the app's own code
 never opens a file; the audio thread goes realtime through the Realtime
 portal there. CI installs the bundle and checks that every library the
-binary links is in the runtime. The always-on-top overlay inside it is
-untested. macOS is switched off for now (its runners can queue
+binary links is in the runtime. Its overlay can't stay on top or let
+clicks through yet, since the runtime has no gtk-layer-shell. macOS is switched off for now (its runners can queue
 for a long time): uncomment its entry in the build matrix to bring it back,
 as one universal binary. It needs no secrets, only
 `VITE_PUBLIC_URL`, the site it opens: without it, a main push builds but

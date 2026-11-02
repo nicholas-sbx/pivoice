@@ -4,7 +4,7 @@ import { call, updatePrefs } from '../call'
 import type { OverlayPrefs } from '../lib/prefs'
 import { native } from '../native/bridge'
 import { listMonitors, overlayError, overlayPlacing } from '../native/overlay'
-import type { AppMonitor, OverlayAnchor } from '../native/protocol'
+import type { AppMonitor, OverlayAnchor, OverlayNeeds } from '../native/protocol'
 import Slider from './Slider.vue'
 import Switch from './Switch.vue'
 
@@ -21,6 +21,7 @@ const set = (patch: Partial<OverlayPrefs>) => updatePrefs({ overlay: { ...call.p
 const monitors = ref<AppMonitor[]>([])
 const placeable = ref(true)
 const onTop = ref(true)
+const needs = ref<OverlayNeeds | undefined>()
 
 onMounted(async () => {
   overlayPlacing.value = true
@@ -28,6 +29,7 @@ onMounted(async () => {
   monitors.value = r.monitors
   placeable.value = r.placeable
   onTop.value = r.onTop
+  needs.value = r.needs
 })
 onBeforeUnmount(() => {
   overlayPlacing.value = false
@@ -85,7 +87,16 @@ const sideLabel = computed(() => anchors.find(a => a.value === (peek.value ?? o.
       @update:model-value="v => set({ on: v })"
     />
     <p v-if="o.on && overlayError" class="note error">Couldn't show it: {{ overlayError }}</p>
-    <p v-if="!onTop" class="note">
+    <p v-if="!onTop && needs === 'gtk-layer-shell'" class="note">
+      To keep it on top and let clicks through, this desktop needs gtk-layer-shell, which isn't installed: <code>libgtk-layer-shell0</code>
+      on Debian and Ubuntu, <code>gtk-layer-shell</code> on Fedora and Arch. Then switch the overlay off and on again. Until then it's an
+      ordinary window, and takes clicks.
+    </p>
+    <p v-else-if="!onTop && needs === 'not-in-flatpak'" class="note">
+      To keep it on top and let clicks through, this desktop needs gtk-layer-shell, which the Flatpak doesn't have yet: use the
+      <code>.tar.gz</code> build of the app for that. Here it's an ordinary window, and takes clicks.
+    </p>
+    <p v-else-if="!onTop" class="note">
       This desktop (GNOME) doesn't let apps keep a window on top or say where it goes. Move the overlay with Super and drag, and pin it with
       Alt+Space, Always on Top. It takes clicks here, so you can.
     </p>

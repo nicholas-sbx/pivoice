@@ -3,7 +3,7 @@ import { nextTick, reactive } from 'vue'
 import { Seating } from '../src/lib/seating'
 import { DEFAULT_PREFS } from '../src/lib/prefs'
 import { native, type NativeBridge } from '../src/native/bridge'
-import { driveOverlay, overlayPlacing, type OverlayCall } from '../src/native/overlay'
+import { driveOverlay, mainFocused, overlayPlacing, type OverlayCall } from '../src/native/overlay'
 import type { FromApp, ToApp } from '../src/native/protocol'
 import type { Member } from '../src/net/protocol'
 
@@ -81,6 +81,16 @@ describe('the overlay, from the page', () => {
     await settle()
     expect(sent.some(m => m.t === 'overlay' && m.op === 'look' && m.look.placing)).toBe(true)
     expect(sent.some(m => m.t === 'overlay' && m.op === 'show' && m.place.margin === 40)).toBe(true)
+
+    // Gone to another window with them still open: no outline, until it's back.
+    const looks = () => sent.filter((m): m is Extract<ToApp, { op: 'look' }> => m.t === 'overlay' && m.op === 'look')
+    sent.length = 0
+    mainFocused.value = false
+    await settle()
+    expect(looks().at(-1)!.look.placing).toBe(false)
+    mainFocused.value = true
+    await settle()
+    expect(looks().at(-1)!.look.placing).toBe(true)
     overlayPlacing.value = false
 
     // Leaving the call takes it down.

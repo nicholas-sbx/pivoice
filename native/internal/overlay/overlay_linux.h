@@ -5,6 +5,8 @@
 typedef struct {
 	GtkWidget *win;
 	webview_t view;
+	// pv_mode's when it was made.
+	int mode;
 	// 1: a layer-shell surface; 0: an ordinary window.
 	int layer;
 	// X11: raising itself whenever the stacking changes.
@@ -15,6 +17,9 @@ typedef struct {
 // GNOME), 1 a keep-above window (X11), 0 neither (Wayland without
 // layer-shell: GNOME).
 int pv_mode(void);
+// The desktop could keep the overlay on top and let clicks through (it offers
+// layer-shell), but gtk-layer-shell isn't installed.
+int pv_needs_layer_shell(void);
 pv_overlay *pv_open(int debug, const char *url, const char *js);
 // On `monitor` (-1: the primary one). A layer-shell surface keeps to `edges`
 // (overlay.go's edgeLeft…) `margin` in; an ordinary window goes to x, y.

@@ -252,8 +252,8 @@ jobs:
           The Pivoice app $VERSION: the site, with the audio done natively (one duplex sound card callback, WebRTC from Go).
           It's one file; there's nothing to install.
 
-          - **Linux** (x86-64): \`tar -xzf pivoice-$VERSION-linux-amd64.tar.gz && ./pivoice\`. Needs WebKitGTK 4.1 (\`libwebkit2gtk-4.1-0\` on Debian and Ubuntu, \`webkit2gtk4.1\` on Fedora), which most desktops already have.
-          - **Linux, Flatpak** (x86-64): \`flatpak install --user pivoice-$VERSION-linux-x86_64.flatpak\`, then \`flatpak run io.github.nicholas_sbx.Pivoice\`. Sandboxed: it gets the network, your sound card and the display, and none of your files.
+          - **Linux** (x86-64): \`tar -xzf pivoice-$VERSION-linux-amd64.tar.gz && ./pivoice\`. Needs WebKitGTK 4.1 (\`libwebkit2gtk-4.1-0\` on Debian and Ubuntu, \`webkit2gtk4.1\` on Fedora), which most desktops already have. For the overlay on KDE, Sway or Hyprland, also gtk-layer-shell (\`libgtk-layer-shell0\` on Debian and Ubuntu, \`gtk-layer-shell\` on Fedora and Arch).
+          - **Linux, Flatpak** (x86-64): \`flatpak install --user pivoice-$VERSION-linux-x86_64.flatpak\`, then \`flatpak run io.github.nicholas_sbx.Pivoice\`. Sandboxed: it gets the network, your sound card and the display, and none of your files. Its overlay is an ordinary window for now, which takes clicks: the runtime has no gtk-layer-shell.
           - **Windows** (10 and 11, x86-64): run \`pivoice-$VERSION-windows-amd64.exe\`. SmartScreen may warn first, since it isn't signed: More info → Run anyway. Uses the WebView2 runtime that comes with Windows.
 
           Pass an invite link or a room code to go straight to it: \`./pivoice https://…/#ABC234\`. \`--browser\` opens the UI in your browser instead of its own window.
