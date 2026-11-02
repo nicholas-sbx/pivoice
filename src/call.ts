@@ -141,6 +141,8 @@ function appConfig(): AppConfig {
     inputId: p.appInputId,
     outputId: p.appOutputId,
     exclusive: p.appExclusive,
+    bufferAuto: p.appBufferAuto,
+    bufferMs: p.appBufferMs,
     processing: {
       echo: p.echoCancellation,
       noise: p.noiseSuppression,
@@ -692,6 +694,8 @@ export function setAppDevices(
       | 'appInputId'
       | 'appOutputId'
       | 'appExclusive'
+      | 'appBufferAuto'
+      | 'appBufferMs'
       | 'noiseGate'
       | 'noiseGraceMs'
       | 'noiseLookahead'

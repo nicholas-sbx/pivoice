@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { LL_DEFAULTS, LL_RANGES, PCM_FRAME, SEND_DELAY_MS, type LLConfig } from '../audio/ll/config'
 import { call, getEngine, getNative, micLevel, setAppDevices, setOutputBuffer, updateLL } from '../call'
 import { isNative, native } from '../native/bridge'
-import type { AudioInfo, Glitches } from '../native/protocol'
+import { APP_BUFFER_STEPS, type AudioInfo, type Glitches } from '../native/protocol'
 import Segmented from './Segmented.vue'
 import Slider from './Slider.vue'
 import Switch from './Switch.vue'
@@ -52,6 +52,7 @@ onBeforeUnmount(() => {
   if (glitchTimer) clearInterval(glitchTimer)
 })
 const onWindows = computed(() => native.app?.os === 'windows')
+const bufferOptions = APP_BUFFER_STEPS.map(ms => ({ value: ms as number, label: ms ? `+${ms} ms` : 'Smallest' }))
 const glitchRows = computed(() => {
   const g = glitches.value
   if (!g) return []
@@ -82,7 +83,12 @@ const transport = typeof SharedArrayBuffer !== 'undefined' && globalThis.crossOr
 const buffer = computed(() => {
   void call.status
   const info = appAudio.value ?? getNative()?.info
-  if (info) return `${info.block}-sample blocks (${((info.block * 1000) / 48_000).toFixed(1)} ms) · in ${info.inputLatencyMs.toFixed(1)} ms, out ${info.outputLatencyMs.toFixed(1)} ms · ${info.api}${info.mode ? ` (${info.mode})` : ''}`
+  if (info) {
+    const extra = info.extraOutputMs ? ` (${+info.extraOutputMs.toFixed(1)} ms more than the smallest)` : ''
+    const r = info.realtime
+    const priority = !r ? '' : r.startsWith('no: ') ? ` · audio thread at normal priority: ${r.slice(4)}` : ` · audio thread realtime (${r})`
+    return `${info.block}-sample blocks (${((info.block * 1000) / 48_000).toFixed(1)} ms) · in ${info.inputLatencyMs.toFixed(1)} ms, out ${info.outputLatencyMs.toFixed(1)} ms${extra} · ${info.api}${info.mode ? ` (${info.mode})` : ''}${priority}`
+  }
   const ctx = getEngine()?.ctx
   if (!ctx) return ''
   return `${(ctx.baseLatency * 1000).toFixed(1)} ms Web Audio + ${((ctx.outputLatency || 0) * 1000).toFixed(1)} ms device`
@@ -105,8 +111,8 @@ const buffer = computed(() => {
     <template v-if="isNative">
       <span class="eyebrow">Sound card</span>
       <p class="note">
-        The app runs the microphone and the speakers in one callback, with the smallest buffer your device offers, and plays
-        everyone through it: there’s no browser audio in the way.
+        The app runs the microphone and the speakers in one callback, with the smallest buffer your device offers (plus any
+        speaker buffer below), and plays everyone through it: there’s no browser audio in the way.
         <template v-if="buffer"><br />Now: {{ buffer }}</template>
       </p>
       <Switch
@@ -116,6 +122,24 @@ const buffer = computed(() => {
         :model-value="call.prefs.appExclusive"
         @update:model-value="v => setAppDevices({ appExclusive: v })"
       />
+      <Switch
+        label="Manage Speaker Buffer Automatically"
+        hint="Starts with the smallest buffer your speakers offer, and adds to it each time they keep running dry (a crackle each time), up to 24 ms more. Back to the smallest when the app restarts or you change devices."
+        :model-value="call.prefs.appBufferAuto"
+        @update:model-value="v => setAppDevices({ appBufferAuto: v })"
+      />
+      <template v-if="!call.prefs.appBufferAuto">
+        <Segmented
+          label="Speaker buffer"
+          :options="bufferOptions"
+          :model-value="call.prefs.appBufferMs"
+          @update:model-value="v => setAppDevices({ appBufferMs: v })"
+        />
+        <p class="note">
+          On top of the smallest your speakers offer: more is fewer crackles and that much more delay. Changing it reopens the
+          sound card for a moment.
+        </p>
+      </template>
       <template v-if="glitches">
         <span class="eyebrow">Glitches since the sound card opened</span>
         <ul class="glitches">
@@ -127,8 +151,9 @@ const buffer = computed(() => {
           </li>
         </ul>
         <p class="note">
-          Hear a crackle? Whatever counted up just then is why. Underruns or overruns: the sound card wants a bigger buffer, or
-          something else on the machine is hogging it. Late frames in someone’s route card: the network.
+          Hear a crackle? Whatever counted up just then is why. Underruns or overruns: the sound card wants a bigger buffer (for
+          underruns, the speaker buffer above), or something else on the machine is hogging it. Late frames in someone’s route
+          card: the network.
         </p>
       </template>
     </template>
