@@ -251,7 +251,7 @@ static const char *layer_namespace(void) {
 	return desktop && g_strrstr(desktop, "KDE") ? "utility" : "pivoice-overlay";
 }
 
-pv_overlay *pv_open(int debug, const char *url, const char *js) {
+pv_overlay *pv_open(int debug, const char *js) {
 	int mode = pv_mode();
 	pv_overlay *o = g_new0(pv_overlay, 1);
 	o->mode = mode;
@@ -297,7 +297,6 @@ pv_overlay *pv_open(int debug, const char *url, const char *js) {
 	g_signal_connect(o->win, "configure-event", G_CALLBACK(placed), o);
 	webview_bind(o->view, "__pivoiceOverlayReady", ready, o);
 	webview_init(o->view, js);
-	webview_navigate(o->view, url);
 
 	GdkDisplay *d = gdk_display_get_default();
 	g_signal_connect(d, "monitor-added", G_CALLBACK(screens), NULL);
@@ -341,6 +340,14 @@ void pv_place(pv_overlay *o, int monitor, int edges, int margin, int size, int x
 		}
 #endif
 	}
+}
+
+void *pv_view(pv_overlay *o) {
+	return webview_get_native_handle(o->view, PV_HANDLE_WIDGET);
+}
+
+void pv_navigate(pv_overlay *o, const char *url) {
+	webview_navigate(o->view, url);
 }
 
 void pv_eval(pv_overlay *o, const char *js) {

@@ -27,9 +27,11 @@ type page struct {
 	states map[string][]string
 }
 
-func newPage(t *testing.T, name string) *page {
+func newPage(t *testing.T, name string) *page { return newPageWith(t, name, true) }
+
+func newPageWith(t *testing.T, name string, loopback bool) *page {
 	p := &page{t: t, name: name, levels: map[string]float64{}, states: map[string][]string{}}
-	p.e = New(Options{Backend: audio.Fake{}, Loopback: true})
+	p.e = New(Options{Backend: audio.Fake{}, Loopback: loopback})
 	p.e.SetEmitter(p.on)
 	cfg := proto.Config{LL: proto.DefaultLL, Spatial: "off"}
 	p.e.Handle(proto.In{T: "config", Config: &cfg})
@@ -86,8 +88,10 @@ func waitFor(t *testing.T, what string, cond func() bool) {
 }
 
 // Two people, one link between them: each should hear the other's beeps.
-func call(t *testing.T) (a, b *page) {
-	a, b = newPage(t, "a"), newPage(t, "b")
+func call(t *testing.T) (a, b *page) { return callWith(t, true) }
+
+func callWith(t *testing.T, loopback bool) (a, b *page) {
+	a, b = newPageWith(t, "a", loopback), newPageWith(t, "b", loopback)
 	a.peer, b.peer = b, a
 	a.e.Handle(proto.In{T: "members", Members: []proto.Member{{ID: "b"}}})
 	b.e.Handle(proto.In{T: "members", Members: []proto.Member{{ID: "a"}}})

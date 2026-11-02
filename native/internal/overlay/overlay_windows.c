@@ -97,7 +97,7 @@ static void ready(const char *seq, const char *req, void *arg) {
 	pvOverlayReady();
 }
 
-pv_overlay *pv_open(int debug, const char *url, const char *js) {
+pv_overlay *pv_open(int debug, const char *js) {
 	HINSTANCE inst = GetModuleHandleW(NULL);
 	static int registered;
 	if (!registered) {
@@ -117,6 +117,10 @@ pv_overlay *pv_open(int debug, const char *url, const char *js) {
 	SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA);
 
 	pv_overlay *o = calloc(1, sizeof *o);
+	if (!o) {
+		DestroyWindow(hwnd);
+		return NULL;
+	}
 	o->hwnd = hwnd;
 	SetWindowLongPtrW(hwnd, GWLP_USERDATA, (LONG_PTR)o);
 
@@ -134,11 +138,18 @@ pv_overlay *pv_open(int debug, const char *url, const char *js) {
 	o->widget = webview_get_native_handle(o->view, PV_HANDLE_WIDGET);
 	webview_bind(o->view, "__pivoiceOverlayReady", ready, o);
 	webview_init(o->view, js);
-	webview_navigate(o->view, url);
 	// Out of context: called on this thread, from its message loop, with nothing loaded into other apps.
 	o->front = SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, NULL, foreground, 0, 0, WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS);
 	current = hwnd;
 	return o;
+}
+
+void *pv_controller(pv_overlay *o) {
+	return webview_get_native_handle(o->view, PV_HANDLE_CONTROLLER);
+}
+
+void pv_navigate(pv_overlay *o, const char *url) {
+	webview_navigate(o->view, url);
 }
 
 void pv_place(pv_overlay *o, int x, int y, int size) {
@@ -191,11 +202,12 @@ int pv_monitor_info(int i, char *device, int len, char *name, int nlen, RECT *wo
 	UINT dx = 96, dy = 96;
 	if (GetDpiForMonitor(found[i], MDT_EFFECTIVE_DPI, &dx, &dy) != S_OK) dx = 96;
 	*dpi = (int)dx;
-	WideCharToMultiByte(CP_UTF8, 0, mi.szDevice, -1, device, len, NULL, NULL);
+	// A name too long for the buffer fails without ending it: then it's "".
+	if (!WideCharToMultiByte(CP_UTF8, 0, mi.szDevice, -1, device, len, NULL, NULL)) device[0] = 0;
 	// The screen's own name, when Windows has one better than its generic driver's.
 	DISPLAY_DEVICEW dd = {0};
 	dd.cb = sizeof dd;
-	if (EnumDisplayDevicesW(mi.szDevice, 0, &dd, 0)) WideCharToMultiByte(CP_UTF8, 0, dd.DeviceString, -1, name, nlen, NULL, NULL);
+	if (EnumDisplayDevicesW(mi.szDevice, 0, &dd, 0) && !WideCharToMultiByte(CP_UTF8, 0, dd.DeviceString, -1, name, nlen, NULL, NULL)) name[0] = 0;
 	return 1;
 }
 

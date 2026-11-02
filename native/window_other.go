@@ -1,10 +1,13 @@
-//go:build !linux && !nowebview
+//go:build !linux && !windows && !nowebview
 
 package main
 
-import webview "github.com/webview/webview_go"
+import (
+	"github.com/nicholas-sbx/pivoice/native/internal/nav"
+	webview "github.com/webview/webview_go"
+)
 
-// lockNavigation: on Windows and macOS the window is kept on the site by
-// its init script alone (initScript sends any other page back), as
-// webview_go leaves WebView2's and WKWebView's navigation hooks to itself.
-func lockNavigation(webview.WebView, string) {}
+// lockWindow: on macOS (not released yet) the window is kept on the site
+// by its init script alone (initScript sends any other page back), and
+// the page says when it's gone itself.
+func lockWindow(webview.WebView, nav.Policy) bool { return false }

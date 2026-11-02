@@ -96,8 +96,14 @@ func main() {
 		page.Fragment = joinHash(code, fmt.Sprintf("native=%d.%s", port, b.Token))
 		if *headless {
 			fmt.Println(page.String())
-		} else if err := openBrowser(b.StartURL(page.String())); err != nil {
+		} else if launch, done, err := launcher(page.String()); err != nil {
+			log.Printf("couldn't write the page that opens the UI: %v", err)
 			fmt.Println("Open this in your browser:", page.String())
+		} else {
+			defer done()
+			if err := openBrowser(launch); err != nil {
+				fmt.Println("Open this in your browser:", page.String())
+			}
 		}
 		stop := make(chan os.Signal, 1)
 		signal.Notify(stop, os.Interrupt)

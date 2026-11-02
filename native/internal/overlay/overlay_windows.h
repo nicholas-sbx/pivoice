@@ -11,7 +11,11 @@ typedef struct {
 	HWINEVENTHOOK front;
 } pv_overlay;
 
-pv_overlay *pv_open(int debug, const char *url, const char *js);
+// Made, with nothing in it yet: lock its view (pv_controller), then pv_navigate.
+pv_overlay *pv_open(int debug, const char *js);
+// Its ICoreWebView2Controller.
+void *pv_controller(pv_overlay *o);
+void pv_navigate(pv_overlay *o, const char *url);
 // Where it goes, in physical pixels.
 void pv_place(pv_overlay *o, int x, int y, int size);
 void pv_eval(pv_overlay *o, const char *js);

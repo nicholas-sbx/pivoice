@@ -10,6 +10,7 @@ import (
 
 	"github.com/nicholas-sbx/pivoice/native/internal/ll"
 	"github.com/nicholas-sbx/pivoice/native/internal/proto"
+	"github.com/pion/ice/v4"
 	"github.com/pion/webrtc/v4"
 )
 
@@ -55,10 +56,65 @@ type link struct {
 
 // newAPI: a media engine with no codecs registered, so any audio or video
 // a peer offers is turned down rather than decoded.
+//
+// And, as browsers do, nobody in the room learns this machine's own
+// addresses (its LAN, VPN or IPv6 ones): they go out as a random name.local
+// that only machines on the same network can look up (mDNS), and the
+// address a public or relayed candidate was found through is left out of it
+// (hideRelated). Container and VM bridges, which never lead to anyone, aren't
+// offered at all. Not with loopback on (tests, all on one machine).
 func (e *Engine) newAPI() *webrtc.API {
 	var se webrtc.SettingEngine
 	se.SetIncludeLoopbackCandidate(e.opts.Loopback)
+	if !e.opts.Loopback {
+		se.SetICEMulticastDNSMode(ice.MulticastDNSModeQueryAndGather)
+		se.SetInterfaceFilter(reachableInterface)
+		// pion gives up on mDNS altogether if it can't open an IPv6 socket for it.
+		types := []webrtc.NetworkType{webrtc.NetworkTypeUDP4}
+		if ipv6() {
+			types = append(types, webrtc.NetworkTypeUDP6)
+		}
+		se.SetNetworkTypes(types)
+	}
 	return webrtc.NewAPI(webrtc.WithMediaEngine(&webrtc.MediaEngine{}), webrtc.WithSettingEngine(se))
+}
+
+// ipv6 says whether this machine does IPv6 at all.
+func ipv6() bool {
+	c, err := net.ListenPacket("udp6", "[::]:0")
+	if err != nil {
+		return false
+	}
+	c.Close()
+	return true
+}
+
+// Interfaces that only lead to containers and virtual machines on this one.
+var bridgePrefixes = []string{"docker", "br-", "veth", "virbr", "vboxnet", "vmnet", "lxcbr", "lxdbr", "podman", "cni", "flannel", "cali"}
+
+func reachableInterface(name string) bool {
+	for _, p := range bridgePrefixes {
+		if strings.HasPrefix(name, p) {
+			return false
+		}
+	}
+	return true
+}
+
+// hideRelated blanks a candidate's related address (raddr, rport): for a
+// public (srflx) or relayed one it's this machine's own address, which the
+// far end has no use for. The same as browsers send.
+func hideRelated(candidate string) string {
+	f := strings.Fields(candidate)
+	for i := 0; i+1 < len(f); i++ {
+		switch f[i] {
+		case "raddr":
+			f[i+1] = "0.0.0.0"
+		case "rport":
+			f[i+1] = "0"
+		}
+	}
+	return strings.Join(f, " ")
 }
 
 // The most ICE servers a link takes, and URLs each: the site hands out a
@@ -69,9 +125,12 @@ const (
 )
 
 // iceServers is the page's list as pion wants it, keeping only STUN and
-// TURN URLs to hosts out on the network: never this machine or its local
-// links (unless loopback is on, for tests), so a page can't use the app to
-// knock on ports it couldn't reach itself.
+// TURN URLs, and none to an address of this machine or its local links
+// (unless loopback is on, for tests): a page can't point the app at its
+// own ports. Only addresses written out are checked: a name is looked up
+// later, by pion, so checking what it resolves to now would prove nothing.
+// Private addresses are allowed (a TURN server on your own network), as
+// browsers allow them.
 func iceServers(in []proto.IceServer, loopback bool) []webrtc.ICEServer {
 	var out []webrtc.ICEServer
 	for _, s := range in {
@@ -147,7 +206,15 @@ func (e *Engine) openLink(m proto.In) (*link, error) {
 		if c == nil {
 			return
 		}
+		if !e.opts.Loopback && c.Typ == webrtc.ICECandidateTypeHost && !strings.HasSuffix(c.Address, ".local") {
+			// pion offers the address itself when it can't start mDNS (no
+			// IPv6, say): that's left out, and the others still connect.
+			return
+		}
 		j := c.ToJSON()
+		if !e.opts.Loopback {
+			j.Candidate = hideRelated(j.Candidate)
+		}
 		l.signal(map[string]any{"ice": map[string]any{
 			"candidate": j.Candidate, "sdpMid": j.SDPMid, "sdpMLineIndex": j.SDPMLineIndex, "usernameFragment": j.UsernameFragment,
 		}})

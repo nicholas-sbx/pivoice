@@ -15,7 +15,9 @@ import (
 	"os"
 	"unsafe"
 
+	"github.com/nicholas-sbx/pivoice/native/internal/nav"
 	"github.com/nicholas-sbx/pivoice/native/internal/proto"
+	"github.com/nicholas-sbx/pivoice/native/internal/webkit"
 	// Its C API, which the overlay's webview is made with, comes with it.
 	_ "github.com/webview/webview_go"
 )
@@ -39,10 +41,16 @@ func openWindow(o *Overlay) (*window, error) {
 	if o.cfg.Debug {
 		debug = 1
 	}
-	c := C.pv_open(debug, url, js)
+	c := C.pv_open(debug, js)
 	if c == nil {
 		return nil, errors.New("couldn't make the overlay's webview")
 	}
+	// Held to the site like the main window, before it goes anywhere.
+	if !webkit.Lock(C.pv_view(c), nav.Policy{Origin: o.cfg.Origin}) {
+		C.pv_close(c)
+		return nil, errors.New("couldn't hold the overlay's webview to the site")
+	}
+	C.pv_navigate(c, url)
 	current = o
 	return &window{o: o, c: c}, nil
 }
