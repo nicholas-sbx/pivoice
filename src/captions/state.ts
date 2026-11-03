@@ -16,8 +16,12 @@ export const captions = reactive({
   /** Who's saying what, for the seats and tiles. */
   views: {} as Record<string, CaptionView>,
   model: { phase: 'off' as ModelPhase | 'off', bytes: 0, total: 0, error: '' },
-  /** Asking first: the model is this big and the connection may cost. */
-  prompt: null as { model: ModelId; bytes: number; metered: Metered } | null,
+  /**
+   * Asking first: the model is this big; `network` when it's the connection
+   * that made us ask (mobile data, or a phone that won't say), not the
+   * settings' "Always ask".
+   */
+  prompt: null as { model: ModelId; bytes: number; metered: Metered; network: boolean } | null,
   /** Seconds of work per second of speech, lately (under 1 keeps up). */
   rtf: null as number | null,
   /** Speech lost because the recogniser fell too far behind (samples, 48 kHz). */
@@ -93,6 +97,8 @@ export function setLinger(sec: number) {
 
 let download: (() => void) | null = null
 let declined = false
+/** The downloaded copy was just removed: don't fetch it again by ourselves until asked (or the next call). */
+let held = false
 let watching: { conn: EventTarget; fn: () => void } | null = null
 
 function unwatch() {
@@ -116,12 +122,13 @@ export function modelStatus(s: ModelStatus, model: ModelId, prefs: CaptionPrefs,
   download = go
   const decide = () => {
     const m = metered(currentConnection())
+    if (held) return
     if (downloadDecision(prefs.download, m, phone) === 'download') {
       captions.prompt = null
       unwatch()
       download?.()
       download = null
-    } else if (!declined) captions.prompt = { model, bytes: s.total, metered: m }
+    } else if (!declined) captions.prompt = { model, bytes: s.total, metered: m, network: downloadDecision('wifi', m, phone) === 'ask' }
   }
   decide()
   const conn = currentConnection()
@@ -131,9 +138,10 @@ export function modelStatus(s: ModelStatus, model: ModelId, prefs: CaptionPrefs,
   }
 }
 
-/** The person said yes. */
+/** The person said yes (the prompt, or the settings' "Download now"). */
 export function acceptDownload() {
   declined = false
+  held = false
   captions.prompt = null
   unwatch()
   download?.()
@@ -149,4 +157,18 @@ export function declineDownload() {
 /** A new call asks again. */
 export function resetDownloadAnswer() {
   declined = false
+  held = false
+}
+
+/** The settings' "remove": no fetching it again by ourselves this call. */
+export function holdDownload() {
+  held = true
+  captions.prompt = null
+}
+
+/** The recogniser stopped: whatever we were waiting to download for it is moot. */
+export function forgetModelStatus() {
+  captions.prompt = null
+  download = null
+  unwatch()
 }

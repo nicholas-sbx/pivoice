@@ -118,6 +118,8 @@ export class AudioEngine {
   /** Captions' own capture of the mic, with no processing (see captionSources). */
   private rawMic: { stream: MediaStream; source: MediaStreamAudioSourceNode } | null = null
   private rawMicNote = ''
+  /** Bumped whenever captions' capture is let go: one that lands after that isn't kept. */
+  private rawGen = 0
   private settings: MicSettings | null = null
 
   constructor(buffer: OutputBuffer = 'min') {
@@ -231,6 +233,7 @@ export class AudioEngine {
       return got
     }
     const callSettings = callTrack?.getSettings()
+    const gen = this.rawGen
     try {
       // Chrome shares one capture of a device between everyone who asks with
       // the same echo cancellation, so this can come back with the call's
@@ -249,9 +252,12 @@ export class AudioEngine {
           got = again
         }
       }
-      if (this.mic !== mic) {
+      // Stale (the mic changed, captions stopped) or beaten to it by another call: let this one go.
+      if (this.mic !== mic || gen !== this.rawGen || this.rawMic) {
         if (got instanceof MediaStream) for (const t of got.getTracks()) t.stop()
-        return null
+        if (this.mic !== mic || gen !== this.rawGen) return null
+        const r = this.rawMic!
+        return { raw: r.source, ring: mic.source, kind: 'own', heard: heardOf(r.stream.getAudioTracks()[0]), note: this.rawMicNote }
       }
       if (!(got instanceof MediaStream)) {
         return call(`the browser didn’t give a capture with ${describeHeard({ echoCancellation: ec, noiseSuppression: false, autoGainControl: false })} (it gave ${describeHeard(got)}: it shares the call’s)`)
@@ -266,6 +272,7 @@ export class AudioEngine {
 
   /** Captions are done with their capture. */
   closeRawMic() {
+    this.rawGen++
     if (!this.rawMic) return
     this.rawMic.source.disconnect()
     for (const t of this.rawMic.stream.getTracks()) t.stop()

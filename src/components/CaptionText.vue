@@ -5,14 +5,16 @@ import type { CaptionView } from '../captions/board'
 /**
  * What someone's saying, as text: their last few phrases and the one in
  * progress, a line each and newest at the bottom, held to `lines` lines by clipping the
- * oldest off the top. Plain text (Vue escapes it), however it came.
+ * oldest off the top. Plain text (Vue escapes it), however it came. Not
+ * aria-live: everyone's words, several updates a second each, would bury a
+ * screen reader.
  */
 const props = defineProps<{ view: CaptionView; lines: number; scale: number }>()
 const text = computed(() => props.view.lines.slice(-props.lines))
 </script>
 
 <template>
-  <div class="caption" :style="{ '--lines': lines, '--scale': scale }" aria-live="polite">
+  <div class="caption" :style="{ '--lines': lines, '--scale': scale }">
     <span v-for="(line, i) in text" :key="i" class="line" :class="{ live: view.live && i === text.length - 1 }">{{ line }}</span>
   </div>
 </template>

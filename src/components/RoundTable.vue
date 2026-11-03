@@ -126,16 +126,26 @@ const count = computed(() => props.members.filter(m => !m.away).length || 1)
  * sides mid-slide.
  */
 type Side = 'above' | 'below' | 'left' | 'right'
+/**
+ * And above or below, which way it runs: from the seat toward the middle
+ * when the seat's off to one side (so it never runs past the edge of a
+ * phone's screen), centred when it's near the middle.
+ */
+type Align = 'start' | 'center' | 'end'
 const sides = computed(() => {
   void seating.revision.value
-  const out = new Map<string, Side>()
+  const out = new Map<string, { side: Side; align: Align }>()
   for (const s of seating.targets()) {
     const a = ((s.angle % TAU) + TAU) % TAU
-    out.set(s.id, a < Math.PI / 4 || a > (7 * Math.PI) / 4 ? 'above' : a < (3 * Math.PI) / 4 ? 'right' : a <= (5 * Math.PI) / 4 ? 'below' : 'left')
+    const side: Side = a < Math.PI / 4 || a > (7 * Math.PI) / 4 ? 'above' : a < (3 * Math.PI) / 4 ? 'right' : a <= (5 * Math.PI) / 4 ? 'below' : 'left'
+    // Seats on the left (x < 0 on screen) run their caption rightward, and the other way round.
+    const x = -Math.sin(a)
+    out.set(s.id, { side, align: x < -0.3 ? 'start' : x > 0.3 ? 'end' : 'center' })
   }
   return out
 })
-const sideOf = (id: string): Side => (isSelf(id) ? 'above' : (sides.value.get(id) ?? 'below'))
+const sideOf = (id: string): Side => (isSelf(id) ? 'above' : (sides.value.get(id)?.side ?? 'below'))
+const alignOf = (id: string): Align => (isSelf(id) ? 'center' : (sides.value.get(id)?.align ?? 'center'))
 function captionOf(id: string): CaptionView | null {
   // Yours are only here if you asked to see them; everyone else's only if you show captions.
   if ((!isSelf(id) && !props.showCaptions) || props.silenced[id] || mutedOf(id)) return null
@@ -177,7 +187,7 @@ function captionOf(id: string): CaptionView | null {
           :mood="moodOf(id)"
         />
       </div>
-      <div v-if="captionOf(id) && sideOf(id) !== 'below'" class="cap" :class="sideOf(id)">
+      <div v-if="captionOf(id) && sideOf(id) !== 'below'" class="cap" :class="[sideOf(id), 'align-' + alignOf(id)]">
         <CaptionText :view="captionOf(id)!" :lines="captionLines ?? 2" :scale="captionScale ?? 1" />
       </div>
       <div class="under">
@@ -232,7 +242,7 @@ function captionOf(id: string): CaptionView | null {
           </template>
           <div v-else class="route-head">Connecting…</div>
         </div>
-        <div v-if="captionOf(id) && sideOf(id) === 'below'" class="cap-below">
+        <div v-if="captionOf(id) && sideOf(id) === 'below'" class="cap-below" :class="'align-' + alignOf(id)">
           <CaptionText :view="captionOf(id)!" :lines="captionLines ?? 2" :scale="captionScale ?? 1" />
         </div>
       </div>
@@ -458,6 +468,15 @@ function captionOf(id: string): CaptionView | null {
   right: -150px;
   justify-content: center;
 }
+/* Off to one side: from the seat's own edge toward the middle. */
+.cap.above.align-start {
+  left: 0;
+  justify-content: flex-start;
+}
+.cap.above.align-end {
+  right: 0;
+  justify-content: flex-end;
+}
 .cap.right,
 .cap.left {
   top: 0;
@@ -476,6 +495,15 @@ function captionOf(id: string): CaptionView | null {
   margin-top: 8px;
   z-index: 2;
   max-width: min(260px, 60vw);
+}
+/* .under reaches 150px past the seat on each side: these start at the seat's own edge instead. */
+.cap-below.align-start {
+  align-self: flex-start;
+  margin-left: 150px;
+}
+.cap-below.align-end {
+  align-self: flex-end;
+  margin-right: 150px;
 }
 .seat[data-small] .cap :deep(.caption),
 .seat[data-small] .cap-below :deep(.caption) {

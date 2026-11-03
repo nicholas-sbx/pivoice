@@ -150,6 +150,7 @@ import "C"
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"unsafe"
 )
 
@@ -270,7 +271,8 @@ func (s *Sherpa) Decode(pcm []float32) string {
 		return ""
 	}
 	C.pv_sherpa_decode(s.rec, (*C.float)(unsafe.Pointer(&pcm[0])), C.int32_t(len(pcm)), &s.out[0], C.int(len(s.out)))
-	return C.GoString(&s.out[0])
+	// Cut at the buffer's end, a character may have lost its last bytes.
+	return strings.ToValidUTF8(C.GoString(&s.out[0]), "")
 }
 
 func (s *Sherpa) Close() { C.pv_sherpa_free(s.rec) }

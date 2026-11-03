@@ -161,9 +161,9 @@ over its data channel, and everything else from the engine. The
 mouth-to-ear figure is measured where it can be (see below), and an
 estimate (`≈`) where it can't. Hover the estimate for what each part means.
 
-**Live captions.** Everyone captions themselves, on their own device, and
+**Live captions.** On by default. Everyone captions themselves, on their own device, and
 the words go to everyone else, beside their seat at the table (on the side
-facing the middle, so they stay on screen) or in their tile on a phone. Two
+facing the middle, running toward it, so they stay on screen) or in their tile on a phone. Two
 recognisers, both on the CPU: **Vosk** (the default) and **Parakeet**. The
 model downloads the first time it's wanted and is kept; on mobile data you're
 asked first. See [Live captions](#live-captions).
@@ -963,6 +963,11 @@ Nothing is shipped with anything. The first time a model is wanted:
   Save-Data in Chromium); on a phone or tablet that won't say (Safari,
   Firefox) it asks too, and on a computer that won't say it goes ahead.
   "Not now" holds off for that call; moving to Wi-Fi meanwhile starts it.
+  When it asks because of mobile data, it also says that calls themselves
+  use a lot of data, on purpose: uncompressed voices are what keep the delay
+  this low, about 1 Mbit/s each way per person while they talk (see
+  [Bigger rooms](#bigger-rooms)). Captions are on by default; that question
+  is the one thing that holds them back.
   **Download** in the settings: *Not on data* (the default), *Always ask*,
   or *Always*.
 - **The app** keeps models and recognisers in your cache folder
@@ -975,7 +980,9 @@ Nothing is shipped with anything. The first time a model is wanted:
   written into place until it matches; the helper checks every file again
   before it loads it. Downloads are HTTPS only. Windows paths with accents
   go to the libraries as 8.3 short names (they open files with narrow
-  paths). **Remove downloaded copy** in the settings deletes the model.
+  paths). **Remove downloaded copy** in the settings deletes the model, and
+  it isn't fetched again by itself until you ask or your next call (turn
+  off **Caption Me** to keep it off).
 
 ### Safe to run in a browser
 

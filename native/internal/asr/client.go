@@ -59,7 +59,8 @@ func StartHelper(root string, m Model, o HelperOptions) (*Helper, error) {
 	cmd := exec.Command(exe, "--captions-helper")
 	// Only as many threads as asked for, in every library's thread pool (OpenBLAS inside Vosk among them).
 	cmd.Env = append(os.Environ(), "OPENBLAS_NUM_THREADS="+strconv.Itoa(threads), "OMP_NUM_THREADS="+strconv.Itoa(threads))
-	cmd.Stderr = os.Stderr
+	// Its log to ours, where there is one (a Windows GUI build has no stderr to hand on).
+	cmd.Stderr = childStderr()
 	helperProcAttr(cmd)
 	in, err := cmd.StdinPipe()
 	if err != nil {

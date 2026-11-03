@@ -96,6 +96,8 @@ type captioner struct {
 	// The page's latest settings: the recogniser goroutine takes them when it can (a slider's drag is many).
 	pending atomic.Pointer[proto.Captions]
 	newCfg  chan struct{}
+	// Listening started or stopped (muted, unmuted, someone came or went): the page's told.
+	listenChanged chan struct{}
 
 	// Gate goroutine only.
 	gate  *captions.Gate
@@ -119,16 +121,17 @@ func newCaptioner(e *Engine) *captioner {
 // makeCaptioner: its buffers, made once, and nothing running yet.
 func makeCaptioner(e *Engine) *captioner {
 	c := &captioner{
-		e:      e,
-		free:   make(chan *capRecord, capRecords),
-		full:   make(chan *capRecord, capRecords),
-		chunks: make(chan *capChunk, chunkCount),
-		queue:  make(chan *capChunk, chunkCount+1),
-		kick:   make(chan struct{}, 1),
-		ctl:    make(chan captionCtl, 16),
-		newCfg: make(chan struct{}, 1),
-		gate:   captions.NewGate(audio.SampleRate, 200, 200, 1000),
-		scrat:  make([]float32, 0, audio.MaxBlock/3+1),
+		e:             e,
+		free:          make(chan *capRecord, capRecords),
+		full:          make(chan *capRecord, capRecords),
+		chunks:        make(chan *capChunk, chunkCount),
+		queue:         make(chan *capChunk, chunkCount+1),
+		kick:          make(chan struct{}, 1),
+		ctl:           make(chan captionCtl, 16),
+		newCfg:        make(chan struct{}, 1),
+		listenChanged: make(chan struct{}, 1),
+		gate:          captions.NewGate(audio.SampleRate, 200, 200, 1000),
+		scrat:         make([]float32, 0, audio.MaxBlock/3+1),
 	}
 	for range capRecords {
 		c.free <- &capRecord{pcm: make([]float32, audio.MaxBlock)}
@@ -183,6 +186,10 @@ func (c *captioner) update() {
 	if c.on.Swap(on) != on {
 		select {
 		case c.kick <- struct{}{}:
+		default:
+		}
+		select {
+		case c.listenChanged <- struct{}{}:
 		default:
 		}
 	}
@@ -488,6 +495,8 @@ func (c *captioner) recLoop() {
 				continue
 			}
 			load()
+		case <-c.listenChanged:
+			emit()
 		case <-st.retry:
 			st.retry = nil
 			begin()

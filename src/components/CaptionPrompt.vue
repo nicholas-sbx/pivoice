@@ -9,19 +9,33 @@ import Icon from './Icon.vue'
  * app's notice: on mobile data (or a phone that won't say), or when the
  * settings say always to ask. "Not now" holds off for this call; it goes
  * ahead by itself if you move to Wi-Fi meanwhile.
+ *
+ * On data (or maybe on it), it also says what the call itself costs: a lot,
+ * on purpose. Voices go as raw PCM with no codec, which is what keeps the
+ * delay this low (see the README, "Bigger rooms" and "Why no Opus"), at
+ * about 1 Mbit/s each way per person while they talk.
  */
 
 const p = computed(() => captions.prompt)
 const title = computed(() => (p.value ? (modelOf(p.value.model)?.title ?? 'The captions model') : ''))
 const size = computed(() => (p.value ? `${Math.max(1, Math.round(p.value.bytes / 1e6))} MB` : ''))
+// Why it's asking: only when it's the connection (not just the settings' "Always ask").
 const why = computed(() =>
-  p.value?.metered === 'yes' ? "You're on mobile data." : p.value?.metered === 'unknown' ? "This device doesn't say whether it's on mobile data." : ''
+  !p.value?.network ? '' : p.value.metered === 'yes' ? "You're on mobile data." : "This device doesn't say whether it's on mobile data."
 )
+/** Maybe on data: say what calls cost too. */
+const onData = computed(() => !!p.value?.network)
 </script>
 
 <template>
   <div v-if="p" class="banner" role="region" aria-label="Captions download">
-    <span class="text">Live captions need {{ title }}, a one-time {{ size }} download. {{ why }}</span>
+    <span class="text">
+      Live captions need {{ title }}, a one-time {{ size }} download. {{ why }}
+      <small v-if="onData" class="data">
+        Calls here use a lot of data, and that's on purpose: voices go uncompressed, which is what keeps the delay so low. That's about 1 Mbit/s to and
+        from each person while they talk, up to 450 MB an hour each.
+      </small>
+    </span>
     <button type="button" class="get" @click="acceptDownload">Download</button>
     <button type="button" class="x" aria-label="Not now" title="Not now" @click="declineDownload">
       <Icon name="close" :size="18" />
@@ -47,6 +61,17 @@ const why = computed(() =>
   font-weight: 500;
   line-height: 18px;
   text-align: center;
+}
+.text {
+  max-width: 760px;
+}
+.data {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 16px;
+  color: var(--text-muted);
 }
 .get {
   flex: none;

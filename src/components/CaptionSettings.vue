@@ -82,8 +82,8 @@ onMounted(() => void checkHere())
 async function remove() {
   const m = model.value
   if (!m) return
-  if (isNative) forgetCaptionModel()
-  else {
+  forgetCaptionModel()
+  if (!isNative) {
     await forgetModel(new URL('captions/', document.baseURI).href, m)
     await checkHere()
   }
@@ -149,7 +149,15 @@ function reset() {
         </div>
         <div class="actions">
           <button v-if="captions.model.phase === 'needed'" type="button" class="link" @click="downloadCaptionModel">Download now</button>
-          <button v-if="isNative || here" type="button" class="link" @click="remove">Remove downloaded copy</button>
+          <button
+            v-if="isNative || here"
+            type="button"
+            class="link"
+            title="Frees the space. It's only downloaded again when you ask, or in your next call (turn off Caption Me to keep it off)."
+            @click="remove"
+          >
+            Remove downloaded copy
+          </button>
         </div>
         <p class="note credit">
           <a :href="model?.url" target="_blank" rel="noopener">{{ model?.credit }}</a>

@@ -2,6 +2,12 @@
 
 package asr
 
-import "os/exec"
+import (
+	"io"
+	"os"
+	"os/exec"
+)
 
 func helperProcAttr(*exec.Cmd) {}
+
+func childStderr() io.Writer { return os.Stderr }

@@ -45,6 +45,8 @@ class CaptionTap extends AudioWorkletProcessor implements GateSink {
   private fill = 0
   /** Samples sent since this started: the frames' ts, so the worker can tell when some were lost. */
   private sent = 0
+  /** A segment's end that didn't fit in the ring (the worker's behind): it goes before anything else does. */
+  private endPending = false
 
   constructor(options: { processorOptions: CaptionTapOptions }) {
     super()
@@ -64,6 +66,7 @@ class CaptionTap extends AudioWorkletProcessor implements GateSink {
   }
 
   process(inputs: Float32Array[][]): boolean {
+    if (this.endPending) this.pushEnd()
     if (!this.on) return true
     const raw = inputs[0]?.[0]
     if (!raw) return true
@@ -86,13 +89,27 @@ class CaptionTap extends AudioWorkletProcessor implements GateSink {
   end() {
     this.flush()
     if (this.ring) {
-      this.ring.push(this.sent, this.frame, 0)
-      this.ring.notify()
+      this.endPending = true
+      this.pushEnd()
     } else this.out?.postMessage({ end: true } satisfies CaptionTapFrame)
+  }
+
+  /** The end marker (an empty frame), if there's room; tried again each block until there is. */
+  private pushEnd() {
+    if (!this.ring || !this.ring.push(this.sent, this.frame, 0)) return
+    this.endPending = false
+    this.ring.notify()
   }
 
   private flush() {
     if (!this.fill) return
+    // A segment's end still waiting goes first; while it can't, newer audio is lost (and counted) rather than run into the last phrase.
+    if (this.endPending) this.pushEnd()
+    if (this.endPending) {
+      this.sent += this.fill
+      this.fill = 0
+      return
+    }
     if (this.ring) {
       this.ring.push(this.sent, this.frame, this.fill)
       this.ring.notify()

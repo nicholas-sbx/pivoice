@@ -11,6 +11,9 @@ import {
   captions,
   clearCaptions,
   forgetCaptions,
+  forgetModelStatus,
+  holdDownload,
+  acceptDownload,
   modelStatus,
   ownCaption,
   receiveCaption,
@@ -652,6 +655,7 @@ async function plugCaptions() {
 function stopCaptions() {
   captioner?.close()
   captioner = null
+  forgetModelStatus()
   engine?.closeRawMic()
   captions.listening = false
   captions.hearing = { kind: '', detail: '', note: '' }
@@ -691,14 +695,20 @@ export function updateCaptions(patch: Partial<CaptionPrefs>) {
   }
 }
 
-/** The settings' "download now", when it was declined or is still waiting to be asked. */
+/** The settings' "download now", when it was declined, held or is still waiting to be asked. */
 export function downloadCaptionModel() {
+  acceptDownload()
   if (nv) nv.captions('download')
   else captioner?.download()
 }
 
-/** Drop the downloaded model (the settings' "remove"): in the app, its cache folder's copy. */
+/**
+ * The settings' "remove": the downloaded model goes (in the app, its cache
+ * folder's copy; a browser's is removed by the settings themselves), and
+ * isn't fetched again by itself this call.
+ */
 export function forgetCaptionModel() {
+  holdDownload()
   nv?.captions('forget')
 }
 
