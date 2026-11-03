@@ -16,8 +16,15 @@ import (
 // chunk's output, so nothing is read twice. Greedy CTC only ever adds to
 // the words. Both are held to tests/fixtures/streaming-ctc.json.
 
-// leadIn is silence before each segment, samples (streaming-ctc.ts has why).
-const leadIn = 3200
+// leadIn is silence before each segment, samples, and tailFrames at least
+// how much after (streaming-ctc.ts has why).
+const (
+	leadIn     = 3200
+	tailFrames = 30
+)
+
+// tailChunks is how many chunks after the last with any of the segment in.
+func tailChunks(shift int) int { return max(1, (tailFrames+shift-1)/shift) }
 
 // chunkModel is one chunk through the model (native.StreamCTC, or a pretend one in tests).
 type chunkModel interface {
@@ -92,9 +99,8 @@ func (s *streamCTC) result() string {
 	return t
 }
 
-// finish the segment: silence after it, enough for one chunk past the last
-// with any of it in (the model says a word up to a chunk after it hears it).
-// Its words; the caches empty after.
+// finish the segment: silence after it, enough for a chunk or two past the
+// last with any of it in (tailFrames). Its words; the caches empty after.
 func (s *streamCTC) finish() (string, error) {
 	var err error
 	if s.heard > 0 {
@@ -103,7 +109,7 @@ func (s *streamCTC) finish() (string, error) {
 		if real > s.window {
 			chunks = (real - s.window + s.shift - 1) / s.shift
 		}
-		if last := (chunks + 1) * s.shift; s.next <= last {
+		if last := (chunks + tailChunks(s.shift)) * s.shift; s.next <= last {
 			if pad := endSample(last+s.window-1) - s.heard; pad > 0 {
 				s.appendSilence(pad)
 			}

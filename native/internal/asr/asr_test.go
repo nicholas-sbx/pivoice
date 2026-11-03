@@ -27,7 +27,7 @@ func TestCatalogIsTheSites(t *testing.T) {
 	if !bytes.Equal(site, modelsJSON) {
 		t.Fatal("native/internal/asr/models.json isn't src/captions/models.json: copy it over")
 	}
-	for _, id := range []string{"vosk-small-en", "vosk-lgraph-en", "parakeet-ctc-110m-en", "fastconformer-ctc-480ms-en"} {
+	for _, id := range []string{"vosk-small-en", "vosk-lgraph-en", "parakeet-ctc-110m-en", "fastconformer-ctc-80ms-en", "fastconformer-ctc-480ms-en", "fastconformer-ctc-1040ms-en"} {
 		m, ok := ModelByID(id)
 		if !ok || len(m.Files) == 0 {
 			t.Fatalf("no %s", id)

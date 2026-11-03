@@ -14,16 +14,30 @@ type streamFixture struct {
 		Seed    uint32 `json:"seed"`
 		Samples int    `json:"samples"`
 	} `json:"signal"`
-	Window   int          `json:"window"`
-	Shift    int          `json:"shift"`
 	Lead     int          `json:"lead"`
+	Tail     int          `json:"tail"`
 	Features [][3]float64 `json:"features"`
-	Cases    []struct {
-		Name    string `json:"name"`
-		Samples int    `json:"samples"`
-		Chunks  []int  `json:"chunks"`
-		Padded  int    `json:"padded"`
-	} `json:"cases"`
+	Shapes   []struct {
+		Model  string `json:"model"`
+		Window int    `json:"window"`
+		Shift  int    `json:"shift"`
+		Cases  []struct {
+			Name    string `json:"name"`
+			Samples int    `json:"samples"`
+			Chunks  []int  `json:"chunks"`
+			Padded  int    `json:"padded"`
+		} `json:"cases"`
+	} `json:"shapes"`
+}
+
+// shape480 is the 480 ms export's chunks, which the words and phrases tests go by.
+func (f streamFixture) shape480() (window, shift int) {
+	for _, s := range f.Shapes {
+		if s.Model == "480 ms" {
+			return s.Window, s.Shift
+		}
+	}
+	panic("no 480 ms shape")
 }
 
 func loadStreamFixture(t *testing.T) streamFixture {
@@ -107,39 +121,41 @@ func wholeFrames(x []float32) [][]float32 {
 
 func TestStreamCTCChunks(t *testing.T) {
 	fx := loadStreamFixture(t)
-	if fx.Lead != leadIn {
-		t.Fatalf("silence before a segment: %d samples, the site's is %d", leadIn, fx.Lead)
+	if fx.Lead != leadIn || fx.Tail != tailFrames {
+		t.Fatalf("silence before and after: %d samples and %d frames, the site's are %d and %d", leadIn, tailFrames, fx.Lead, fx.Tail)
 	}
-	for _, c := range fx.Cases {
-		t.Run(c.Name, func(t *testing.T) {
-			f := &fakeChunks{}
-			s := newStreamCTC(f, fx.Window, fx.Shift, testPieces, testBlank)
-			x := testSignal(fx.Signal.Seed, c.Samples)
-			feedAll(t, s, x)
-			if _, err := s.finish(); err != nil {
-				t.Fatal(err)
-			}
-			if len(f.seen) != len(c.Chunks) {
-				t.Fatalf("%d chunks, want %d", len(f.seen), len(c.Chunks))
-			}
-			padded := make([]float32, c.Padded)
-			copy(padded[fx.Lead:], x)
-			whole := wholeFrames(padded)
-			for k, start := range c.Chunks {
-				worst := 0.0
-				for b := 0; b < 80; b++ {
-					for tt := 0; tt < fx.Window; tt++ {
-						worst = math.Max(worst, math.Abs(float64(f.seen[k][b*fx.Window+tt]-whole[start+tt][b])))
+	for _, sh := range fx.Shapes {
+		for _, c := range sh.Cases {
+			t.Run(sh.Model+": "+c.Name, func(t *testing.T) {
+				f := &fakeChunks{}
+				s := newStreamCTC(f, sh.Window, sh.Shift, testPieces, testBlank)
+				x := testSignal(fx.Signal.Seed, c.Samples)
+				feedAll(t, s, x)
+				if _, err := s.finish(); err != nil {
+					t.Fatal(err)
+				}
+				if len(f.seen) != len(c.Chunks) {
+					t.Fatalf("%d chunks, want %d", len(f.seen), len(c.Chunks))
+				}
+				padded := make([]float32, c.Padded)
+				copy(padded[fx.Lead:], x)
+				whole := wholeFrames(padded)
+				for k, start := range c.Chunks {
+					worst := 0.0
+					for b := 0; b < 80; b++ {
+						for tt := 0; tt < sh.Window; tt++ {
+							worst = math.Max(worst, math.Abs(float64(f.seen[k][b*sh.Window+tt]-whole[start+tt][b])))
+						}
+					}
+					if worst > 1e-5 {
+						t.Errorf("chunk %d (frame %d) differs from the whole signal's frames by %g", k, start, worst)
 					}
 				}
-				if worst > 1e-5 {
-					t.Errorf("chunk %d (frame %d) differs from the whole signal's frames by %g", k, start, worst)
+				if got := endSample(c.Chunks[len(c.Chunks)-1] + sh.Window - 1); got != c.Padded {
+					t.Errorf("padded to %d, want %d", got, c.Padded)
 				}
-			}
-			if got := endSample(c.Chunks[len(c.Chunks)-1] + fx.Window - 1); got != c.Padded {
-				t.Errorf("padded to %d, want %d", got, c.Padded)
-			}
-		})
+			})
+		}
 	}
 }
 
@@ -162,7 +178,8 @@ func TestStreamCTCWords(t *testing.T) {
 	fx := loadStreamFixture(t)
 	// Output frames: hel hel blk lo blk there <unk> you
 	f := &fakeChunks{script: []int{1, 1, 5, 2, 5, 3, 0, 4}}
-	s := newStreamCTC(f, fx.Window, fx.Shift, testPieces, testBlank)
+	window, shift := fx.shape480()
+	s := newStreamCTC(f, window, shift, testPieces, testBlank)
 	x := testSignal(1, 16000*6)
 	prev := ""
 	for at := 0; at < len(x); at += 1600 {
@@ -186,7 +203,8 @@ func TestStreamCTCWords(t *testing.T) {
 func TestStreamCTCLongPhrases(t *testing.T) {
 	fx := loadStreamFixture(t)
 	f := &fakeChunks{script: []int{1, 2, 3, 4, 3, 4, 3, 4, 3}}
-	s := newStreamCTC(f, fx.Window, fx.Shift, testPieces, testBlank)
+	window, shift := fx.shape480()
+	s := newStreamCTC(f, window, shift, testPieces, testBlank)
 	s.maxFrames = 3
 	ended := feedAll(t, s, testSignal(2, 16000*6))
 	rest, err := s.finish()
@@ -207,7 +225,8 @@ func TestStreamCTCLongPhrases(t *testing.T) {
 func TestStreamCTCShortAndEmpty(t *testing.T) {
 	fx := loadStreamFixture(t)
 	f := &fakeChunks{script: []int{1}}
-	s := newStreamCTC(f, fx.Window, fx.Shift, testPieces, testBlank)
+	window, shift := fx.shape480()
+	s := newStreamCTC(f, window, shift, testPieces, testBlank)
 	if _, err := s.accept(testSignal(3, 800)); err != nil {
 		t.Fatal(err)
 	}

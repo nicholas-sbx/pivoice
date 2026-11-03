@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { NemoFeatures } from '../src/captions/fbank'
 import { onnxMetadata, streamingCtcMeta } from '../src/captions/onnx-meta'
-import { LEAD_IN, StreamingCtc, type StreamingModel } from '../src/captions/streaming-ctc'
+import { LEAD_IN, StreamingCtc, TAIL_FRAMES, type StreamingModel } from '../src/captions/streaming-ctc'
 
 /**
  * The streaming FastConformer's driver, with a pretend model that records
@@ -12,12 +12,12 @@ import { LEAD_IN, StreamingCtc, type StreamingModel } from '../src/captions/stre
 
 interface Fixture {
   signal: { seed: number; samples: number }
-  window: number
-  shift: number
   lead: number
+  tail: number
   /** Feature values the app's must match: [frame, bin, value]. */
   features: [number, number, number][]
-  cases: { name: string; samples: number; chunks: number[]; padded: number }[]
+  /** Each export's chunks. */
+  shapes: { model: string; window: number; shift: number; cases: { name: string; samples: number; chunks: number[]; padded: number }[] }[]
 }
 const fixture = JSON.parse(readFileSync(new URL('./fixtures/streaming-ctc.json', import.meta.url), 'utf8')) as Fixture
 
@@ -65,36 +65,43 @@ async function feed(ctc: StreamingCtc, x: Float32Array, sizes = [320, 1000, 7, 4
 }
 
 describe('streaming CTC', () => {
-  const { window, shift } = fixture
+  // The words and phrases below go by the 480 ms export's chunks.
+  const { window, shift } = fixture.shapes.find(s => s.model === '480 ms')!
 
-  it('starts each segment with as much silence as the fixture says', () => expect(LEAD_IN).toBe(fixture.lead))
+  it('adds as much silence before and after as the fixture says', () => {
+    expect(LEAD_IN).toBe(fixture.lead)
+    expect(TAIL_FRAMES).toBe(fixture.tail)
+  })
 
-  for (const c of fixture.cases) {
-    it(`chunks: ${c.name}`, async () => {
-      const f = fake(window, shift)
-      const ctc = new StreamingCtc(f.model, PIECES, BLANK)
-      const x = signal(fixture.signal.seed, c.samples)
-      await feed(ctc, x)
-      await ctc.finish()
-      // Where each chunk started, in frames, and how much silence the end needed.
-      expect(f.seen.length).toBe(c.chunks.length)
-      // Each window is the frames of the whole signal (and its silence before and after), as one computation of them all would have them.
-      const whole = new Float32Array(c.padded)
-      whole.set(x, fixture.lead)
-      const { data, frames } = new NemoFeatures(80).compute(whole, false)
-      c.chunks.forEach((start, k) => {
-        const got = f.seen[k]
-        let worst = 0
-        for (let b = 0; b < 80; b++) for (let t = 0; t < window; t++) worst = Math.max(worst, Math.abs(got[b * window + t] - data[b * frames + start + t]))
-        expect(worst).toBeLessThan(1e-5)
+  for (const { model, window, shift, cases } of fixture.shapes) {
+    for (const c of cases) {
+      it(`chunks, ${model}: ${c.name}`, async () => {
+        const f = fake(window, shift)
+        const ctc = new StreamingCtc(f.model, PIECES, BLANK)
+        const x = signal(fixture.signal.seed, c.samples)
+        await feed(ctc, x)
+        await ctc.finish()
+        // Where each chunk started, in frames, and how much silence the end needed.
+        expect(f.seen.length).toBe(c.chunks.length)
+        // Each window is the frames of the whole signal (and its silence before and after), as one computation of them all would have them.
+        const whole = new Float32Array(c.padded)
+        whole.set(x, fixture.lead)
+        const { data, frames } = new NemoFeatures(80).compute(whole, false)
+        c.chunks.forEach((start, k) => {
+          const got = f.seen[k]
+          let worst = 0
+          for (let b = 0; b < 80; b++) for (let t = 0; t < window; t++) worst = Math.max(worst, Math.abs(got[b * window + t] - data[b * frames + start + t]))
+          expect(worst).toBeLessThan(1e-5)
+        })
+        // Enough silence for a chunk or two past the first that reaches the end of the segment (at least tail frames of them), and no more.
+        const last = c.chunks[c.chunks.length - 1] + window
+        expect(NemoFeatures.endSample(last - 1)).toBe(c.padded)
+        const real = NemoFeatures.frames(fixture.lead + c.samples)
+        const reaching = c.chunks.findIndex(start => start + window >= real)
+        const after = c.chunks.length - 1 - reaching
+        expect(after).toBe(Math.max(1, Math.ceil(fixture.tail / shift)))
       })
-      // Enough silence for one chunk past the first that reaches the end of the segment, and no more.
-      const last = c.chunks[c.chunks.length - 1] + window
-      expect(NemoFeatures.endSample(last - 1)).toBe(c.padded)
-      const real = NemoFeatures.frames(fixture.lead + c.samples)
-      const reaching = c.chunks.findIndex(start => start + window >= real)
-      expect(reaching).toBe(c.chunks.length - 2)
-    })
+    }
   }
 
   it("matches the fixture's features (the app is held to the same)", async () => {

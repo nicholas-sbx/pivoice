@@ -24,6 +24,20 @@ import { NemoFeatures } from './fbank'
 export const LEAD_IN = 3200
 const SILENCE = new Float32Array(LEAD_IN)
 
+/**
+ * Silence after a segment, frames: at least this much past the last chunk
+ * with any of it in, and at least one chunk. The model says a word up to a
+ * chunk after it hears it, or two of the 80 ms export's 0.16 s ones:
+ * stopping sooner lost the end of the last word (in one segment in seven,
+ * with the 480 ms export).
+ */
+export const TAIL_FRAMES = 30
+
+/** How many chunks after the last with any of the segment in. */
+export function tailChunks(shift: number): number {
+  return Math.max(1, Math.ceil(TAIL_FRAMES / shift))
+}
+
 /** One chunk through the model: its output, and its caches kept for the next. */
 export interface StreamingModel {
   readonly window: number
@@ -100,17 +114,15 @@ export class StreamingCtc {
   }
 
   /**
-   * The end of the segment: silence after it, enough for one chunk past the
-   * last with any of the segment in (the model says a word up to a chunk
-   * after it hears it: stopping at that last chunk lost the end of the last
-   * word in one segment in seven), and everything read. Its words, and
-   * ready for the next with the caches empty.
+   * The end of the segment: silence after it, enough for a chunk or two past
+   * the last with any of the segment in (TAIL_FRAMES), and everything read.
+   * Its words, and ready for the next with the caches empty.
    */
   async finish(): Promise<string> {
     if (this.heard > 0) {
       const { window, shift } = this.model
       const real = NemoFeatures.frames(this.heard)
-      const last = (Math.max(0, Math.ceil((real - window) / shift)) + 1) * shift
+      const last = (Math.max(0, Math.ceil((real - window) / shift)) + tailChunks(shift)) * shift
       if (this.next <= last) {
         const pad = NemoFeatures.endSample(last + window - 1) - this.heard
         if (pad > 0) this.append(new Float32Array(pad))

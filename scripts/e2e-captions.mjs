@@ -8,7 +8,8 @@
 //
 // The speaker's browser downloads the model from the dev server like anyone
 // would, recognises itself, and sends the words over the captions channel:
-// first with Vosk (the default), then Parakeet, then FastConformer. Vosk
+// first with Vosk (the default), then Parakeet, then FastConformer at each
+// of its chunk sizes. Vosk
 // large isn't offered there: it's the app's alone.
 //
 // Then, if the app's built (native/pivoice, or NATIVE_BIN), the same with the
@@ -16,7 +17,9 @@
 // (--fake-mic), recognising natively in its helper process, with the
 // recognisers fetched from their releases into a cache folder of this run's
 // own (XDG_CACHE_HOME), and the words reaching the website over pion's end
-// of the captions channel: Vosk, Parakeet, Vosk large, then FastConformer.
+// of the captions channel: Vosk, Parakeet, Vosk large, then FastConformer
+// 480 ms (TestLiveRecognisers in native/internal/asr has the app run every
+// model it can).
 import { spawn } from 'node:child_process'
 import { existsSync, mkdtempSync } from 'node:fs'
 import { createRequire } from 'node:module'
@@ -124,11 +127,13 @@ try {
   await alice.waitForFunction(() => !document.querySelector('.seat:not(.self) .caption'), null, { timeout: 30_000 }).catch(() => {})
   ok('Parakeet, beside Bob on Alice’s screen: ' + (await heard(alice, 'Parakeet')))
 
-  // FastConformer: streaming, a chunk at a time.
-  await useModel(bob, 'FastConformer')
-  await alice.waitForFunction(() => !document.querySelector('.seat:not(.self) .caption'), null, { timeout: 30_000 }).catch(() => {})
-  ok('FastConformer, beside Bob on Alice’s screen: ' + (await heard(alice, 'FastConformer')))
-  ok('Bob: ' + (await speedOf(bob)))
+  // FastConformer, each chunk size: streaming, a chunk at a time.
+  for (const title of ['FastConformer 80 ms', 'FastConformer 480 ms', 'FastConformer 1040 ms']) {
+    await useModel(bob, title)
+    await alice.waitForFunction(() => !document.querySelector('.seat:not(.self) .caption'), null, { timeout: 30_000 }).catch(() => {})
+    ok(`${title}, beside Bob on Alice’s screen: ` + (await heard(alice, title)))
+    ok('Bob: ' + (await speedOf(bob)))
+  }
 
   // Muted: nothing is recognised, and nothing new is said.
   await bob.click('button[aria-label="Mute"]')
@@ -186,9 +191,9 @@ async function theApp(alice, code) {
   await alice.waitForTimeout(7_000)
   ok('the app’s Vosk large, beside Cleo on Alice’s screen: ' + (await heardFrom(alice, cleo, 'the app’s Vosk large')))
   ok('Cleo: ' + (await cleo.$eval('.captions-tab .status', e => e.innerText.replace(/\s+/g, ' ').trim())))
-  await useModel(cleo, 'FastConformer', 'the app’s ')
+  await useModel(cleo, 'FastConformer 480 ms', 'the app’s ')
   await alice.waitForTimeout(7_000)
-  ok('the app’s FastConformer, beside Cleo on Alice’s screen: ' + (await heardFrom(alice, cleo, 'the app’s FastConformer')))
+  ok('the app’s FastConformer 480 ms, beside Cleo on Alice’s screen: ' + (await heardFrom(alice, cleo, 'the app’s FastConformer 480 ms')))
   ok('Cleo: ' + (await speedOf(cleo)))
 }
 
