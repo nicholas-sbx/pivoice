@@ -432,6 +432,7 @@ func (c *captioner) recLoop() {
 		}()
 	}
 	statsAt := time.Now()
+	var progressAt time.Time
 	for {
 		select {
 		case <-c.newCfg:
@@ -484,8 +485,12 @@ func (c *captioner) recLoop() {
 				}
 			}
 		case n := <-progress:
+			// For the page's bar: a few times a second, not every read off the network.
 			st.bytes = n
-			emit()
+			if time.Since(progressAt) >= 150*time.Millisecond || n >= st.total {
+				progressAt = time.Now()
+				emit()
+			}
 		case err := <-got:
 			cancel, got, progress = nil, nil, nil
 			if err != nil {

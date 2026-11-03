@@ -968,6 +968,11 @@ Nothing is shipped with anything. The first time a model is wanted:
   this low, about 1 Mbit/s each way per person while they talk (see
   [Bigger rooms](#bigger-rooms)). Captions are on by default; that question
   is the one thing that holds them back.
+- **While it downloads**, a bar in the same place under the top bar says
+  how far it's got (by itself when the download starts by itself, or after
+  **Download**), stays while the model is made ready, and goes once
+  captions are. Its X only hides it. A model that's already here shows
+  nothing. In the app too, from the app's own download.
   **Download** in the settings: *Not on data* (the default), *Always ask*,
   or *Always*.
 - **The app** keeps models and recognisers in your cache folder
