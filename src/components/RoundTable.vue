@@ -1,13 +1,15 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { seating } from '../call'
-import { tableRadius } from '../lib/seats'
+import { TAU, tableRadius } from '../lib/seats'
 import { useSeatStates, useTableView } from '../lib/tableView'
 import type { Member } from '../net/protocol'
 import { pingLevel, routeLabel, type LinkStats } from '../net/stats'
 import { vSnap } from '../lib/snap'
 import { touchFirst } from '../lib/viewport'
+import type { CaptionView } from '../captions/board'
 import Avatar from './Avatar.vue'
+import CaptionText from './CaptionText.vue'
 import Icon from './Icon.vue'
 
 /**
@@ -31,6 +33,11 @@ const props = defineProps<{
   links: Record<string, LinkStats>
   showPing: boolean
   showRoute: boolean
+  /** Live captions: who's saying what, and how they're shown (`showCaptions`: other people's). */
+  captions?: Record<string, CaptionView>
+  captionLines?: number
+  captionScale?: number
+  showCaptions?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -110,6 +117,30 @@ function onTap(id: string, e: MouseEvent) {
 
 
 const count = computed(() => props.members.filter(m => !m.away).length || 1)
+
+/**
+ * Captions go on the side of each face toward the middle of the table, so
+ * they're over the felt rather than off the edge of the screen: above you
+ * (and anyone near the bottom), below those across the table, beside
+ * those at the sides. By where they're heading, so a caption doesn't flip
+ * sides mid-slide.
+ */
+type Side = 'above' | 'below' | 'left' | 'right'
+const sides = computed(() => {
+  void seating.revision.value
+  const out = new Map<string, Side>()
+  for (const s of seating.targets()) {
+    const a = ((s.angle % TAU) + TAU) % TAU
+    out.set(s.id, a < Math.PI / 4 || a > (7 * Math.PI) / 4 ? 'above' : a < (3 * Math.PI) / 4 ? 'right' : a <= (5 * Math.PI) / 4 ? 'below' : 'left')
+  }
+  return out
+})
+const sideOf = (id: string): Side => (isSelf(id) ? 'above' : (sides.value.get(id) ?? 'below'))
+function captionOf(id: string): CaptionView | null {
+  // Yours are only here if you asked to see them; everyone else's only if you show captions.
+  if ((!isSelf(id) && !props.showCaptions) || props.silenced[id] || mutedOf(id)) return null
+  return props.captions?.[id] ?? null
+}
 </script>
 
 <template>
@@ -145,6 +176,9 @@ const count = computed(() => props.members.filter(m => !m.away).length || 1)
           :size="geometry.avatar"
           :mood="moodOf(id)"
         />
+      </div>
+      <div v-if="captionOf(id) && sideOf(id) !== 'below'" class="cap" :class="sideOf(id)">
+        <CaptionText :view="captionOf(id)!" :lines="captionLines ?? 2" :scale="captionScale ?? 1" />
       </div>
       <div class="under">
         <div v-snap class="tag">
@@ -197,6 +231,9 @@ const count = computed(() => props.members.filter(m => !m.away).length || 1)
             </div>
           </template>
           <div v-else class="route-head">Connecting…</div>
+        </div>
+        <div v-if="captionOf(id) && sideOf(id) === 'below'" class="cap-below">
+          <CaptionText :view="captionOf(id)!" :lines="captionLines ?? 2" :scale="captionScale ?? 1" />
         </div>
       </div>
     </div>
@@ -403,5 +440,50 @@ const count = computed(() => props.members.filter(m => !m.away).length || 1)
 }
 .self .tag {
   background: rgba(88, 101, 242, 0.85);
+}
+
+/* Captions, toward the middle of the table (no -50% transforms: text stays on whole pixels). */
+.cap {
+  position: absolute;
+  z-index: 2;
+  display: flex;
+  pointer-events: none;
+}
+.cap :deep(.caption) {
+  max-width: min(260px, 38vw);
+}
+.cap.above {
+  bottom: calc(100% + 12px);
+  left: -150px;
+  right: -150px;
+  justify-content: center;
+}
+.cap.right,
+.cap.left {
+  top: 0;
+  bottom: 0;
+  width: min(260px, 38vw);
+  align-items: center;
+}
+.cap.right {
+  left: calc(100% + 14px);
+}
+.cap.left {
+  right: calc(100% + 14px);
+  justify-content: flex-end;
+}
+.cap-below {
+  margin-top: 8px;
+  z-index: 2;
+  max-width: min(260px, 60vw);
+}
+.seat[data-small] .cap :deep(.caption),
+.seat[data-small] .cap-below :deep(.caption) {
+  max-width: min(180px, 42vw);
+  font-size: calc(12px * var(--scale));
+}
+.seat[data-small] .cap.right,
+.seat[data-small] .cap.left {
+  width: min(180px, 42vw);
 }
 </style>

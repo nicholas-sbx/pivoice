@@ -13,6 +13,8 @@ import {
   toggleSpatial
 } from '../call'
 import AppBanner from '../components/AppBanner.vue'
+import CaptionPrompt from '../components/CaptionPrompt.vue'
+import { captions } from '../captions/state'
 import ControlButton from '../components/ControlButton.vue'
 import DisplayPanel from '../components/DisplayPanel.vue'
 import Icon from '../components/Icon.vue'
@@ -161,6 +163,7 @@ onBeforeUnmount(() => {
       </div>
     </header>
     <AppBanner />
+    <CaptionPrompt />
 
     <main class="stage">
       <PeopleGrid
@@ -175,6 +178,10 @@ onBeforeUnmount(() => {
         :links="call.links"
         :show-ping="call.prefs.showPing"
         :show-route="call.prefs.showRoute"
+        :captions="captions.views"
+        :caption-lines="call.prefs.captions.lines"
+        :caption-scale="call.prefs.captions.scale"
+        :show-captions="call.prefs.captions.show"
         @menu="(id, x, y) => (menu = { id, x, y })"
       />
       <RoundTable
@@ -190,6 +197,10 @@ onBeforeUnmount(() => {
         :links="call.links"
         :show-ping="call.prefs.showPing"
         :show-route="call.prefs.showRoute"
+        :captions="captions.views"
+        :caption-lines="call.prefs.captions.lines"
+        :caption-scale="call.prefs.captions.scale"
+        :show-captions="call.prefs.captions.show"
         @menu="(id, x, y) => (menu = { id, x, y })"
       />
 

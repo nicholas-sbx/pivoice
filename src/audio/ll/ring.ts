@@ -48,15 +48,17 @@ export class FrameRing {
     return new FrameRing(sab, slots, maxFrame)
   }
 
-  /** False if the ring is full or the frame too big (the frame is dropped). */
-  push(ts: number, pcm: Float32Array): boolean {
+  /** False if the ring is full or the frame too big (the frame is dropped). `len`: only the first that many samples. */
+  push(ts: number, pcm: Float32Array, len = pcm.length): boolean {
     const w = Atomics.load(this.ctrl, WRITE)
     const r = Atomics.load(this.ctrl, READ)
-    if (w - r >= this.slots || pcm.length > this.maxFrame) return false
+    if (w - r >= this.slots || len > this.maxFrame || len > pcm.length) return false
     const slot = w % this.slots
     this.ts[slot] = ts
-    this.len[slot] = pcm.length
-    this.data.set(pcm, slot * this.maxFrame)
+    this.len[slot] = len
+    const at = slot * this.maxFrame
+    if (len === pcm.length) this.data.set(pcm, at)
+    else for (let i = 0; i < len; i++) this.data[at + i] = pcm[i]
     Atomics.store(this.ctrl, WRITE, w + 1)
     return true
   }

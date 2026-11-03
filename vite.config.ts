@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath, URL } from 'node:url'
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
+import { vosk } from './scripts/vosk-glue'
 
 // Shown on the start screen; each release bumps it in package.json.
 const { version } = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')) as { version: string }
@@ -11,7 +12,9 @@ const nativeVersion = readFileSync(new URL('./native/VERSION', import.meta.url),
 
 export default defineConfig({
   base: './',
-  plugins: [vue()],
+  // vosk: the caption worker's speech recogniser (see scripts/vosk-glue.ts).
+  plugins: [vue(), vosk()],
+  worker: { plugins: () => [vosk()] },
   define: { __APP_VERSION__: JSON.stringify(version), __NATIVE_VERSION__: JSON.stringify(nativeVersion) },
   resolve: {
     alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) }

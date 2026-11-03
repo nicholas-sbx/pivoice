@@ -7,6 +7,7 @@ import { isNative, native } from '../native/bridge'
 import Segmented from './Segmented.vue'
 import Icon from './Icon.vue'
 import LLSettings from './LLSettings.vue'
+import CaptionSettings from './CaptionSettings.vue'
 import OverlaySettings from './OverlaySettings.vue'
 import { overlaySupported } from '../native/overlay'
 import Slider from './Slider.vue'
@@ -18,7 +19,7 @@ import { vSnap } from '../lib/snap'
 const emit = defineEmits<{ close: [] }>()
 
 const el = ref<HTMLElement>()
-const tab = ref<'voice' | 'latency' | 'overlay'>('voice')
+const tab = ref<'voice' | 'latency' | 'captions' | 'overlay'>('voice')
 const inputs = ref<MediaDeviceInfo[]>([])
 const outputs = ref<MediaDeviceInfo[]>([])
 const level = ref(0)
@@ -167,6 +168,9 @@ onBeforeUnmount(() => {
       <button type="button" role="tab" :aria-selected="tab === 'latency'" :class="{ active: tab === 'latency' }" @click="tab = 'latency'">
         Latency
       </button>
+      <button type="button" role="tab" :aria-selected="tab === 'captions'" :class="{ active: tab === 'captions' }" @click="tab = 'captions'">
+        Captions
+      </button>
       <button
         v-if="overlaySupported"
         type="button"
@@ -179,6 +183,7 @@ onBeforeUnmount(() => {
       </button>
     </nav>
     <LLSettings v-if="tab === 'latency'" />
+    <CaptionSettings v-else-if="tab === 'captions'" />
     <OverlaySettings v-else-if="tab === 'overlay'" />
     <template v-else>
 

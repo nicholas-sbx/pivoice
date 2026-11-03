@@ -1,4 +1,6 @@
 import type { LLConfig } from '../audio/ll/config'
+import type { ModelId } from '../captions/models'
+import type { ModelPhase } from '../captions/worker-core'
 import type { SpatialMode } from '../audio/engine'
 import type { Placed } from '../lib/seats'
 import type { IceCandidate, Member, SessionDescription } from '../net/protocol'
@@ -37,6 +39,30 @@ export interface AppConfig {
   bufferAuto: boolean
   bufferMs: number
   processing: ProcessingConfig
+  /** Live captions (only to an app whose hello lists `captions`). */
+  captions?: AppCaptions
+}
+
+/**
+ * Live captions, in the app: it recognises you itself, natively (Vosk's
+ * library or sherpa-onnx's, in a process of its own: native/internal/asr),
+ * from the raw mic, while your ring is lit; sends your words to everyone
+ * on its links; and hands the page everyone's, yours included.
+ */
+export interface AppCaptions {
+  /** Caption you at all. */
+  send: boolean
+  model: ModelId
+  /** Keep listening even with nobody to send to (you see your own). */
+  showOwn: boolean
+  preMs: number
+  postMs: number
+  partials: boolean
+  partialsPerSec: number
+  rereadMs: number
+  maxPhraseSec: number
+  minConfidence: number
+  threads: number
 }
 
 /** What the speakers' buffer can be set to, ms on top of the smallest (native/internal/engine/buffer.go's steps). */
@@ -84,6 +110,8 @@ export type ToApp =
   | { t: 'overlay'; op: 'state'; state: OverlayState }
   | { t: 'overlay'; op: 'look'; look: OverlayLook }
   | { t: 'monitors' }
+  /** Captions: go ahead with the download the app's waiting on (it says how big in `captions`), or drop what it has of this model. */
+  | { t: 'captions'; op: 'download' | 'forget' }
 
 /** Which side of the screen the overlay keeps to: a corner, the middle of an edge, or the very middle. */
 export type OverlayAnchor = 'top-left' | 'top' | 'top-right' | 'left' | 'center' | 'right' | 'bottom-left' | 'bottom' | 'bottom-right'
@@ -154,6 +182,25 @@ export interface AppInfo {
   noise?: boolean
   /** Whether it can show the overlay here (a window, on a desktop it knows how to put one on). */
   overlay?: boolean
+  /** The caption models it can run natively here (none: no captions from this app). */
+  captions?: ModelId[]
+}
+
+/** How the app's recogniser is getting on (as ModelStatus in a browser), with where it keeps the files. */
+export interface AppCaptionState {
+  model: ModelId
+  phase: ModelPhase | 'off'
+  bytes: number
+  total: number
+  error?: string
+  /** Seconds of work per second of speech, lately. */
+  rtf?: number
+  /** Listening for your ring now. */
+  listening?: boolean
+  /** The folder the models and recognisers are kept in. */
+  cacheDir?: string
+  /** What it hears: the raw mic, or the mic after echo cancellation (when that's on; never noise suppression or gain). */
+  hears?: 'raw' | 'echo'
 }
 
 /** The sound card, as the app has it open. */
@@ -224,6 +271,14 @@ export type FromApp =
    */
   | { t: 'monitors'; monitors: AppMonitor[]; placeable: boolean; onTop: boolean; needs?: OverlayNeeds }
   | { t: 'overlay'; on: boolean; error?: string }
+  | ({ t: 'captions' } & AppCaptionState)
+  /**
+   * Captions: yours as the app recognised them (`peer` ''), or a message
+   * off someone's captions channel as it came (`data`: the page checks it,
+   * as it does its own).
+   */
+  | { t: 'caption'; peer: ''; u: number; text: string; final: boolean }
+  | { t: 'caption'; peer: string; data: string }
 
 // ---- versions ------------------------------------------------------------------
 

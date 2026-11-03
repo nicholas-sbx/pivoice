@@ -1,0 +1,50 @@
+{
+  "comment": "When captions hear you: the same cases for src/captions/gate.ts and native/internal/captions/gate.go. 48 kHz, blocks of 128; `levels` is [blocks, RMS] runs; `raw` sample k of the stream is k. `segments` is each start and end (block index) and the first and last raw sample it carried.",
+  "cases": [
+    {
+      "name": "a word, with 10 ms either side",
+      "preMs": 10,
+      "postMs": 10,
+      "levels": [[10, 0], [1, 0.5], [200, 0]],
+      "segments": [{ "start": 10, "end": 126, "first": 800, "last": 16255 }]
+    },
+    {
+      "name": "no pre-roll, no post-roll",
+      "preMs": 0,
+      "postMs": 0,
+      "levels": [[10, 0], [1, 0.5], [200, 0]],
+      "segments": [{ "start": 10, "end": 123, "first": 1280, "last": 15871 }]
+    },
+    {
+      "name": "the pre-roll is only what there is",
+      "preMs": 200,
+      "postMs": 0,
+      "levels": [[3, 0], [1, 0.5], [200, 0]],
+      "segments": [{ "start": 3, "end": 116, "first": 0, "last": 14975 }]
+    },
+    {
+      "name": "lit again during the post-roll: one segment",
+      "preMs": 0,
+      "postMs": 100,
+      "levels": [[1, 0.5], [120, 0], [1, 0.5], [300, 0]],
+      "segments": [{ "start": 0, "end": 271, "first": 0, "last": 34815 }]
+    },
+    {
+      "name": "two words far apart: two segments, nothing sent twice",
+      "preMs": 50,
+      "postMs": 0,
+      "levels": [[1, 0.5], [200, 0], [1, 0.5], [200, 0]],
+      "segments": [
+        { "start": 0, "end": 113, "first": 0, "last": 14591 },
+        { "start": 201, "end": 314, "first": 23328, "last": 40319 }
+      ]
+    },
+    {
+      "name": "quiet below the ring's threshold: nothing",
+      "preMs": 200,
+      "postMs": 200,
+      "levels": [[100, 0.009]],
+      "segments": []
+    }
+  ]
+}

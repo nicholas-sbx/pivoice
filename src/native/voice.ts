@@ -2,7 +2,7 @@ import { ActivityTracker, type Activity } from '../audio/activity'
 import type { MicProblem } from '../audio/engine'
 import type { Member } from '../net/protocol'
 import type { NativeBridge } from './bridge'
-import type { AppConfig, AppDevice, AppStats, AudioInfo } from './protocol'
+import type { AppCaptionState, AppConfig, AppDevice, AppStats, AudioInfo } from './protocol'
 
 /**
  * What you hear and say, when the app is doing it: the page's stand-in
@@ -18,6 +18,10 @@ export class NativeVoice {
   private activityOf = new ActivityTracker()
   private angles = new Map<string, number>()
   private off: () => void
+  /** How the app's recogniser is getting on. */
+  onCaptions: ((s: AppCaptionState) => void) | null = null
+  /** Captions from the app: yours (`peer` '', recognised), or someone's message as it came off their channel. */
+  onCaption: ((peer: string, m: { u?: number; text?: string; final?: boolean; data?: string }) => void) | null = null
 
   constructor(private bridge: NativeBridge) {
     this.off = bridge.on(m => {
@@ -27,6 +31,8 @@ export class NativeVoice {
         this.activityOf.hear('', m.self, now)
         for (const [id, v] of Object.entries(m.remotes)) this.activityOf.hear(id, v, now)
       } else if (m.t === 'audio' && m.on) this.info = m.info ?? null
+      else if (m.t === 'captions') this.onCaptions?.(m)
+      else if (m.t === 'caption') this.onCaption?.(m.peer, m as { u?: number; text?: string; final?: boolean; data?: string })
     })
   }
 
@@ -92,6 +98,11 @@ export class NativeVoice {
 
   async devices(): Promise<AppDevice[]> {
     return (await this.bridge.request({ t: 'devices' }, 'devices'))?.devices ?? []
+  }
+
+  /** Captions: go ahead with the model's download, or drop the copy the app keeps. */
+  captions(op: 'download' | 'forget') {
+    this.bridge.send({ t: 'captions', op })
   }
 
   test(path: '' | 'raw' | 'll') {

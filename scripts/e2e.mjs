@@ -26,6 +26,11 @@ const pages = []
 async function open(name, code = '') {
   const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, permissions: ['microphone'] })
   const page = await ctx.newPage()
+  // Captions off: six tabs on one machine each running a recogniser would
+  // skew everything this measures. They have their own run (e2e-captions.mjs).
+  await page.addInitScript(() => {
+    if (!localStorage.getItem('pv.prefs')) localStorage.setItem('pv.prefs', JSON.stringify({ captions: { send: false } }))
+  })
   page.on('pageerror', e => console.error(`[${name}] page error:`, e.message))
   page.on('console', m => {
     if (m.type() === 'error') console.error(`[${name}]`, m.text())

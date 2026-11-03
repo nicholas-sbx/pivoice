@@ -34,3 +34,26 @@ interface DocumentPictureInPicture extends EventTarget {
 interface Window {
   readonly documentPictureInPicture?: DocumentPictureInPicture
 }
+
+/** vosk-browser's WebAssembly Vosk, as scripts/vosk-glue.ts hands it to the caption worker (embind classes, Emscripten's FS). */
+declare module 'virtual:vosk' {
+  interface VoskRecognizer {
+    AcceptWaveform(ptr: number, length: number): boolean
+    Result(): string
+    PartialResult(): string
+    FinalResult(): string
+    SetWords(on: boolean): void
+    delete(): void
+  }
+  interface VoskModule {
+    FS: { mkdirTree(path: string): void; writeFile(path: string, data: Uint8Array): void; unlink(path: string): void }
+    HEAPF32: Float32Array
+    _malloc(bytes: number): number
+    _free(ptr: number): void
+    SetLogLevel(level: number): void
+    Model: new (path: string) => { delete(): void }
+    Recognizer: new (model: { delete(): void }, sampleRate: number) => VoskRecognizer
+  }
+  const LoadVosk: () => Promise<VoskModule>
+  export default LoadVosk
+}

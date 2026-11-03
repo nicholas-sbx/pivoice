@@ -1,5 +1,6 @@
 import type { OutputBuffer, SpatialMode } from '../audio/engine'
 import { llDefaults, sanitizeLL, type LLConfig } from '../audio/ll/config'
+import { captionDefaults, sanitizeCaptions, type CaptionPrefs } from '../captions/config'
 import { isNative } from '../native/bridge'
 import { onMobileDevice } from '../native/downloads'
 import { APP_BUFFER_STEPS, type OverlayAnchor } from '../native/protocol'
@@ -83,6 +84,8 @@ export interface Prefs {
   /** The low-latency engine (how everyone hears everyone) and all its knobs. */
   ll: LLConfig
   overlay: OverlayPrefs
+  /** Live captions: yours (what recognises you, how much either side of the ring) and everyone's (how they're shown). */
+  captions: CaptionPrefs
 }
 
 const KEY = 'pv.prefs'
@@ -138,7 +141,8 @@ export const DEFAULT_PREFS: Prefs = {
   outputBuffer: 'min',
   ll: llDefaults(),
   // Top right, out of the way of most things, a little in from the edge.
-  overlay: { on: false, monitor: '', anchor: 'top-right', margin: 24, size: 260, scale: 1, opacity: 0.8 }
+  overlay: { on: false, monitor: '', anchor: 'top-right', margin: 24, size: 260, scale: 1, opacity: 0.8 },
+  captions: captionDefaults()
 }
 
 function sanitizeOverlay(raw: unknown): OverlayPrefs {
@@ -160,7 +164,7 @@ export function loadPrefs(): Prefs {
     const raw = JSON.parse(localStorage.getItem(KEY) ?? '{}') as Partial<Prefs>
     const rev = typeof raw.rev === 'number' ? raw.rev : 0
     const phone = onPhone()
-    const p = { ...DEFAULT_PREFS, ...(phone ? MOBILE_MIC : {}), ll: sanitizeLL(raw.ll), overlay: sanitizeOverlay(raw.overlay) }
+    const p = { ...DEFAULT_PREFS, ...(phone ? MOBILE_MIC : {}), ll: sanitizeLL(raw.ll), overlay: sanitizeOverlay(raw.overlay), captions: sanitizeCaptions(raw.captions) }
     if (typeof raw.name === 'string') p.name = raw.name
     if (raw.spatial === 'off' || raw.spatial === 'stereo' || raw.spatial === 'hrtf') p.spatial = raw.spatial
     if (raw.lastSpatial === 'stereo' || raw.lastSpatial === 'hrtf') p.lastSpatial = raw.lastSpatial
@@ -190,7 +194,7 @@ export function loadPrefs(): Prefs {
     if ((rev >= 2 || !phone) && typeof raw.echoCancellation === 'boolean') p.echoCancellation = raw.echoCancellation
     return p
   } catch {
-    return { ...DEFAULT_PREFS, ...(onPhone() ? MOBILE_MIC : {}), ll: llDefaults(), overlay: { ...DEFAULT_PREFS.overlay } }
+    return { ...DEFAULT_PREFS, ...(onPhone() ? MOBILE_MIC : {}), ll: llDefaults(), overlay: { ...DEFAULT_PREFS.overlay }, captions: captionDefaults() }
   }
 }
 
