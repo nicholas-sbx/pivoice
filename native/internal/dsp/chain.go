@@ -181,6 +181,20 @@ func (c *Chain) Process(mic, ref []float32) []float32 {
 	return c.out
 }
 
+// EchoOut is what the echo canceller made of the mic in the last Process
+// call: the mic with the speakers taken out, before noise suppression and
+// gain (any number of whole frames, maybe none yet). Nil when there's no
+// echo cancellation. Live captions hear this (internal/engine/captions.go):
+// with echo cancellation on you're probably on speakers, and the raw mic
+// would hear everyone else too. It's the chain's own buffer, good until the
+// next Process: reading it costs nothing and copies nothing.
+func (c *Chain) EchoOut() []float32 {
+	if c.echo == nil {
+		return nil
+	}
+	return c.echoOut
+}
+
 // gate fades a frame out when RNNoise doesn't think it's voice and the
 // grace period since the last voice has run out, and back in the moment
 // it does (no lookahead: the frame that opens it is the first one heard).

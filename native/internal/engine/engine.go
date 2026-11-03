@@ -30,6 +30,8 @@ type Options struct {
 	Backend audio.Backend
 	// Offer loopback ICE candidates too (tests, with everything on one machine).
 	Loopback bool
+	// The site, where the captions' models are (its /captions/).
+	Site string
 }
 
 type peerPrefs struct {
@@ -85,6 +87,8 @@ type Engine struct {
 	capture    chan capBlock
 	capFree    chan []float32
 	mixer      *mixer
+	// Live captions (captions.go).
+	captions *captioner
 }
 
 func New(opts Options) *Engine {
@@ -109,6 +113,7 @@ func New(opts Options) *Engine {
 	e.targets.Store(&targets{})
 	llc := proto.DefaultLL
 	e.setLL(llc)
+	e.captions = newCaptioner(e)
 	go (&sender{e: e}).run()
 	go e.pinger()
 	return e
@@ -147,6 +152,8 @@ func (e *Engine) Reset() {
 	e.deafened.Store(false)
 	e.publishLocked()
 	e.mu.Unlock()
+	// A new page says what it wants; until then, no captions.
+	e.captions.configure(nil)
 }
 
 // Handle one message from the page.
@@ -190,6 +197,8 @@ func (e *Engine) Handle(m proto.In) {
 			e.startTestLocked(m.Path)
 		}
 		e.mu.Unlock()
+	case "captions":
+		e.captions.request(m.Op)
 	case "stats":
 		e.emit(e.stats())
 	case "devices":
@@ -222,6 +231,7 @@ func (e *Engine) configure(c proto.Config) {
 	c = c.Sanitize()
 	e.setLL(c.LL)
 	e.setProcessing(c.Processing)
+	e.captions.configure(c.Captions)
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	devicesChanged := c.InputID != e.cfg.InputID || c.OutputID != e.cfg.OutputID
@@ -406,7 +416,27 @@ func (e *Engine) rebuildLocked() {
 		t.loop = e.loop.src.Load()
 	}
 	e.targets.Store(t)
-	e.capturing.Store(e.stream != nil && (t.loop != nil || (!t.muted && len(t.ll) > 0)))
+	// Captions listen while you're unmuted with someone to send to (deafened
+	// or not: captions are for them too), or alone if you want to see your own.
+	anyone := false
+	for _, l := range e.links {
+		anyone = anyone || l.up.Load()
+	}
+	e.captions.setAllowed(e.stream != nil && !e.muted && (anyone || e.captions.showOwn()))
+	e.capturing.Store(e.stream != nil && (t.loop != nil || (!t.muted && len(t.ll) > 0) || e.captions.on.Load()))
+}
+
+// sendCaption: your words to everyone whose captions channel is open.
+func (e *Engine) sendCaption(msg []byte) {
+	e.mu.Lock()
+	links := make([]*link, 0, len(e.links))
+	for _, l := range e.links {
+		links = append(links, l)
+	}
+	e.mu.Unlock()
+	for _, l := range links {
+		l.sendCaption(msg)
+	}
 }
 
 func (e *Engine) rebuildTargets() {

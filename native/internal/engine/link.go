@@ -7,7 +7,9 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
+	"github.com/nicholas-sbx/pivoice/native/internal/captions"
 	"github.com/nicholas-sbx/pivoice/native/internal/ll"
 	"github.com/nicholas-sbx/pivoice/native/internal/proto"
 	"github.com/pion/ice/v4"
@@ -41,6 +43,9 @@ type link struct {
 	offerer bool
 	pc      *webrtc.PeerConnection
 	dc      *webrtc.DataChannel
+	// Live captions, both ways: ordered and reliable, beside the audio.
+	capDC    *webrtc.DataChannel
+	capLimit tokenBucket
 	// What this link brings in: their packets.
 	src *source
 
@@ -228,7 +233,24 @@ func (e *Engine) openLink(m proto.In) (*link, error) {
 		}
 	})
 
-	yes, no, zero, id := true, false, uint16(0), uint16(llChannelID)
+	// Captions' channel, pre-agreed as stream 43 (src/net/session.ts makes the same).
+	yes, capID := true, uint16(captions.ChannelID)
+	cdc, err := pc.CreateDataChannel(captions.ChannelName(), &webrtc.DataChannelInit{Negotiated: &yes, ID: &capID})
+	if err != nil {
+		_ = pc.Close()
+		return nil, err
+	}
+	l.capDC = cdc
+	l.capLimit = tokenBucket{rate: 25, burst: 50, tokens: 50}
+	cdc.OnMessage(func(msg webrtc.DataChannelMessage) {
+		// Someone else's: passed on to the page as it came (it checks it, as it does a browser's), but only text, only so big, only so often.
+		if !msg.IsString || len(msg.Data) > captions.MaxMessage || l.closed.Load() || !l.capLimit.take(time.Now()) {
+			return
+		}
+		e.emit(proto.CaptionPeer{T: "caption", Peer: l.peer, Data: string(msg.Data)})
+	})
+
+	no, zero, id := false, uint16(0), uint16(llChannelID)
 	dc, err := pc.CreateDataChannel("pv-audio", &webrtc.DataChannelInit{Negotiated: &yes, ID: &id, Ordered: &no, MaxRetransmits: &zero})
 	if err != nil {
 		_ = pc.Close()
@@ -369,6 +391,32 @@ func (l *link) sendLL(buf []byte) {
 		return
 	}
 	_ = l.dc.Send(buf)
+}
+
+// sendCaption: our words, unless the channel's backed up (someone's connection has stalled).
+func (l *link) sendCaption(msg []byte) {
+	if !l.up.Load() || l.capDC == nil || l.capDC.ReadyState() != webrtc.DataChannelStateOpen || l.capDC.BufferedAmount() > 64*1024 {
+		return
+	}
+	_ = l.capDC.SendText(string(msg))
+}
+
+// tokenBucket: rate a second, bursts of burst. One goroutine (a channel's).
+type tokenBucket struct {
+	rate, burst, tokens float64
+	at                  time.Time
+}
+
+func (b *tokenBucket) take(now time.Time) bool {
+	if !b.at.IsZero() {
+		b.tokens = min(b.burst, b.tokens+now.Sub(b.at).Seconds()*b.rate)
+	}
+	b.at = now
+	if b.tokens < 1 {
+		return false
+	}
+	b.tokens--
+	return true
 }
 
 func (l *link) receive(buf []byte) {

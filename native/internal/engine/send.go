@@ -56,6 +56,8 @@ type sender struct {
 	// made for (so one that wouldn't start isn't retried every block).
 	chain    *dsp.Chain
 	chainFor dsp.Settings
+	// Live captions: the ring's level, from the last block processing gave back.
+	capLevel float32
 }
 
 func (s *sender) run() {
@@ -67,6 +69,10 @@ func (s *sender) run() {
 		pcm := b.pcm
 		if p := s.e.processing.Load(); p != nil || s.chain != nil {
 			b = s.process(b, p)
+		}
+		// Live captions: one atomic load while they're off (or you're muted).
+		if s.e.captions.on.Load() && !t.muted {
+			s.tapCaptions(pcm, b.pcm)
 		}
 		s.feedLL(b, t)
 		s.e.capFree <- pcm
@@ -102,6 +108,29 @@ func (s *sender) process(b capBlock, p *dsp.Settings) capBlock {
 	raiseLevel(&s.e.selfLevel, rms(out))
 	back := int64(s.chain.Delay() + len(out) - len(b.pcm))
 	return capBlock{ts: b.ts - back, inMs: b.inMs - float64(back)*1000/audio.SampleRate, pcm: out}
+}
+
+// captionInput is what live captions hear of a mic block: the raw block,
+// or, with echo cancellation on, the echo canceller's output (before noise
+// suppression and gain), which on speakers is the difference between
+// captioning you and captioning everyone you can hear. Nothing is copied
+// here: either slice is only lent.
+func (s *sender) captionInput(raw []float32) []float32 {
+	if s.chain != nil {
+		if out := s.chain.EchoOut(); out != nil {
+			return out
+		}
+	}
+	return raw
+}
+
+// tapCaptions hands captions their audio, and the level the ring goes by
+// (the mic after all its processing, as the page's ring sees it).
+func (s *sender) tapCaptions(raw, processed []float32) {
+	if len(processed) > 0 {
+		s.capLevel = capLevel(processed)
+	}
+	s.e.captions.tap(s.captionInput(raw), s.capLevel)
 }
 
 func (s *sender) setChain(p *dsp.Settings) {
