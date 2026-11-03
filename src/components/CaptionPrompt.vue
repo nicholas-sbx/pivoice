@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
+import { call } from '../call'
 import { captions, acceptDownload, declineDownload } from '../captions/state'
 import { modelOf } from '../captions/models'
 import Icon from './Icon.vue'
@@ -14,6 +15,11 @@ import Icon from './Icon.vue'
  * on purpose. Voices go as raw PCM with no codec, which is what keeps the
  * delay this low (see the README, "Bigger rooms" and "Why no Opus"), at
  * about 1 Mbit/s each way per person while they talk.
+ *
+ * Then, in the same place, the download itself: a bar that comes up as soon
+ * as it starts (by itself, or after "Download"), stays while the model is
+ * made ready, and goes once captions are. Its X only hides it; the download
+ * carries on. A model that was already here never shows it.
  */
 
 const p = computed(() => captions.prompt)
@@ -25,6 +31,37 @@ const why = computed(() =>
 )
 /** Maybe on data: say what calls cost too. */
 const onData = computed(() => !!p.value?.network)
+
+// ---- the download, once it's going ----
+
+/** Downloading this call (so "getting it ready" after it, and an error from it, show; a model already here doesn't). */
+const fetching = ref(false)
+const hidden = ref(false)
+watch(
+  () => captions.model.phase,
+  phase => {
+    if (phase === 'downloading' && !fetching.value) {
+      fetching.value = true
+      hidden.value = false
+    } else if (phase === 'ready' || phase === 'off' || phase === 'checking') fetching.value = false
+  },
+  { immediate: true }
+)
+const phase = computed(() => captions.model.phase)
+const showProgress = computed(() => !p.value && fetching.value && !hidden.value && ['downloading', 'loading', 'error'].includes(phase.value))
+const modelTitle = computed(() => modelOf(call.prefs.captions.model)?.title ?? 'the captions model')
+const fraction = computed(() => {
+  if (phase.value === 'loading') return 1
+  const { bytes, total } = captions.model
+  return total > 0 ? Math.min(1, bytes / total) : 0
+})
+const mb = (n: number) => (n / 1e6).toFixed(n < 1e7 ? 1 : 0)
+const progressText = computed(() => {
+  const m = captions.model
+  if (phase.value === 'loading') return `Downloaded ${modelTitle.value}. Getting live captions ready…`
+  if (phase.value === 'error') return `Couldn't get ${modelTitle.value} for live captions: ${m.error}`
+  return `Downloading ${modelTitle.value} for live captions: ${mb(m.bytes)} of ${mb(m.total)} MB`
+})
 </script>
 
 <template>
@@ -38,6 +75,23 @@ const onData = computed(() => !!p.value?.network)
     </span>
     <button type="button" class="get" @click="acceptDownload">Download</button>
     <button type="button" class="x" aria-label="Not now" title="Not now" @click="declineDownload">
+      <Icon name="close" :size="18" />
+    </button>
+  </div>
+  <div v-else-if="showProgress" class="banner progress" :class="{ bad: phase === 'error' }" role="region" aria-label="Captions download">
+    <span class="text" aria-live="polite">{{ progressText }}</span>
+    <div
+      v-if="phase !== 'error'"
+      class="track"
+      role="progressbar"
+      aria-label="Captions download"
+      aria-valuemin="0"
+      aria-valuemax="100"
+      :aria-valuenow="Math.round(fraction * 100)"
+    >
+      <div class="fill" :class="{ done: phase === 'loading' }" :style="{ transform: `scaleX(${fraction})` }" />
+    </div>
+    <button type="button" class="x" aria-label="Hide" :title="phase === 'error' ? 'Close' : 'Hide (it carries on downloading)'" @click="hidden = true">
       <Icon name="close" :size="18" />
     </button>
   </div>
@@ -87,6 +141,35 @@ const onData = computed(() => !!p.value?.network)
 }
 .get:hover {
   background: var(--brand-hover);
+}
+/* The download's bar: flat, a hard-edged track and its fill, no gradients. */
+.progress {
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 7px;
+  padding-bottom: 8px;
+}
+.track {
+  width: min(420px, 100%);
+  height: 4px;
+  border-radius: 2px;
+  background: var(--bg-accent);
+  overflow: hidden;
+}
+.fill {
+  height: 100%;
+  background: var(--brand);
+  transform-origin: left center;
+  transition: transform 0.15s linear;
+}
+.fill.done {
+  background: var(--green);
+}
+.progress .text {
+  font-variant-numeric: tabular-nums;
+}
+.progress.bad .text {
+  color: var(--red);
 }
 .x {
   position: absolute;

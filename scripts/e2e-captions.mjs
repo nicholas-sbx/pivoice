@@ -30,6 +30,7 @@ const SPEECH = fileURLToPath(new URL('../tests/fixtures/speech.wav', import.meta
 const ROOT = fileURLToPath(new URL('..', import.meta.url))
 const DIGITS = /\b(zero|one|two|three|four|five|six|seven|eight|nine|oh|no)\b/i
 const BIN = process.env.NATIVE_BIN ?? `${ROOT}/native/pivoice`
+const SHOTS = process.env.SHOTS_DIR ?? ''
 /** The app, once it's started (see theApp). */
 let app = null
 
@@ -42,8 +43,13 @@ const base = ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-str
 const quiet = await chromium.launch({ args: base })
 const speaking = await chromium.launch({ args: [...base, `--use-file-for-fake-audio-capture=${SPEECH}`] })
 
-async function open(browser, name, prefs, code = '', url = '') {
+async function open(browser, name, prefs, code = '', url = '', { slowModel = false } = {}) {
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 860 }, permissions: ['microphone'] })
+  // A slower connection for the model's parts, so its download (and the bar for it) can be seen.
+  if (slowModel) await ctx.route(/\/captions\/.*\.\d+$/, async r => {
+    await new Promise(res => setTimeout(res, 1500))
+    await r.continue()
+  })
   const page = await ctx.newPage()
   await page.addInitScript(p => localStorage.setItem('pv.prefs', JSON.stringify(p)), prefs)
   page.on('pageerror', e => console.error(`[${name}] page error:`, e.message))
@@ -79,8 +85,20 @@ try {
   const alice = await open(quiet, 'Alice', { name: 'Alice', captions: { send: false } })
   await alice.click('button[aria-label="Show room code"]')
   const code = (await alice.textContent('.bar .code-text')).trim()
-  const bob = await open(speaking, 'Bob', { name: 'Bob' }, code)
+  const bob = await open(speaking, 'Bob', { name: 'Bob' }, code, '', { slowModel: true })
   ok(`Alice and Bob in room ${code}; Bob's mic is someone reading digits`)
+
+  // The model downloads by itself (a computer, not on data), with a bar under the top bar while it does.
+  await bob.waitForSelector('.banner.progress .track', { timeout: 60_000 }).catch(() => {
+    throw new Error('no download bar while the model downloaded')
+  })
+  await bob.waitForFunction(() => Number(document.querySelector('.banner.progress [role="progressbar"]')?.getAttribute('aria-valuenow')) > 0, null, { timeout: 60_000 })
+  ok('Bob: ' + (await bob.$eval('.banner.progress .text', e => e.textContent.trim())) + ` (${await bob.$eval('.banner.progress [role="progressbar"]', e => e.getAttribute('aria-valuenow'))}%)`)
+  if (SHOTS) await bob.screenshot({ path: `${SHOTS}/captions-download.png`, clip: { x: 0, y: 0, width: 1280, height: 140 } })
+  await bob.waitForSelector('.banner.progress', { state: 'detached', timeout: 180_000 }).catch(() => {
+    throw new Error('the download bar stayed after captions were ready')
+  })
+  ok('Bob: the download bar went once captions were ready')
 
   // Bob's settings say what his captions hear and how the model's getting on.
   await settingsTab(bob)

@@ -105,15 +105,22 @@ export function run(make: MakeRecogniser) {
       const total = downloadBytes({ ...manifest, files: todo })
       status({ phase: 'needed', bytes: 0, total })
       if (!downloadAsked) await new Promise<void>(resolve => (allowDownload = resolve))
+      // Progress for the page's bar: a few times a second, not every chunk read.
       let done = 0
+      let saidAt = 0
+      status({ phase: 'downloading', bytes: 0, total })
       for (const f of todo) {
         const before = done
         await downloadFile(base, m, f, got => {
           done = before + got
+          const now = performance.now()
+          if (now - saidAt < 150) return
+          saidAt = now
           status({ phase: 'downloading', bytes: done, total })
         })
         done = before + f.parts.reduce((n, p) => n + p.size, 0)
       }
+      status({ phase: 'downloading', bytes: done, total })
     }
     status({ phase: 'loading', bytes: 0, total: 0 })
     const files = new Map<string, ArrayBuffer>()
