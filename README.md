@@ -31,6 +31,8 @@ npm install
 npm run dev          # the app on :5173 and the Worker (rooms included) on :8787
 npm run e2e          # optional, in another terminal: headless Chromium tabs with fake mics, end to end
 npm run e2e:native   # optional: the app, headless on a fake sound card, with people on the website (build it first, see The app)
+npm run captions:models   # once, for live captions locally: the speech models, into public/captions/ (143 MB)
+npm run e2e:captions      # optional: someone reading digits into a fake mic, captioned beside them on another screen
 ```
 
 Open it in two browsers (or two profiles), make a room in one and join with
@@ -158,6 +160,13 @@ and its jitter buffer grows to cover the stall (p90 mouth to ear went from
 over its data channel, and everything else from the engine. The
 mouth-to-ear figure is measured where it can be (see below), and an
 estimate (`≈`) where it can't. Hover the estimate for what each part means.
+
+**Live captions.** On by default. Everyone captions themselves, on their own device, and
+the words go to everyone else, beside their seat at the table (on the side
+facing the middle, running toward it, so they stay on screen) or in their tile on a phone. Two
+recognisers, both on the CPU: **Vosk** (the default) and **Parakeet**. The
+model downloads the first time it's wanted and is kept; on mobile data you're
+asked first. See [Live captions](#live-captions).
 
 **Voice settings.** Input and output device, an input level meter,
 spatial audio (**Off**, **Stereo**, **HRTF**; in the app **Binaural**
@@ -448,7 +457,10 @@ out to be the limit, Opus can come back, but not as it was:
   already sandboxed with the page.
 
 The C that's left in the app (PortAudio, RNNoise, SpeexDSP) only ever
-sees your own sound card's audio.
+sees your own sound card's audio. So do live captions' recognisers (libvosk,
+sherpa-onnx and ONNX Runtime), and the model files they read are pinned by
+hash; they run in a process of their own, not the app's (see
+[Live captions](#live-captions)).
 
 ## The app
 
@@ -764,7 +776,10 @@ dealt with; if it still happens, the counters say which it was:
   this machine's (names aren't looked up to check), and `--url` must be
   https unless it's this machine.
 - On Windows, DLLs are only loaded from System32, never the folder the
-  exe is in (people run it from Downloads).
+  exe is in (people run it from Downloads). The one exception is live
+  captions' recognisers, which the captions helper (never the app itself)
+  loads by full path from your own cache folder, only after each one's
+  SHA-256 matches the pin compiled into the app.
 
 **Two versions.** The site is `package.json`'s version, the app is
 [`native/VERSION`](native/VERSION), and they release separately. What
@@ -825,6 +840,191 @@ send.
 direction left to right, not up and down); Linux on ARM; macOS releases
 (it builds, but CI has it switched off); signing (Windows warns before the
 first run).
+
+## Live captions
+
+Each of us captions ourselves, on our own machine, and sends the words to
+everyone over the peer connection: a second data channel beside the audio's
+(stream 43, ordered and reliable, so a finished phrase always arrives). Your
+audio never leaves your device for it; only the words do. Nobody's captions
+pass through the room's server either.
+
+### Two recognisers, both on the CPU
+
+| | What | Download | In a browser | In the app |
+| --- | --- | --- | --- | --- |
+| **Vosk** (default) | Kaldi, `vosk-model-small-en-us-0.15` (Alpha Cephei, Apache 2.0). Streaming: words appear as they're said, and it ends a phrase at a pause by itself. | 43 MB | [vosk-browser](https://github.com/ccoreilly/vosk-browser)'s WebAssembly build, in a worker | libvosk 0.3.45, Vosk's own release |
+| **Parakeet** | NVIDIA NeMo `parakeet-tdt_ctc-110m`, its CTC branch, int8 (CC BY 4.0; ONNX export by k2-fsa/sherpa-onnx). With punctuation and capitals. Hears a phrase whole. | 100 MB | ONNX Runtime Web's WebAssembly CPU backend, one thread, in a worker | sherpa-onnx 1.13.8 with its ONNX Runtime |
+
+Nothing asks for a GPU: every build is the CPU one, and the browser never
+asks for WebGPU or WebGL, so a machine without a graphics card captions like
+any other. Nothing switches models by itself either; you choose in **Voice
+Settings → Captions**. The catalog ([`src/captions/models.json`](src/captions/models.json),
+copied to [`native/internal/asr`](native/internal/asr) and tested to match)
+leaves room for more.
+
+Parakeet hears a phrase at a time, so its live words are the phrase so far
+read again (every 1 s of speech by default, skipped while it's behind), and
+a phrase longer than 15 s is finished there and a new one started, since each
+read costs more the longer the phrase is. In headless Chromium on one core it
+read at 0.06× real time (`npm run e2e:captions`).
+
+In a browser, Parakeet's features (log-mel, 80 bins) are computed in
+TypeScript ([`src/captions/fbank.ts`](src/captions/fbank.ts)) the way
+sherpa-onnx computes them for NeMo models in the app (kaldi-native-fbank
+1.22.3 in its librosa mode, NeMo's per-feature normalisation), checked
+against a plain direct-DFT reading of the same steps, and greedy CTC over
+ONNX Runtime's output is sherpa-onnx's.
+
+### What it hears
+
+Your mic with none of the noise suppression or automatic gain the call uses,
+the browser's or the app's, so the recogniser gets all of your voice. One
+exception: **echo cancellation**. If you have it on, captions hear the
+echo-cancelled mic (and still no noise suppression or gain). Someone with
+echo cancellation on is probably on speakers, and the raw mic would hear
+everyone else coming out of them and caption you saying their words.
+
+- **In the app**, echo cancellation is the first stage of the same chain as
+  noise suppression and gain ([`native/internal/dsp/chain.go`](native/internal/dsp/chain.go)).
+  Captions take the block before the chain, or with echo cancellation on,
+  the echo canceller's output before noise suppression (`Chain.EchoOut`, a
+  view of the chain's own buffer: nothing copied, nothing allocated). Tested
+  both ways: echo-cancelled and not noise-suppressed with it on, the raw
+  block with it off.
+- **In a browser**, the call's capture already is what captions want when
+  its only processing is echo cancellation (or it has none); then captions
+  use it. Otherwise they open a second capture of the same mic with echo
+  cancellation as the call has it and noise suppression and gain off, and
+  keep it only if `getSettings()` says that's what the browser gave. Chrome
+  shares one capture of a device between everyone asking with the same
+  echo cancellation, so that can come back processed; it then tries the
+  same mic by its own name rather than as "default". Failing that (and on
+  Safari and phones, which can't capture twice without disturbing the call)
+  captions hear the call's capture, processed. **Voice Settings → Captions**
+  says which it got, and what the browser says it has on.
+
+What decides *when* is your ring: the level of the mic as the call hears it,
+as the ring on screen goes by.
+
+### When: only while your ring is lit
+
+The recogniser hears you between your ring lighting and going out (the full
+green ring, −40 dBFS with its 300 ms hold), plus a little either side: the
+last **200 ms** before it lit, kept all the time and recognised in a burst
+the moment it lights (faster than real time), and **200 ms** after it goes
+out. Then the phrase is finished and the recogniser is given nothing until
+your ring lights again. A ring that relights in the post-roll carries on the
+same phrase. The gate ([`src/captions/gate.ts`](src/captions/gate.ts),
+[`native/internal/captions/gate.go`](native/internal/captions/gate.go)) is
+the same in both, held to the same test cases.
+
+That's privacy (what noise suppression kept out of the call stays out of the
+captions), and it's the CPU: **the recogniser does no work at all outside a
+segment**. No Vosk calls, no Parakeet reads or re-reads, not a timer. The
+only always-on work while captions listen is keeping the pre-roll (a copy of
+each block into a buffer made once) and the level check. With captions off,
+or while you're muted (or deafened, or alone without **Show My Own**), the
+gate is off completely: the browser's worklet returns at once, and the app's
+sender looks at one flag.
+
+### Where it runs
+
+- **In a browser**: a worklet beside the call's (the gate, on the audio
+  thread, allocating nothing), sending what it lets through over shared
+  memory to the recogniser's worker (48 → 16 kHz there, a 95-tap Kaiser
+  low-pass, then Vosk or Parakeet). The call's audio path isn't touched, and
+  none of it is loaded until captions start.
+- **In the app**: natively, never through the webview. The sender goroutine
+  hands each mic block to a gate goroutine (no allocation, never a wait;
+  tested), which decimates and queues segment audio for the recogniser,
+  which runs in **a process of its own**: the app's binary again,
+  `pivoice --captions-helper`, with pipes ([`native/internal/asr`](native/internal/asr)).
+  The recognisers' libraries are only ever loaded there, so none of their
+  code, threads or memory is in the audio process; a crash in one costs
+  the captions, not the call (it's restarted the next time); and it runs at
+  normal priority while the audio thread is realtime. On Linux it asks to
+  be the first thing ended if memory runs out, and dies with the app. Its
+  threads are capped (**CPU threads**, 2 by default, OpenBLAS's included).
+
+### Getting the models (and, in the app, the recognisers)
+
+Nothing is shipped with anything. The first time a model is wanted:
+
+- **The website** fetches it from the site itself (`/captions/<model>/`,
+  where [`scripts/captions-models.mjs`](scripts/captions-models.mjs) put it
+  at release: fetched from its publisher, checked, gzipped where that saves
+  10%, in parts of at most 24 MiB for Workers static assets), checks each
+  file against the SHA-256 pinned in `models.json`, and keeps it in Cache
+  Storage under a key with that hash in it. It's checked again each time
+  it's loaded, before WebAssembly parses it.
+- **On mobile data it asks first.** The Network Information API says what
+  kind of connection it is where there is one (Chrome on Android, and
+  Save-Data in Chromium); on a phone or tablet that won't say (Safari,
+  Firefox) it asks too, and on a computer that won't say it goes ahead.
+  "Not now" holds off for that call; moving to Wi-Fi meanwhile starts it.
+  When it asks because of mobile data, it also says that calls themselves
+  use a lot of data, on purpose: uncompressed voices are what keep the delay
+  this low, about 1 Mbit/s each way per person while they talk (see
+  [Bigger rooms](#bigger-rooms)). Captions are on by default; that question
+  is the one thing that holds them back.
+  **Download** in the settings: *Not on data* (the default), *Always ask*,
+  or *Always*.
+- **The app** keeps models and recognisers in your cache folder
+  (`~/.cache/pivoice/captions` on Linux, `%LocalAppData%\pivoice\captions`
+  on Windows, only you can read it): the models from the same site parts
+  as the website, the recognisers from their makers' GitHub releases
+  (Vosk's `vosk-*-0.3.45.zip`, sherpa-onnx's `*-shared*.tar.bz2` for
+  1.13.8). Each archive's SHA-256 is pinned in the app and checked before
+  it's opened, each library and model file in it too, and nothing is
+  written into place until it matches; the helper checks every file again
+  before it loads it. Downloads are HTTPS only. Windows paths with accents
+  go to the libraries as 8.3 short names (they open files with narrow
+  paths). **Remove downloaded copy** in the settings deletes the model, and
+  it isn't fetched again by itself until you ask or your next call (turn
+  off **Caption Me** to keep it off).
+
+### Safe to run in a browser
+
+The site's Content Security Policy gains one thing, `'wasm-unsafe-eval'`
+(our own scripts may compile WebAssembly). No `eval`, no blob: workers:
+vosk-browser ships its worker as a base64 blob whose glue writes functions
+with `new Function` (embind), so [`scripts/vosk-glue.ts`](scripts/vosk-glue.ts)
+takes the glue out of the pinned release (checked by hash) at build time,
+replaces those three function-writers with closures that do the same, and
+refuses to build if anything else would write code at run time. ONNX Runtime
+Web needs nothing more.
+
+Everyone else's captions are someone else's input: each message is at most
+2 KB of JSON, checked field by field, its text stripped of control and
+direction-changing characters and held to 400 characters, at most 25 a
+second from anyone (the app holds them to the same before the page sees
+them), and shown as text.
+
+### Settings (Voice Settings → Captions), all live
+
+| Setting | Default | What it does |
+| --- | --- | --- |
+| Caption Me | On | Recognise you and send the words. |
+| Show Captions / Show My Own | On / On | Everyone else's beside them; yours beside you. |
+| Recogniser | Vosk | Vosk or Parakeet (another one starts the recogniser again). |
+| Download | Not on data | When the model may download without asking. |
+| What It Hears (browser) | Unprocessed | Its own capture as above, or the call's own capture, processed. |
+| Before the ring / After the ring | 200 / 200 ms | Pre-roll and post-roll. |
+| Words as you say them | On | Live words, or only finished phrases. |
+| Updates a second (Vosk) | 8 | The most live updates a second. |
+| Leave out unsure words (Vosk) | Off | Finished phrases drop words below this confidence. |
+| Read again every (Parakeet) | 1000 ms | How often the phrase so far is read again for live words. |
+| Longest phrase (Parakeet) | 15 s | Finished and started again past this. |
+| CPU threads (app) | 2 | The recogniser's threads. |
+| Lines / Size / Stay up for | 2 / 100% / 6 s | How captions are shown. |
+
+The tab also shows what it's hearing (and why), how the model's getting on,
+and how hard the recogniser works (× real time).
+
+**Not done yet:** captions in the pop-out table and the app's overlay; other
+languages (the catalog takes more models); Parakeet's bigger 0.6B model
+(482 MB), which would suit the app better than a browser.
 
 ## Rooms: a Durable Object each
 
@@ -994,8 +1194,9 @@ and how to run each. Each file has the version in its name
 which the site's download buttons build from `native/VERSION` (they don't
 link the Flatpak yet). The Flatpak's sandbox has the network, PipeWire or
 PulseAudio and the display, and no file access at all: the app's own code
-never opens a file; the audio thread goes realtime through the Realtime
-portal there. CI installs the bundle and checks that every library the
+never opens a file outside its own cache folder (live captions keep their
+models and recognisers there, `~/.var/app/…/cache`); the audio thread goes
+realtime through the Realtime portal there. CI installs the bundle and checks that every library the
 binary links is in the runtime. Its overlay can't stay on top or let
 clicks through yet, since the runtime has no gtk-layer-shell. macOS is switched off for now (its runners can queue
 for a long time): uncomment its entry in the build matrix to bring it back,
@@ -1041,6 +1242,8 @@ src/
   audio/        engine: mic, per-person channel strips, panning, speaking detection
   audio/ll/     the low-latency engine: worklets (capture, playback), worker
                 (silence gate, packets, network), jitter buffer, shared-memory ring, packet format, settings
+  captions/     live captions: the gate (worklet), the recognisers' workers (Vosk, Parakeet:
+                features and CTC), the model catalog and cache, the wire format, everyone's captions
   components/   round table, its miniature for the pop-out and the overlay, call control
                 buttons, settings, user menu, icons
   overlay/      the app's overlay page (overlay.html): only the table, drawn from what the app sends
@@ -1050,12 +1253,14 @@ src/
   call.ts       the call as reactive state, and everything the UI can do to it
   pip.ts        the pop-out window (Document Picture-in-Picture)
 worker/         the Cloudflare Worker: static assets, the rooms (a Durable Object each), /api/ice
-scripts/        dev (app + Worker), e2e runs (website, and the app with the website)
+scripts/        dev (app + Worker), e2e runs (website, captions, and the app with the website),
+                the captions models for the site, Vosk's glue for our CSP
 tests/          unit tests
 native/         the app (Go): main and the window, and in internal/: audio (the PortAudio
                 duplex stream, a fake one), rt (realtime priority for its thread),
                 engine (mixer, sending, pion links, stats, the speaker buffer), dsp
                 (echo cancellation, noise suppression, gain), ll (packets and jitter buffer,
                 ported), bridge, proto (the bridge's messages), overlay (its window
-                on each desktop, and the rings)
+                on each desktop, and the rings), captions (the gate and decimator,
+                ported), asr (recognisers: downloads, the helper process, the C)
 ```

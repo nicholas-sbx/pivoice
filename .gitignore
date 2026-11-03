@@ -23,3 +23,6 @@ native/dist
 native/flatpak/pivoice
 native/flatpak/*.flatpak
 native/flatpak/.flatpak-builder
+
+# Live captions: the speech model (scripts/captions-model.mjs fetches it)
+public/captions/

@@ -38,6 +38,8 @@ npm run typecheck:worker
 npm run dev               # site + Worker, for the e2e runs
 npm run e2e               # Chromium tabs in rooms, a phone included
 npm run e2e:native        # the app headless with the site (build it first)
+npm run captions:models   # the captions' speech models into public/captions/ (once)
+npm run e2e:captions      # a speaking fake mic, captioned on another screen (Vosk, then Parakeet)
 ```
 
 The app (`native/`):
@@ -58,4 +60,10 @@ built and deployed from `main`, so run its checks yourself before merging.
 - Nothing on the audio thread allocates (tests hold the mixer and the
   processing chain to zero).
 - Optional processing costs nothing while it's off.
+- Live captions: the recogniser does nothing outside a segment (the ring lit,
+  plus pre-roll and post-roll), hears the mic before noise suppression and gain
+  (after echo cancellation when that's on), runs on the CPU only, and in the
+  app only ever in its helper process. Their models are pinned in
+  `src/captions/models.json` (copied to `native/internal/asr/models.json`;
+  a test checks they match).
 - Phones: nothing may run past the screen's edge; the e2e run's phone measures it.

@@ -45,6 +45,47 @@ export interface MicSettings {
 
 export type MicProblem = 'denied' | 'missing' | 'failed' | null
 
+/** What a capture has on, as the browser reports it (null: it doesn't say). */
+export interface HeardSettings {
+  echoCancellation: boolean | null
+  noiseSuppression: boolean | null
+  autoGainControl: boolean | null
+}
+
+/** Captions' audio (AudioEngine.captionSources): what they hear, what the ring goes by, and why. */
+export interface CaptionSources {
+  raw: AudioNode
+  ring: AudioNode
+  /** A capture that's what captions want ('own', the call's own when that already is), or the call's, processed ('call'). */
+  kind: 'own' | 'call'
+  heard: HeardSettings
+  note: string
+}
+
+function heardOf(t: MediaStreamTrack | undefined): HeardSettings {
+  const g = t?.getSettings()
+  const b = (v: unknown) => (typeof v === 'boolean' ? v : null)
+  return { echoCancellation: b(g?.echoCancellation), noiseSuppression: b(g?.noiseSuppression), autoGainControl: b(g?.autoGainControl) }
+}
+
+export function describeHeard(h: HeardSettings): string {
+  const one = (v: boolean | null, name: string) => `${name} ${v === null ? 'unknown' : v ? 'on' : 'off'}`
+  return [one(h.echoCancellation, 'echo cancellation'), one(h.noiseSuppression, 'noise suppression'), one(h.autoGainControl, 'auto gain')].join(', ')
+}
+
+/**
+ * Can this browser open the mic a second time, with different processing,
+ * without disturbing the first? Chromium and Firefox on a computer can.
+ * Safari and phones are left alone: iOS ends the first capture when a
+ * second one starts, which would end the call's mic.
+ */
+function canCaptureTwice(): boolean {
+  if (typeof navigator === 'undefined') return false
+  const ua = navigator.userAgent
+  if (/android|iphone|ipad|ipod|mobile/i.test(ua) || (/macintosh/i.test(ua) && navigator.maxTouchPoints > 1)) return false
+  return !/^((?!chrome|chromium|crios|edg|firefox|fxios).)*safari/i.test(ua)
+}
+
 interface Remote {
   /** The low-latency engine's playback node for them. */
   ll: AudioNode | null
@@ -74,6 +115,12 @@ export class AudioEngine {
   private angles = new Map<string, number>()
   private buf = new Float32Array(1024)
   private activityOf = new ActivityTracker()
+  /** Captions' own capture of the mic, with no processing (see captionSources). */
+  private rawMic: { stream: MediaStream; source: MediaStreamAudioSourceNode } | null = null
+  private rawMicNote = ''
+  /** Bumped whenever captions' capture is let go: one that lands after that isn't kept. */
+  private rawGen = 0
+  private settings: MicSettings | null = null
 
   constructor(buffer: OutputBuffer = 'min') {
     // Created from a click, so it starts running. A latency hint of 0 asks
@@ -94,6 +141,9 @@ export class AudioEngine {
     if (this.ctx.state === 'suspended') void this.ctx.resume()
     let stream: MediaStream | null = null
     this.micProblem = null
+    this.settings = settings
+    // Captions' capture follows the call's device: made again when asked for.
+    this.closeRawMic()
     const audio = (deviceId: string): MediaTrackConstraints =>
       ({
         deviceId: deviceId ? { exact: deviceId } : undefined,
@@ -135,6 +185,98 @@ export class AudioEngine {
       if (this.rawLoop) source.connect(this.testOut)
     }
     this.onMic?.(source)
+  }
+
+  /**
+   * What live captions hear, and what decides when (the ring's level: the
+   * call's capture, as the ring on screen goes by).
+   *
+   * Captions want the mic with none of the browser's noise suppression or
+   * auto gain, so the recogniser gets all of your voice. Echo cancellation
+   * is the one exception: if the call has it on, captions want it on too,
+   * since you're probably on speakers and the raw mic would hear everyone
+   * else and caption you saying their words. So:
+   *
+   *  - the call's capture already is that (echo cancellation as the call
+   *    has it, the other two off): captions use it;
+   *  - otherwise, if `want` is 'raw' and this browser can, a second capture
+   *    of the same device with just that, kept only if getSettings() says
+   *    the browser really gave it;
+   *  - failing that, the call's capture, processed.
+   *
+   * `heard` is what the browser says the captions' capture has on, for the
+   * settings to show.
+   */
+  async captionSources(want: 'raw' | 'call'): Promise<CaptionSources | null> {
+    const mic = this.mic
+    const s = this.settings
+    if (!mic || !s) return null
+    const ec = s.echoCancellation
+    const callTrack = mic.stream.getAudioTracks()[0]
+    const fits = (t: MediaStreamTrack | undefined) => {
+      const g = t?.getSettings()
+      return !!g && g.echoCancellation === ec && g.noiseSuppression === false && g.autoGainControl === false
+    }
+    const call = (note: string): CaptionSources => ({ raw: mic.source, ring: mic.source, kind: 'call', heard: heardOf(callTrack), note })
+    if (fits(callTrack)) return { raw: mic.source, ring: mic.source, kind: 'own', heard: heardOf(callTrack), note: "the call's own capture already has nothing captions don't want" }
+    if (want === 'call') return call('as asked: the call’s capture')
+    if (!canCaptureTwice()) return call('this browser can’t open the mic twice without disturbing the call (Safari, phones)')
+    if (this.rawMic) return { raw: this.rawMic.source, ring: mic.source, kind: 'own', heard: heardOf(this.rawMic.stream.getAudioTracks()[0]), note: this.rawMicNote }
+    const open = async (deviceId: string | undefined): Promise<MediaStream | HeardSettings> => {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { deviceId: deviceId ? { exact: deviceId } : undefined, echoCancellation: ec, noiseSuppression: false, autoGainControl: false, channelCount: 1 }
+      })
+      const track = stream.getAudioTracks()[0]
+      if (fits(track) && callTrack?.readyState === 'live') return stream
+      const got = heardOf(track)
+      for (const t of stream.getTracks()) t.stop()
+      return got
+    }
+    const callSettings = callTrack?.getSettings()
+    const gen = this.rawGen
+    try {
+      // Chrome shares one capture of a device between everyone who asks with
+      // the same echo cancellation, so this can come back with the call's
+      // noise suppression and gain on.
+      let got = await open(callSettings?.deviceId)
+      let note = 'a capture of its own'
+      // Then the same microphone by its own name rather than as "default":
+      // to Chrome, another device, so a capture of its own.
+      if (!(got instanceof MediaStream) && (!callSettings?.deviceId || callSettings.deviceId === 'default')) {
+        const same = (await navigator.mediaDevices.enumerateDevices()).find(
+          d => d.kind === 'audioinput' && d.groupId && d.groupId === callSettings?.groupId && d.deviceId !== 'default' && d.deviceId !== 'communications'
+        )
+        if (same) {
+          const again = await open(same.deviceId)
+          if (again instanceof MediaStream) note = 'a capture of its own, of the same mic by its own name (Chrome shared "default" with the call)'
+          got = again
+        }
+      }
+      // Stale (the mic changed, captions stopped) or beaten to it by another call: let this one go.
+      if (this.mic !== mic || gen !== this.rawGen || this.rawMic) {
+        if (got instanceof MediaStream) for (const t of got.getTracks()) t.stop()
+        if (this.mic !== mic || gen !== this.rawGen) return null
+        const r = this.rawMic!
+        return { raw: r.source, ring: mic.source, kind: 'own', heard: heardOf(r.stream.getAudioTracks()[0]), note: this.rawMicNote }
+      }
+      if (!(got instanceof MediaStream)) {
+        return call(`the browser didn’t give a capture with ${describeHeard({ echoCancellation: ec, noiseSuppression: false, autoGainControl: false })} (it gave ${describeHeard(got)}: it shares the call’s)`)
+      }
+      this.rawMic = { stream: got, source: this.ctx.createMediaStreamSource(got) }
+      this.rawMicNote = note
+      return { raw: this.rawMic.source, ring: mic.source, kind: 'own', heard: heardOf(got.getAudioTracks()[0]), note }
+    } catch (e) {
+      return this.mic === mic ? call(`a second capture failed (${(e as DOMException)?.name ?? 'error'})`) : null
+    }
+  }
+
+  /** Captions are done with their capture. */
+  closeRawMic() {
+    this.rawGen++
+    if (!this.rawMic) return
+    this.rawMic.source.disconnect()
+    for (const t of this.rawMic.stream.getTracks()) t.stop()
+    this.rawMic = null
   }
 
   /** Told about every new microphone source (null when there's none), for the low-latency engine. */
@@ -328,6 +470,7 @@ export class AudioEngine {
     }
     for (const t of this.mic?.stream.getTracks() ?? []) t.stop()
     this.mic = null
+    this.closeRawMic()
     void this.ctx.close().catch(() => {})
   }
 }

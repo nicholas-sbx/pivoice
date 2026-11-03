@@ -107,6 +107,35 @@ type Config struct {
 	BufferMs   float64 `json:"bufferMs"`
 	// What the app does to the mic before it goes out (all off: nothing at all).
 	Processing Processing `json:"processing"`
+	// Live captions (a page from before them sends none: captions off).
+	Captions *Captions `json:"captions,omitempty"`
+}
+
+// Captions is AppCaptions in src/native/protocol.ts.
+type Captions struct {
+	Send           bool    `json:"send"`
+	Model          string  `json:"model"`
+	ShowOwn        bool    `json:"showOwn"`
+	PreMs          float64 `json:"preMs"`
+	PostMs         float64 `json:"postMs"`
+	Partials       bool    `json:"partials"`
+	PartialsPerSec float64 `json:"partialsPerSec"`
+	RereadMs       float64 `json:"rereadMs"`
+	MaxPhraseSec   float64 `json:"maxPhraseSec"`
+	MinConfidence  float64 `json:"minConfidence"`
+	Threads        int     `json:"threads"`
+}
+
+// Sanitize keeps captions' settings to the page's ranges (CAPTION_RANGES in src/captions/config.ts).
+func (c Captions) Sanitize() Captions {
+	c.PreMs = clamp(c.PreMs, 0, 1000, 200)
+	c.PostMs = clamp(c.PostMs, 0, 2000, 200)
+	c.PartialsPerSec = clamp(c.PartialsPerSec, 1, 20, 8)
+	c.RereadMs = clamp(c.RereadMs, 250, 4000, 1000)
+	c.MaxPhraseSec = clamp(c.MaxPhraseSec, 4, 30, 15)
+	c.MinConfidence = clamp(c.MinConfidence, 0, 0.95, 0)
+	c.Threads = min(8, max(1, c.Threads))
+	return c
 }
 
 // Processing is ProcessingConfig in src/native/protocol.ts.
@@ -177,6 +206,10 @@ const MaxBufferMs = 24
 func (c Config) Sanitize() Config {
 	c.LL, c.Processing = c.LL.Sanitize(), c.Processing.Sanitize()
 	c.BufferMs = clamp(c.BufferMs, 0, MaxBufferMs, 0)
+	if c.Captions != nil {
+		cc := c.Captions.Sanitize()
+		c.Captions = &cc
+	}
 	return c
 }
 
@@ -212,6 +245,39 @@ type Hello struct {
 	Noise bool `json:"noise"`
 	// Whether it can show the overlay (a window, on a desktop it knows how to put one on).
 	Overlay bool `json:"overlay,omitempty"`
+	// The caption models it can run natively here.
+	Captions []string `json:"captions,omitempty"`
+}
+
+// CaptionState is how the app's recogniser is getting on (AppCaptionState in src/native/protocol.ts).
+type CaptionState struct {
+	T         string   `json:"t"` // "captions"
+	Model     string   `json:"model"`
+	Phase     string   `json:"phase"`
+	Bytes     int64    `json:"bytes"`
+	Total     int64    `json:"total"`
+	Error     string   `json:"error,omitempty"`
+	RTF       *float64 `json:"rtf,omitempty"`
+	Listening bool     `json:"listening"`
+	CacheDir  string   `json:"cacheDir,omitempty"`
+	// What it hears: "raw", or "echo" (after echo cancellation, which is on; never noise suppression or gain).
+	Hears string `json:"hears,omitempty"`
+}
+
+// CaptionOwn is your own words, as the app recognised them (Peer "").
+type CaptionOwn struct {
+	T     string `json:"t"` // "caption"
+	Peer  string `json:"peer"`
+	U     int64  `json:"u"`
+	Text  string `json:"text"`
+	Final bool   `json:"final"`
+}
+
+// CaptionPeer is a message off someone's captions channel, as it came (the page checks it).
+type CaptionPeer struct {
+	T    string `json:"t"` // "caption"
+	Peer string `json:"peer"`
+	Data string `json:"data"`
 }
 
 // Monitors: the screens the overlay can go on. Placeable: it goes where

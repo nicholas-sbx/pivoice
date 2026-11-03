@@ -32,6 +32,8 @@ export interface SessionEvents {
   /** The audio channel to them opened or closed. */
   llLink(memberId: string, up: boolean): void
   llPacket(memberId: string, data: ArrayBuffer): void
+  /** A message on their captions channel (unchecked: see captions/board.ts). */
+  caption?(memberId: string, data: unknown): void
 }
 
 /**
@@ -67,12 +69,23 @@ interface LLLink {
   link: Link
   /** Only when we kept the channel (relay mode); normally the engine's worker holds it. */
   channel: RTCDataChannel | null
+  /** Live captions, both ways: the page's own (the app has its own for its links). */
+  captions: RTCDataChannel | null
   up: boolean
   timer: ReturnType<typeof setTimeout>
 }
 
 /** The SCTP stream our low-latency audio channel uses, agreed in advance by both ends. */
 const LL_CHANNEL_ID = 42
+/**
+ * Live captions' stream, beside it: ordered and reliable (text, a few
+ * messages a second), so a finished phrase always arrives. Someone on a
+ * version without captions never opens it, and what we send on it goes
+ * nowhere.
+ */
+const CAPTION_CHANNEL_ID = 43
+/** Don't queue captions behind more than this (someone's connection has stalled): skip them. */
+const CAPTION_MAX_BUFFERED = 64 * 1024
 const CREATE_TIMEOUT_MS = 10_000
 const LINK_SETUP_TIMEOUT_MS = 20_000
 const LINK_RETRY_MS = 1_500
@@ -256,6 +269,7 @@ export class Session {
     const entry: LLLink = {
       link,
       channel: null,
+      captions: null,
       up: false,
       timer: setTimeout(() => {
         if (!entry.up) link.close()
@@ -268,7 +282,13 @@ export class Session {
       ;(link as ExternalLink).onChannel = up => this.llState(id, up)
       return
     }
-    // Made before the offer, so it's in it; negotiated, so both ends make the same one.
+    // Made before the offer, so they're in it; negotiated, so both ends make the same ones.
+    const cap = link.pc.createDataChannel('pv-captions', { negotiated: true, id: CAPTION_CHANNEL_ID })
+    entry.captions = cap
+    cap.onmessage = e => {
+      if (this.llLinks.get(id) === entry) this.events.caption?.(id, e.data)
+    }
+    // Nothing between making this one and handing it over (Chrome only lets it move straight away).
     const ch = link.pc.createDataChannel('pv-audio', { negotiated: true, id: LL_CHANNEL_ID, ordered: false, maxRetransmits: 0 })
     // Straight to the engine's worker if it'll take it (it then tells us
     // via llState when it opens and closes); otherwise we keep it and relay.
@@ -311,10 +331,12 @@ export class Session {
     if (!entry) return
     this.llLinks.delete(id)
     clearTimeout(entry.timer)
-    try {
-      entry.channel?.close()
-    } catch {
-      /* already gone */
+    for (const ch of [entry.channel, entry.captions]) {
+      try {
+        ch?.close()
+      } catch {
+        /* already gone */
+      }
     }
     entry.link.close()
     if (entry.up) this.events.llLink(id, false)
@@ -333,10 +355,30 @@ export class Session {
     }
   }
 
+  /** Your captions, to everyone whose channel is open. */
+  sendCaption(text: string) {
+    for (const entry of this.llLinks.values()) {
+      const ch = entry.captions
+      if (!ch || ch.readyState !== 'open' || ch.bufferedAmount > CAPTION_MAX_BUFFERED) continue
+      try {
+        ch.send(text)
+      } catch {
+        /* closing */
+      }
+    }
+  }
+
   /** How many people we're sending low-latency audio to right now. */
   llListeners(): number {
     let n = 0
     for (const [id, link] of this.llLinks) if (link.up && !this.members.find(m => m.id === id)?.deafened) n++
+    return n
+  }
+
+  /** How many people we're connected to (deafened or not: captions are for them too). */
+  connectedCount(): number {
+    let n = 0
+    for (const link of this.llLinks.values()) if (link.up) n++
     return n
   }
 

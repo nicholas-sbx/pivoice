@@ -1,13 +1,31 @@
 import { reactive, watch } from 'vue'
 import { sameActivity } from './audio/activity'
-import { AudioEngine, type MicProblem, type SpatialMode } from './audio/engine'
+import { AudioEngine, describeHeard, type MicProblem, type SpatialMode } from './audio/engine'
 import { LOOP_ID, SEND_DELAY_MS, sanitizeLL, type LLConfig } from './audio/ll/config'
 import { LowLatencyEngine } from './audio/ll/engine'
+import { Captioner } from './captions/captioner'
+import type { CaptionPrefs } from './captions/config'
+import { encodeCaption } from './captions/protocol'
+import {
+  captionRun,
+  captions,
+  clearCaptions,
+  forgetCaptions,
+  forgetModelStatus,
+  holdDownload,
+  acceptDownload,
+  modelStatus,
+  ownCaption,
+  receiveCaption,
+  resetDownloadAnswer,
+  setLinger
+} from './captions/state'
 import { copyText } from './lib/copyText'
 import { loadPrefs, savePrefs, type Prefs } from './lib/prefs'
 import { Seating } from './lib/seating'
 import { createWakeLock } from './lib/wakeLock'
-import { NativeBridge, isNative } from './native/bridge'
+import { NativeBridge, isNative, native } from './native/bridge'
+import { onMobileDevice } from './native/downloads'
 import { NativeLinks } from './native/link'
 import { driveOverlay } from './native/overlay'
 import type { AppConfig } from './native/protocol'
@@ -155,7 +173,24 @@ function appConfig(): AppConfig {
       gainCeilingDb: p.agcCeilingDb,
       gainRiseMs: p.agcRiseMs,
       gainFallMs: p.agcFallMs
-    }
+    },
+    captions: native.app?.captions?.length ? appCaptions(p.captions) : undefined
+  }
+}
+
+function appCaptions(c: CaptionPrefs): AppConfig['captions'] {
+  return {
+    send: c.send,
+    model: c.model,
+    showOwn: c.showOwn,
+    preMs: c.preRollMs,
+    postMs: c.postRollMs,
+    partials: c.partials,
+    partialsPerSec: c.partialsPerSec,
+    rereadMs: c.rereadMs,
+    maxPhraseSec: c.maxPhraseSec,
+    minConfidence: c.minConfidence,
+    threads: c.threads
   }
 }
 let speakingTimer: ReturnType<typeof setInterval> | null = null
@@ -205,6 +240,7 @@ function pushSelfState() {
 
 /** The low-latency engine only encodes while someone's listening on it and you're not muted. */
 function updateLLActive() {
+  updateCaptionListening()
   if (!ll) return
   ll.setGate(
     effectiveMuted(),
@@ -229,6 +265,7 @@ export async function startCall(kind: 'create' | 'join', name: string, code = ''
   call.volumes = {}
   call.silenced = {}
   call.links = {}
+  resetDownloadAnswer()
   await connect(kind, name, code)
 }
 
@@ -286,7 +323,10 @@ async function connect(kind: 'create' | 'join', name: string, code: string, rejo
   })
   engLL.inputLatencyMs = () => eng.captureLatencyMs() ?? 0
   engLL.setMic(eng.micSource)
-  eng.onMic = src => engLL.setMic(src)
+  eng.onMic = src => {
+    engLL.setMic(src)
+    void plugCaptions()
+  }
   ll = engLL
 
   const iceServers = await icePromise
@@ -308,6 +348,7 @@ async function connect(kind: 'create' | 'join', name: string, code: string, rejo
         if (session !== s) return
         call.selfId = s.selfId
         call.members = members
+        forgetLeavers()
         updateLLActive()
       },
       llLink: (id, up) => {
@@ -328,6 +369,9 @@ async function connect(kind: 'create' | 'join', name: string, code: string, rejo
       },
       llPacket: (id, data) => {
         if (session === s) ll?.packet(id, data)
+      },
+      caption: (id, data) => {
+        if (session === s) receiveCaption(id, data)
       }
     }
   )
@@ -347,6 +391,25 @@ async function connectNative(kind: 'create' | 'join', name: string, code: string
   }
   const v = new NativeVoice(bridge)
   nv = v
+  v.onCaptions = st => {
+    if (nv !== v) return
+    modelStatus({ phase: st.phase === 'off' ? 'checking' : st.phase, bytes: st.bytes, total: st.total, error: st.error }, st.model, call.prefs.captions, false, () =>
+      v.captions('download')
+    )
+    if (st.phase === 'off') captions.model.phase = 'off'
+    captions.rtf = st.rtf ?? null
+    captions.listening = !!st.listening
+    captions.hearing = {
+      kind: 'app',
+      detail: st.hears === 'echo' ? 'echo cancellation on, noise suppression off, auto gain off' : 'echo cancellation off, noise suppression off, auto gain off',
+      note: st.hears === 'echo' ? 'the mic after the app’s echo canceller, before its noise suppression and gain' : 'the mic as the sound card gives it'
+    }
+  }
+  v.onCaption = (peer, m) => {
+    if (nv !== v) return
+    if (peer) receiveCaption(peer, m.data)
+    else if (m.u !== undefined && m.text !== undefined) ownCaption(call.selfId, m.u, m.text, !!m.final, call.prefs.captions)
+  }
   seating.flush()
   const icePromise = fetchIceServers()
   await v.start(appConfig())
@@ -376,6 +439,7 @@ async function connectNative(kind: 'create' | 'join', name: string, code: string
         if (session !== s) return
         call.selfId = s.selfId
         call.members = members
+        forgetLeavers()
         v.setMembers(members)
       },
       // The app plays everyone itself.
@@ -397,6 +461,7 @@ function onStatus(status: SessionStatus, failure?: SessionFailure) {
       call.selfId = session.selfId
     }
     rejoining = false
+    if (engine && !captioner) void startCaptions()
     if (!speakingTimer) startSpeakingPoll()
     if (!statsTimer) startStatsPoll()
     if (call.phase !== 'room') {
@@ -419,6 +484,8 @@ function onStatus(status: SessionStatus, failure?: SessionFailure) {
 
 function cleanup() {
   stopMicTest()
+  stopCaptions()
+  clearCaptions()
   session = null
   nv?.close()
   nv = null
@@ -528,6 +595,121 @@ export function setOutputBuffer(v: Prefs['outputBuffer']) {
     // Carry on testing with the new buffer, so the difference is easy to hear.
     if (path) void startMicTest(path)
   })
+}
+
+// ---- live captions ----------------------------------------------------------
+
+/**
+ * Each of us captions ourselves, on our own machine, and sends the words
+ * to everyone (captions/). In a browser that's the Captioner here (a
+ * worklet and a worker beside the call's audio); in the app, the app
+ * itself (natively, see native/internal/asr), which the page only
+ * configures and shows.
+ */
+let captioner: Captioner | null = null
+setLinger(call.prefs.captions.lingerSec)
+
+/** Where the site keeps the models (scripts/captions-models.mjs puts them there). */
+function captionBase(): string {
+  return new URL('captions/', document.baseURI).href
+}
+
+/** Browser: the recogniser for this call, if you're captioned at all. */
+async function startCaptions() {
+  stopCaptions()
+  const eng = engine
+  const p = call.prefs.captions
+  if (!eng || !p.send) return
+  const c: Captioner = new Captioner(eng.ctx, p, captionBase(), {
+    status: st => {
+      if (captioner !== c) return
+      modelStatus(st, c.model, call.prefs.captions, onMobileDevice(), () => c.download())
+      updateCaptionListening()
+    },
+    text: (u, text, final) => {
+      if (captioner !== c) return
+      ownCaption(call.selfId, u, text, final, call.prefs.captions)
+      session?.sendCaption(encodeCaption({ s: captionRun(), u, t: text, f: final }))
+    },
+    stats: (rtf, lost) => {
+      if (captioner !== c) return
+      captions.rtf = rtf
+      captions.lost = lost
+    }
+  })
+  captioner = c
+  await plugCaptions()
+}
+
+/** The mic changed (or captions just started): what the recogniser hears, raw if it can be. */
+async function plugCaptions() {
+  const c = captioner
+  const eng = engine
+  if (!c || !eng) return
+  const src = await eng.captionSources(call.prefs.captions.source)
+  if (captioner !== c) return
+  c.setSources(src?.raw ?? null, src?.ring ?? null)
+  captions.hearing = src ? { kind: src.kind, detail: describeHeard(src.heard), note: src.note } : { kind: '', detail: '', note: 'no microphone' }
+}
+
+function stopCaptions() {
+  captioner?.close()
+  captioner = null
+  forgetModelStatus()
+  engine?.closeRawMic()
+  captions.listening = false
+  captions.hearing = { kind: '', detail: '', note: '' }
+  captions.model = { phase: 'off', bytes: 0, total: 0, error: '' }
+}
+
+/** Listening for your ring: unmuted, someone to send to (or you want to see your own), and the model's ready. */
+function updateCaptionListening() {
+  if (!captioner) return
+  const p = call.prefs.captions
+  const on = !!session && p.send && !effectiveMuted() && (session.connectedCount() > 0 || p.showOwn) && captions.model.phase === 'ready'
+  captioner.setListening(on)
+  captions.listening = on
+}
+
+function forgetLeavers() {
+  const here = new Set(call.members.map(m => m.id))
+  for (const id of Object.keys(captions.views)) if (!here.has(id) && id !== call.selfId) forgetCaptions(id)
+}
+
+/** Change caption settings; all of them apply live (another model or source starts the recogniser again). */
+export function updateCaptions(patch: Partial<CaptionPrefs>) {
+  const before = call.prefs.captions
+  const next = { ...before, ...patch }
+  updatePrefs({ captions: next })
+  setLinger(next.lingerSec)
+  if (nv) {
+    nv.configure(appConfig())
+    return
+  }
+  if (call.phase !== 'room' || !engine) return
+  if (next.send !== before.send || next.model !== before.model) void startCaptions()
+  else {
+    captioner?.configure(next)
+    if (next.source !== before.source) void plugCaptions()
+    updateCaptionListening()
+  }
+}
+
+/** The settings' "download now", when it was declined, held or is still waiting to be asked. */
+export function downloadCaptionModel() {
+  acceptDownload()
+  if (nv) nv.captions('download')
+  else captioner?.download()
+}
+
+/**
+ * The settings' "remove": the downloaded model goes (in the app, its cache
+ * folder's copy; a browser's is removed by the settings themselves), and
+ * isn't fetched again by itself this call.
+ */
+export function forgetCaptionModel() {
+  holdDownload()
+  nv?.captions('forget')
 }
 
 // ---- mic test ----------------------------------------------------------------

@@ -20,6 +20,7 @@ import (
 	"runtime/debug"
 	"strings"
 
+	"github.com/nicholas-sbx/pivoice/native/internal/asr"
 	"github.com/nicholas-sbx/pivoice/native/internal/audio"
 	"github.com/nicholas-sbx/pivoice/native/internal/bridge"
 	"github.com/nicholas-sbx/pivoice/native/internal/engine"
@@ -35,11 +36,18 @@ var siteURL = ""
 var roomCode = regexp.MustCompile(`^[A-Z0-9]{6}$`)
 
 func main() {
+	// The captions helper (internal/asr): this binary again, started by
+	// itself with pipes, to load a speech recogniser away from the audio.
+	// Nothing else of the app runs in it.
+	if len(os.Args) == 2 && os.Args[1] == "--captions-helper" {
+		os.Exit(asr.HelperMain())
+	}
 	version := strings.TrimSpace(versionFile)
 	site := flag.String("url", siteURL, "the Pivoice site to open")
 	browser := flag.Bool("browser", false, "open the UI in your web browser instead of the app's own window")
 	headless := flag.Bool("headless", false, "open nothing: print the address to open the UI at (for tests)")
 	fake := flag.Bool("fake-audio", false, "no sound card: a beeping microphone and silent speakers (for tests)")
+	fakeMic := flag.String("fake-mic", "", "with --fake-audio: a 16 kHz mono WAV file the microphone plays over and over (for tests)")
 	loopback := flag.Bool("loopback-ice", false, "offer loopback network candidates too (for tests on one machine)")
 	devtools := flag.Bool("devtools", false, "let the window's web inspector open")
 	showVersion := flag.Bool("version", false, "print the version and exit")
@@ -69,7 +77,17 @@ func main() {
 
 	var backend audio.Backend
 	if *fake {
-		backend = audio.Fake{}
+		f := audio.Fake{}
+		if *fakeMic != "" {
+			b, err := os.ReadFile(*fakeMic)
+			if err == nil {
+				f.Mic, err = audio.ReadWav16k(b)
+			}
+			if err != nil {
+				log.Fatalf("--fake-mic: %v", err)
+			}
+		}
+		backend = f
 	} else {
 		pa, err := audio.NewPortAudio()
 		if err != nil {
@@ -78,7 +96,10 @@ func main() {
 		backend = pa
 	}
 	defer backend.Close()
-	e := engine.New(engine.Options{Backend: backend, Loopback: *loopback})
+	// Where captions fetch their models from: the site itself (its /captions/).
+	siteBase := *u
+	siteBase.Fragment, siteBase.RawQuery = "", ""
+	e := engine.New(engine.Options{Backend: backend, Loopback: *loopback, Site: siteBase.String()})
 	b := bridge.New(e, version)
 	b.OpenURL = func(u string) {
 		if err := openBrowser(u); err != nil {

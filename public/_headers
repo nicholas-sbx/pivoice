@@ -6,11 +6,15 @@
 # can put the site in a frame to click it for you, and no frame inside it),
 # and connections to the site and, for the app's --browser mode, its bridge
 # on this machine. Styles may be inline (the overlay's page has one; Vue sets
-# some), images may be data: (avatars).
+# some), images may be data: (avatars). 'wasm-unsafe-eval' is for live
+# captions' recognisers, which are WebAssembly (Vosk's, and ONNX Runtime's
+# for Parakeet): it lets our own scripts compile WebAssembly, and nothing
+# else (no eval, no new Function: scripts/vosk-glue.ts takes those out of
+# Vosk's glue). Their workers are our own files, so worker-src stays 'self'.
 /*
   Cross-Origin-Opener-Policy: same-origin
   Cross-Origin-Embedder-Policy: require-corp
-  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self' ws://127.0.0.1:*; worker-src 'self'; media-src 'self' blob:; object-src 'none'; base-uri 'none'; form-action 'self'; frame-src 'none'; frame-ancestors 'none'
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self' ws://127.0.0.1:*; worker-src 'self'; media-src 'self' blob:; object-src 'none'; base-uri 'none'; form-action 'self'; frame-src 'none'; frame-ancestors 'none'
   X-Content-Type-Options: nosniff
   Referrer-Policy: no-referrer
   Permissions-Policy: microphone=(self), camera=(), geolocation=(), payment=(), usb=()

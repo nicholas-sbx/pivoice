@@ -4,7 +4,9 @@ import { layoutTiles, tileSpacing } from '../lib/tiles'
 import { touchFirst } from '../lib/viewport'
 import type { Member } from '../net/protocol'
 import { pingLevel, routeLabel, type LinkStats } from '../net/stats'
+import type { CaptionView } from '../captions/board'
 import Avatar from './Avatar.vue'
+import CaptionText from './CaptionText.vue'
 import Icon from './Icon.vue'
 import { vSnap } from '../lib/snap'
 
@@ -27,6 +29,11 @@ const props = defineProps<{
   links: Record<string, LinkStats>
   showPing: boolean
   showRoute: boolean
+  /** Live captions: who's saying what, and how they're shown (`showCaptions`: other people's). */
+  captions?: Record<string, CaptionView>
+  captionLines?: number
+  captionScale?: number
+  showCaptions?: boolean
 }>()
 
 const emit = defineEmits<{ menu: [id: string, x: number, y: number] }>()
@@ -80,6 +87,12 @@ function onTap(id: string, e: MouseEvent) {
   if (touchFirst) onMenu(id, e)
 }
 
+function captionOf(m: Member): CaptionView | null {
+  // Yours are only here if you asked to see them; everyone else's only if you show captions.
+  if ((!isSelf(m.id) && !props.showCaptions) || props.silenced[m.id] || mutedOf(m)) return null
+  return props.captions?.[m.id] ?? null
+}
+
 function pingOf(id: string): number | null {
   const ms = props.showPing && !isSelf(id) ? props.links[id]?.rttMs : null
   return ms == null ? null : Math.round(ms)
@@ -109,6 +122,10 @@ function mouthToEar(s: LinkStats): string {
       <div class="face">
         <Avatar :name="m.name" :size="layout.avatar" :mood="moodOf(m)" />
       </div>
+      <!-- A tile: over the lower part of it, above the name. A row: beside the face, under the name (one line). -->
+      <div v-if="captionOf(m) && !layout.row" class="cap">
+        <CaptionText :view="captionOf(m)!" :lines="captionLines ?? 2" :scale="captionScale ?? 1" />
+      </div>
       <div class="info">
         <div class="tag">
           <span class="name">{{ m.name }}</span>
@@ -118,6 +135,9 @@ function mouthToEar(s: LinkStats): string {
           <Icon v-if="silenced[m.id]" name="speaker" :size="16" slash class="state" />
         </div>
         <span v-if="layout.row && pingOf(m.id) != null" class="ping" :class="pingLevel(pingOf(m.id)!)">{{ pingOf(m.id) }} ms</span>
+        <div v-if="captionOf(m) && layout.row" class="cap-row">
+          <CaptionText :view="captionOf(m)!" :lines="1" :scale="Math.min(1, captionScale ?? 1)" />
+        </div>
         <div v-if="showRoute && !isSelf(m.id)" class="route">
           <template v-if="links[m.id]">
             {{ routeLabel(links[m.id]) }}<template v-if="mouthToEar(links[m.id])"> · {{ mouthToEar(links[m.id]) }}</template>
@@ -276,6 +296,26 @@ function mouthToEar(s: LinkStats): string {
 }
 .ping.bad {
   color: var(--red);
+}
+.cap {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 38px;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+}
+.grid.route .cap {
+  bottom: 60px;
+}
+.cap-row {
+  max-width: 100%;
+  min-width: 0;
+}
+.cap-row :deep(.caption) {
+  padding: 1px 6px;
+  font-size: calc(12px * var(--scale));
 }
 .route {
   max-width: 100%;
