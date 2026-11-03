@@ -7,7 +7,8 @@
 //     pinned here before anything reads them.
 //   - The recognisers are the libraries their makers publish: Vosk's
 //     libvosk (Kaldi) and k2-fsa's sherpa-onnx with ONNX Runtime (for
-//     Parakeet), their CPU builds (nothing here needs a GPU), fetched from
+//     Parakeet; the streaming FastConformer uses that ONNX Runtime alone,
+//     streamctc.go), their CPU builds (nothing here needs a GPU), fetched from
 //     their GitHub releases the first time they're wanted, each archive and
 //     each library in it pinned by SHA-256 below.
 //   - Both are kept in the user's cache folder (os.UserCacheDir: ~/.cache
@@ -150,33 +151,9 @@ var runtimes = map[string]map[string]Runtime{
 			Load: []string{"libgcc_s_seh-1.dll", "libwinpthread-1.dll", "libstdc++-6.dll", "libvosk.dll"},
 		},
 	},
-	"nemo-ctc": {
-		"linux/amd64": {
-			Name:    "sherpa-onnx-1.13.8",
-			URL:     "https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.8/sherpa-onnx-v1.13.8-linux-x64-shared.tar.bz2",
-			SHA256:  "c0bdb7907d3a74bba1d55d22bf4d9fa75586cf1530614ebe88a27b9118e015c4",
-			Size:    28156791,
-			Archive: "tar.bz2",
-			Files: []Member{
-				{"sherpa-onnx-v1.13.8-linux-x64-shared/lib/libonnxruntime.so", File{"libonnxruntime.so", "4b3607aebd1784b26b6f9b20e4bd974c7ab8287043e4d095cb7d2cb40b5e566e", 27026609}},
-				{"sherpa-onnx-v1.13.8-linux-x64-shared/lib/libsherpa-onnx-c-api.so", File{"libsherpa-onnx-c-api.so", "b8351ca1632571ac108adbb317bcc4bf7cfe84b72690e3017316b0da3e1e344f", 5124192}},
-			},
-			Load: []string{"libonnxruntime.so", "libsherpa-onnx-c-api.so"},
-		},
-		"windows/amd64": {
-			Name:    "sherpa-onnx-1.13.8",
-			URL:     "https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.8/sherpa-onnx-v1.13.8-win-x64-shared-MT-Release.tar.bz2",
-			SHA256:  "6dffdc715a4465b989446a6105265d2cb345e7101591a17d35534b6758f6e8df",
-			Size:    24805859,
-			Archive: "tar.bz2",
-			Files: []Member{
-				{"sherpa-onnx-v1.13.8-win-x64-shared-MT-Release/lib/onnxruntime.dll", File{"onnxruntime.dll", "7f66f939a881baf4f46a2216496798edf4a1429878b646d12674aa62f27d8a25", 17799168}},
-				{"sherpa-onnx-v1.13.8-win-x64-shared-MT-Release/lib/sherpa-onnx-c-api.dll", File{"sherpa-onnx-c-api.dll", "300e0c88400903fc4cfc88be88a8ae587a24cc658653e0e1fd1c2b8dbbc68557", 4605952}},
-			},
-			// Ours first, by full path: Windows 11 has an onnxruntime.dll of its own in System32, which isn't this one.
-			Load: []string{"onnxruntime.dll", "sherpa-onnx-c-api.dll"},
-		},
-	},
+	"nemo-ctc": sherpaRuntimes(false),
+	// The streaming FastConformer: ONNX Runtime alone, from the same archive (streamctc.go has why).
+	"nemo-ctc-streaming": sherpaRuntimes(true),
 }
 
 func platform() string { return runtime.GOOS + "/" + runtime.GOARCH }
@@ -185,3 +162,40 @@ func runtimeFor(engine string) (Runtime, bool) {
 	r, ok := runtimes[engine][platform()]
 	return r, ok
 }
+
+// sherpa-onnx 1.13.8 and its ONNX Runtime: the whole of it (Parakeet, through
+// sherpa-onnx), or the same download with only ONNX Runtime loaded (ortOnly).
+func sherpaRuntimes(ortOnly bool) map[string]Runtime {
+	linux := Runtime{
+		Name:    "sherpa-onnx-1.13.8",
+		URL:     "https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.8/sherpa-onnx-v1.13.8-linux-x64-shared.tar.bz2",
+		SHA256:  "c0bdb7907d3a74bba1d55d22bf4d9fa75586cf1530614ebe88a27b9118e015c4",
+		Size:    28156791,
+		Archive: "tar.bz2",
+		Files: []Member{
+			{"sherpa-onnx-v1.13.8-linux-x64-shared/lib/libonnxruntime.so", File{"libonnxruntime.so", "4b3607aebd1784b26b6f9b20e4bd974c7ab8287043e4d095cb7d2cb40b5e566e", 27026609}},
+			{"sherpa-onnx-v1.13.8-linux-x64-shared/lib/libsherpa-onnx-c-api.so", File{"libsherpa-onnx-c-api.so", "b8351ca1632571ac108adbb317bcc4bf7cfe84b72690e3017316b0da3e1e344f", 5124192}},
+		},
+		Load: []string{"libonnxruntime.so", "libsherpa-onnx-c-api.so"},
+	}
+	windows := Runtime{
+		Name:    "sherpa-onnx-1.13.8",
+		URL:     "https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.8/sherpa-onnx-v1.13.8-win-x64-shared-MT-Release.tar.bz2",
+		SHA256:  "6dffdc715a4465b989446a6105265d2cb345e7101591a17d35534b6758f6e8df",
+		Size:    24805859,
+		Archive: "tar.bz2",
+		Files: []Member{
+			{"sherpa-onnx-v1.13.8-win-x64-shared-MT-Release/lib/onnxruntime.dll", File{"onnxruntime.dll", "7f66f939a881baf4f46a2216496798edf4a1429878b646d12674aa62f27d8a25", 17799168}},
+			{"sherpa-onnx-v1.13.8-win-x64-shared-MT-Release/lib/sherpa-onnx-c-api.dll", File{"sherpa-onnx-c-api.dll", "300e0c88400903fc4cfc88be88a8ae587a24cc658653e0e1fd1c2b8dbbc68557", 4605952}},
+		},
+		// Ours first, by full path: Windows 11 has an onnxruntime.dll of its own in System32, which isn't this one.
+		Load: []string{"onnxruntime.dll", "sherpa-onnx-c-api.dll"},
+	}
+	if ortOnly {
+		linux.Load, windows.Load = linux.Load[:1], windows.Load[:1]
+	}
+	return map[string]Runtime{"linux/amd64": linux, "windows/amd64": windows}
+}
+
+// Streams says whether an engine recognises as it hears (asked for its words so far, not read again).
+func Streams(engine string) bool { return engine != "nemo-ctc" }

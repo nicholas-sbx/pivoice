@@ -6,8 +6,9 @@ import { DEFAULT_MODEL, isModelId, type ModelId } from './models'
  * transcribed while you're not talking (no full green ring), and nothing
  * leaves your machine but text.
  *
- * Two recognisers (models.ts): Vosk (Kaldi, streaming), the default, and
- * Parakeet (NVIDIA NeMo, a phrase at a time). Both run on the CPU, nothing
+ * Three recognisers (models.ts): Vosk (Kaldi, streaming), the default;
+ * Parakeet (NVIDIA NeMo, a phrase at a time, with punctuation); and
+ * FastConformer (NVIDIA NeMo, streaming, lowercase). All run on the CPU, nothing
  * needs a GPU. In a browser they're WebAssembly in a worker (worker-core.ts);
  * in the app, the libraries themselves in a process of their own
  * (native/internal/asr). Either way it hears your mic before noise
@@ -54,11 +55,15 @@ export interface CaptionPrefs {
   postRollMs: number
   /** Send words as they're recognised (and corrected), or only whole phrases. */
   partials: boolean
-  /** Vosk: the most live updates a second (each is cheap). */
+  /** Vosk and FastConformer: the most live updates a second (each is cheap). */
   partialsPerSec: number
   /** Parakeet: read the phrase so far again this often, ms of speech (each read is the whole phrase again, so this is most of what it costs). */
   rereadMs: number
-  /** Parakeet: a phrase this long is finished and a new one started, s (it's recognised whole, so long ones cost more). */
+  /**
+   * A phrase this long is finished and a new one started, s. Parakeet: there
+   * (it's recognised whole, so long ones cost more). FastConformer: at the
+   * next word, the model carrying straight on (so captions stay a size to read).
+   */
   maxPhraseSec: number
   /** Vosk: leave out words it's less sure of than this (0–1; 0 keeps everything). Finished phrases only. */
   minConfidence: number

@@ -109,7 +109,7 @@ jobs:
           cache: npm
       - run: npm ci
 
-      # Live captions' speech models (Vosk's and Parakeet's), from where
+      # Live captions' speech models (Vosk's, Parakeet's, FastConformer's), from where
       # they're published, each file checked against the hashes in
       # src/captions/models.json, into public/captions/ in parts of at most
       # 24 MiB, which the build copies into dist/. Too big for the repo.

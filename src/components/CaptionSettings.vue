@@ -2,7 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { call, captionModel, downloadCaptionModel, forgetCaptionModel, updateCaptions } from '../call'
 import { CAPTION_DEFAULTS, CAPTION_RANGES, type CaptionPrefs } from '../captions/config'
-import { MODELS, cachedFiles, forgetModel, inBrowser, modelOf, type ModelId } from '../captions/models'
+import { MODELS, cachedFiles, forgetModel, inBrowser, modelOf, streams, type ModelId } from '../captions/models'
 import { captions } from '../captions/state'
 import { isNative, native } from '../native/bridge'
 import Segmented from './Segmented.vue'
@@ -24,7 +24,8 @@ const models = computed(() => (isNative ? MODELS.filter(m => native.app?.caption
 const appOnly = computed(() => (isNative ? [] : MODELS.filter(m => !inBrowser(m)).map(m => m.title)))
 const chosen = computed(() => captionModel())
 const model = computed(() => modelOf(chosen.value))
-const streaming = computed(() => model.value?.engine === 'vosk')
+const engine = computed(() => model.value?.engine)
+const streaming = computed(() => streams(engine.value))
 const noCaptions = computed(() => isNative && !models.value.length)
 
 const download: { value: CaptionPrefs['download']; label: string }[] = [
@@ -231,58 +232,62 @@ function reset() {
           :model-value="c.partials"
           @update:model-value="v => set('partials', v)"
         />
-        <template v-if="streaming">
-          <Slider
-            label="Updates a second"
-            :min="r.partialsPerSec[0]"
-            :max="r.partialsPerSec[1]"
-            :step="r.partialsPerSec[2]"
-            hint="The most times a second your words so far go out."
-            :disabled="!c.partials"
-            :model-value="c.partialsPerSec"
-            @update:model-value="v => set('partialsPerSec', v)"
-          />
-          <Slider
-            label="Leave out unsure words"
-            unit="%"
-            :min="0"
-            :max="95"
-            :step="5"
-            :hint="c.minConfidence > 0 ? `Finished phrases leave out words it's less than ${Math.round(c.minConfidence * 100)}% sure of.` : 'Off: every word it hears goes out.'"
-            :model-value="Math.round(c.minConfidence * 100)"
-            @update:model-value="v => set('minConfidence', v / 100)"
-          />
-        </template>
-        <template v-else>
-          <Slider
-            label="Read again every"
-            unit=" ms"
-            :min="r.rereadMs[0]"
-            :max="r.rereadMs[1]"
-            :step="r.rereadMs[2]"
-            hint="Parakeet hears a phrase whole, so live words are the phrase so far read again: more often is livelier and costs more CPU. Skipped while it's behind."
-            :disabled="!c.partials"
-            :model-value="c.rereadMs"
-            @update:model-value="v => set('rereadMs', v)"
-          />
-          <Slider
-            label="Longest phrase"
-            unit=" s"
-            :min="r.maxPhraseSec[0]"
-            :max="r.maxPhraseSec[1]"
-            :step="r.maxPhraseSec[2]"
-            hint="Talking longer than this without a pause, the phrase is finished there and a new one starts: each read costs more the longer it is."
-            :model-value="c.maxPhraseSec"
-            @update:model-value="v => set('maxPhraseSec', v)"
-          />
-        </template>
+        <Slider
+          v-if="streaming"
+          label="Updates a second"
+          :min="r.partialsPerSec[0]"
+          :max="r.partialsPerSec[1]"
+          :step="r.partialsPerSec[2]"
+          :hint="engine === 'vosk' ? 'The most times a second your words so far go out.' : 'The most times a second your words so far go out (it has new ones every half second).'"
+          :disabled="!c.partials"
+          :model-value="c.partialsPerSec"
+          @update:model-value="v => set('partialsPerSec', v)"
+        />
+        <Slider
+          v-if="engine === 'vosk'"
+          label="Leave out unsure words"
+          unit="%"
+          :min="0"
+          :max="95"
+          :step="5"
+          :hint="c.minConfidence > 0 ? `Finished phrases leave out words it's less than ${Math.round(c.minConfidence * 100)}% sure of.` : 'Off: every word it hears goes out.'"
+          :model-value="Math.round(c.minConfidence * 100)"
+          @update:model-value="v => set('minConfidence', v / 100)"
+        />
+        <Slider
+          v-if="!streaming"
+          label="Read again every"
+          unit=" ms"
+          :min="r.rereadMs[0]"
+          :max="r.rereadMs[1]"
+          :step="r.rereadMs[2]"
+          hint="Parakeet hears a phrase whole, so live words are the phrase so far read again: more often is livelier and costs more CPU. Skipped while it's behind."
+          :disabled="!c.partials"
+          :model-value="c.rereadMs"
+          @update:model-value="v => set('rereadMs', v)"
+        />
+        <Slider
+          v-if="engine !== 'vosk'"
+          label="Longest phrase"
+          unit=" s"
+          :min="r.maxPhraseSec[0]"
+          :max="r.maxPhraseSec[1]"
+          :step="r.maxPhraseSec[2]"
+          :hint="
+            streaming
+              ? 'Talking longer than this without a pause, the phrase ends at the next word and a new one starts, so captions stay a size to read. It costs nothing: the model carries straight on.'
+              : 'Talking longer than this without a pause, the phrase is finished there and a new one starts: each read costs more the longer it is.'
+          "
+          :model-value="c.maxPhraseSec"
+          @update:model-value="v => set('maxPhraseSec', v)"
+        />
         <Slider
           v-if="isNative"
           label="CPU threads"
           :min="r.threads[0]"
           :max="r.threads[1]"
           :step="r.threads[2]"
-          hint="How many cores the recogniser may use at once. More reads Parakeet's phrases sooner; the call's audio keeps priority either way."
+          hint="How many cores the recogniser may use at once. More gets through Parakeet's phrases and FastConformer's chunks sooner; the call's audio keeps priority either way."
           :model-value="c.threads"
           @update:model-value="v => set('threads', v)"
         />

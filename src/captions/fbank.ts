@@ -124,6 +124,48 @@ export class NemoFeatures {
     return Math.floor((samples + SHIFT / 2) / SHIFT)
   }
 
+  /** Frame f's first sample (it can be before the start: those are reflected). */
+  static firstSample(f: number): number {
+    return SHIFT * f + SHIFT / 2 - LENGTH / 2
+  }
+
+  /**
+   * One frame's log-mel bins from `re` (its LENGTH samples, already cut
+   * out), written to out[at + b * stride].
+   */
+  private logMel(out: Float32Array, at: number, stride: number) {
+    const { re, im, power, window } = this
+    for (let s = LENGTH - 1; s > 0; s--) re[s] -= PREEMPH * re[s - 1]
+    re[0] -= PREEMPH * re[0]
+    for (let s = 0; s < LENGTH; s++) re[s] *= window[s]
+    re.fill(0, LENGTH)
+    im.fill(0)
+    this.fft.run(re, im)
+    for (let k = 0; k < BINS; k++) power[k] = re[k] * re[k] + im[k] * im[k]
+    for (let b = 0; b < this.numBins; b++) {
+      const { first, w } = this.banks[b]
+      let e = 0
+      for (let k = 0; k < w.length; k++) e += w[k] * power[first + k]
+      out[at + b * stride] = Math.log(Math.max(e, FLT_EPSILON))
+    }
+  }
+
+  /**
+   * Frame f of a signal that may still be going: `wave` holds its samples
+   * from `offset` on, and every one the frame needs is there, except any
+   * before the very start, which are reflected (as when the signal is
+   * whole). Bins to out[at + b * stride].
+   */
+  frameOf(wave: Float32Array, offset: number, f: number, out: Float32Array, at: number, stride: number) {
+    const start = NemoFeatures.firstSample(f)
+    const re = this.re
+    for (let s = 0; s < LENGTH; s++) {
+      const i = start + s
+      re[s] = wave[(i < 0 ? -i - 1 : i) - offset]
+    }
+    this.logMel(out, at, stride)
+  }
+
   /**
    * Features for a whole phrase, samples in [-1, 1] at 16 kHz: bins × frames,
    * bin-major (the model's [1, bins, frames]), normalised.
@@ -133,27 +175,15 @@ export class NemoFeatures {
     const frames = n === 0 ? 0 : NemoFeatures.frames(n)
     const bins = this.numBins
     const out = new Float32Array(bins * frames)
-    const { re, im, power, window } = this
+    const re = this.re
     for (let f = 0; f < frames; f++) {
-      const start = SHIFT * f + SHIFT / 2 - LENGTH / 2
+      const start = NemoFeatures.firstSample(f)
       for (let s = 0; s < LENGTH; s++) {
         let i = start + s
         while (i < 0 || i >= n) i = i < 0 ? -i - 1 : 2 * n - 1 - i
         re[s] = wave[i]
       }
-      for (let s = LENGTH - 1; s > 0; s--) re[s] -= PREEMPH * re[s - 1]
-      re[0] -= PREEMPH * re[0]
-      for (let s = 0; s < LENGTH; s++) re[s] *= window[s]
-      re.fill(0, LENGTH)
-      im.fill(0)
-      this.fft.run(re, im)
-      for (let k = 0; k < BINS; k++) power[k] = re[k] * re[k] + im[k] * im[k]
-      for (let b = 0; b < bins; b++) {
-        const { first, w } = this.banks[b]
-        let e = 0
-        for (let k = 0; k < w.length; k++) e += w[k] * power[first + k]
-        out[b * frames + f] = Math.log(Math.max(e, FLT_EPSILON))
-      }
+      this.logMel(out, f, frames)
     }
     // Per feature: each bin to zero mean and unit deviation over the phrase.
     for (let b = 0; normalise && b < bins; b++) {
@@ -167,6 +197,11 @@ export class NemoFeatures {
       for (let f = 0; f < frames; f++) row[f] = (row[f] - mean) * inv
     }
     return { data: out, frames }
+  }
+
+  /** The last sample frame f needs, plus one. */
+  static endSample(f: number): number {
+    return NemoFeatures.firstSample(f) + LENGTH
   }
 
   /** Before normalisation, frame-major: for checking against kaldi-native-fbank. */

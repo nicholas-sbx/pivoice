@@ -21,6 +21,17 @@ func (*Vosk) Partial() string                      { return "" }
 func (*Vosk) Final() string                        { return "" }
 func (*Vosk) Close()                               {}
 
+func LoadORT([]string) error { return errNoCgo }
+
+type StreamCTC struct{}
+
+func NewStreamCTC([]byte, int, int, int, int, [4]int64, [4]int64) (*StreamCTC, error) {
+	return nil, errNoCgo
+}
+func (*StreamCTC) Run([]float32, []float32) (int, error) { return 0, errNoCgo }
+func (*StreamCTC) Reset()                                {}
+func (*StreamCTC) Close()                                {}
+
 type Sherpa struct{}
 
 func NewSherpaCTC(string, string, int) (*Sherpa, error) { return nil, errNoCgo }

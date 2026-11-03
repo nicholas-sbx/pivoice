@@ -27,7 +27,7 @@ func TestCatalogIsTheSites(t *testing.T) {
 	if !bytes.Equal(site, modelsJSON) {
 		t.Fatal("native/internal/asr/models.json isn't src/captions/models.json: copy it over")
 	}
-	for _, id := range []string{"vosk-small-en", "vosk-lgraph-en", "parakeet-ctc-110m-en"} {
+	for _, id := range []string{"vosk-small-en", "vosk-lgraph-en", "parakeet-ctc-110m-en", "fastconformer-ctc-480ms-en"} {
 		m, ok := ModelByID(id)
 		if !ok || len(m.Files) == 0 {
 			t.Fatalf("no %s", id)
@@ -269,18 +269,18 @@ func TestManifestMustMatchThePins(t *testing.T) {
 // The helper's side of the pipe, with a pretend recogniser: requests answered in order, files checked first.
 type fakeRec struct{ heard int }
 
-func (f *fakeRec) accept(pcm []float32) (string, bool) {
+func (f *fakeRec) accept(pcm []float32) (string, bool, error) {
 	f.heard += len(pcm)
 	if f.heard >= 3200 {
 		f.heard = 0
-		return "a pause", true
+		return "a pause", true, nil
 	}
-	return "", false
+	return "", false, nil
 }
-func (f *fakeRec) partial() string        { return fmt.Sprintf("heard %d", f.heard) }
-func (f *fakeRec) finish() string         { return "the end" }
-func (f *fakeRec) configure(helperConfig) {}
-func (f *fakeRec) close()                 {}
+func (f *fakeRec) partial() string         { return fmt.Sprintf("heard %d", f.heard) }
+func (f *fakeRec) finish() (string, error) { return "the end", nil }
+func (f *fakeRec) configure(helperConfig)  {}
+func (f *fakeRec) close()                  {}
 
 func TestHelperProtocol(t *testing.T) {
 	old := newRecogniser

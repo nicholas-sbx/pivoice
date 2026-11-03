@@ -2,6 +2,7 @@ package asr
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 
 	"github.com/nicholas-sbx/pivoice/native/internal/asr/native"
@@ -33,6 +34,11 @@ func init() {
 				return nil, err
 			}
 			return &sherpaRec{s: s}, nil
+		case "nemo-ctc-streaming":
+			if err := native.LoadORT(libs); err != nil {
+				return nil, err
+			}
+			return newStreamRec(in)
 		}
 		return nil, fmt.Errorf("no engine %q", in.Engine)
 	}
@@ -45,7 +51,7 @@ type voskRec struct {
 	scaled []float32
 }
 
-func (r *voskRec) accept(pcm []float32) (string, bool) {
+func (r *voskRec) accept(pcm []float32) (string, bool, error) {
 	if cap(r.scaled) < len(pcm) {
 		r.scaled = make([]float32, len(pcm))
 	}
@@ -54,12 +60,12 @@ func (r *voskRec) accept(pcm []float32) (string, bool) {
 		s[i] = v * 32768
 	}
 	if r.v.Accept(s) {
-		return voskWords(r.v.Result(), r.min), true
+		return voskWords(r.v.Result(), r.min), true, nil
 	}
-	return "", false
+	return "", false, nil
 }
-func (r *voskRec) partial() string { return voskPartial(r.v.Partial()) }
-func (r *voskRec) finish() string  { return voskWords(r.v.Final(), r.min) }
+func (r *voskRec) partial() string         { return voskPartial(r.v.Partial()) }
+func (r *voskRec) finish() (string, error) { return voskWords(r.v.Final(), r.min), nil }
 func (r *voskRec) configure(c helperConfig) {
 	if (c.MinConfidence > 0) != (r.min > 0) {
 		r.v.SetWords(c.MinConfidence > 0)
@@ -74,15 +80,65 @@ type sherpaRec struct {
 	phrase []float32
 }
 
-func (r *sherpaRec) accept(pcm []float32) (string, bool) {
+func (r *sherpaRec) accept(pcm []float32) (string, bool, error) {
 	r.phrase = append(r.phrase, pcm...)
-	return "", false
+	return "", false, nil
 }
 func (r *sherpaRec) partial() string { return r.s.Decode(r.phrase) }
-func (r *sherpaRec) finish() string {
+func (r *sherpaRec) finish() (string, error) {
 	text := r.s.Decode(r.phrase)
 	r.phrase = r.phrase[:0]
-	return text
+	return text, nil
 }
 func (r *sherpaRec) configure(helperConfig) {}
 func (r *sherpaRec) close()                 { r.s.Close() }
+
+// streamRec: the streaming FastConformer, ONNX Runtime driven directly
+// (streamctc.go has why, and the rest of it).
+type streamRec struct {
+	m   *native.StreamCTC
+	ctc *streamCTC
+}
+
+func newStreamRec(in helperInit) (recogniser, error) {
+	// The files were checked against their pins a moment ago (start), and are read once here.
+	model, err := os.ReadFile(filepath.Join(in.ModelDir, "model.int8.onnx"))
+	if err != nil {
+		return nil, err
+	}
+	tokens, err := os.ReadFile(filepath.Join(in.ModelDir, "tokens.txt"))
+	if err != nil {
+		return nil, err
+	}
+	meta, err := readStreamMeta(model)
+	if err != nil {
+		return nil, err
+	}
+	pieces, blank, err := readTokens(string(tokens))
+	if err != nil {
+		return nil, err
+	}
+	m, err := native.NewStreamCTC(model, in.Threads, 80, meta.window, len(pieces), meta.channel, meta.time)
+	if err != nil {
+		return nil, err
+	}
+	r := &streamRec{m: m}
+	r.ctc = newStreamCTC(r, meta.window, meta.shift, pieces, blank)
+	r.ctc.setMaxPhraseSec(in.MaxPhraseSec)
+	return r, nil
+}
+
+func (r *streamRec) run(x, out []float32) (int, error) { return r.m.Run(x, out) }
+func (r *streamRec) reset()                            { r.m.Reset() }
+
+func (r *streamRec) accept(pcm []float32) (string, bool, error) {
+	ended, err := r.ctc.accept(pcm)
+	if err != nil || !ended {
+		return "", false, err
+	}
+	return r.ctc.result(), true, nil
+}
+func (r *streamRec) partial() string          { return r.ctc.text() }
+func (r *streamRec) finish() (string, error)  { return r.ctc.finish() }
+func (r *streamRec) configure(c helperConfig) { r.ctc.setMaxPhraseSec(c.MaxPhraseSec) }
+func (r *streamRec) close()                   { r.m.Close() }

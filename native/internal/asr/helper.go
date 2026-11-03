@@ -75,18 +75,21 @@ type helperInit struct {
 	Files         []File   `json:"files"`
 	Threads       int      `json:"threads"`
 	MinConfidence float64  `json:"minConfidence"`
+	MaxPhraseSec  float64  `json:"maxPhraseSec"`
 }
 
 type helperConfig struct {
 	MinConfidence float64 `json:"minConfidence"`
+	MaxPhraseSec  float64 `json:"maxPhraseSec"`
 }
 
 // recogniser is the helper's view of an engine.
 type recogniser interface {
 	// accept more of the phrase (16 kHz, [-1, 1]); a finished phrase if the engine ended one by itself.
-	accept(pcm []float32) (string, bool)
+	// An error ends the helper (the app starts another when it's next wanted).
+	accept(pcm []float32) (string, bool, error)
 	partial() string
-	finish() string
+	finish() (string, error)
 	configure(helperConfig)
 	close()
 }
@@ -158,15 +161,23 @@ func serve(in io.Reader, out io.Writer) error {
 			for i := range pcm {
 				pcm[i] = math.Float32frombits(binary.LittleEndian.Uint32(body[4*i:]))
 			}
-			if text, ended := rec.accept(pcm); ended {
+			text, ended, aerr := rec.accept(pcm)
+			switch {
+			case aerr != nil:
+				return aerr
+			case ended:
 				err = reply('F', []byte(text))
-			} else {
+			default:
 				err = reply('K', nil)
 			}
 		case kind == 'P':
 			err = reply('P', []byte(rec.partial()))
 		case kind == 'E':
-			err = reply('F', []byte(rec.finish()))
+			text, ferr := rec.finish()
+			if ferr != nil {
+				return ferr
+			}
+			err = reply('F', []byte(text))
 		case kind == 'C':
 			var c helperConfig
 			if json.Unmarshal(body, &c) == nil {
