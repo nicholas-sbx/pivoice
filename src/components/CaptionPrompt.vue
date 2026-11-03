@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { captionModel } from '../call'
+import { call } from '../call'
 import { captions, acceptDownload, declineDownload } from '../captions/state'
 import { modelOf } from '../captions/models'
 import Icon from './Icon.vue'
@@ -49,7 +49,7 @@ watch(
 )
 const phase = computed(() => captions.model.phase)
 const showProgress = computed(() => !p.value && fetching.value && !hidden.value && ['downloading', 'loading', 'error'].includes(phase.value))
-const modelTitle = computed(() => modelOf(captionModel())?.title ?? 'the captions model')
+const modelTitle = computed(() => modelOf(call.prefs.captions.model)?.title ?? 'the captions model')
 const fraction = computed(() => {
   if (phase.value === 'loading') return 1
   const { bytes, total } = captions.model

@@ -5,7 +5,6 @@ import { LOOP_ID, SEND_DELAY_MS, sanitizeLL, type LLConfig } from './audio/ll/co
 import { LowLatencyEngine } from './audio/ll/engine'
 import { Captioner } from './captions/captioner'
 import type { CaptionPrefs } from './captions/config'
-import { browserModel, type ModelId } from './captions/models'
 import { encodeCaption } from './captions/protocol'
 import {
   captionRun,
@@ -615,19 +614,13 @@ function captionBase(): string {
   return new URL('captions/', document.baseURI).href
 }
 
-/** The model that captions you here: the one chosen, in the app; in a browser, the default for one only the app runs. */
-export function captionModel(): ModelId {
-  const id = call.prefs.captions.model
-  return isNative ? id : browserModel(id)
-}
-
 /** Browser: the recogniser for this call, if you're captioned at all. */
 async function startCaptions() {
   stopCaptions()
   const eng = engine
   const p = call.prefs.captions
   if (!eng || !p.send) return
-  const c: Captioner = new Captioner(eng.ctx, { ...p, model: captionModel() }, captionBase(), {
+  const c: Captioner = new Captioner(eng.ctx, p, captionBase(), {
     status: st => {
       if (captioner !== c) return
       modelStatus(st, c.model, call.prefs.captions, onMobileDevice(), () => c.download())
@@ -667,6 +660,9 @@ function stopCaptions() {
   captions.listening = false
   captions.hearing = { kind: '', detail: '', note: '' }
   captions.model = { phase: 'off', bytes: 0, total: 0, error: '' }
+  // How fast it went and what it dropped were the old recogniser's.
+  captions.rtf = null
+  captions.lost = 0
 }
 
 /** Listening for your ring: unmuted, someone to send to (or you want to see your own), and the model's ready. */

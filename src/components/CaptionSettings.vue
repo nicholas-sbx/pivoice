@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { call, captionModel, downloadCaptionModel, forgetCaptionModel, updateCaptions } from '../call'
+import { call, downloadCaptionModel, forgetCaptionModel, updateCaptions } from '../call'
 import { CAPTION_DEFAULTS, CAPTION_RANGES, type CaptionPrefs } from '../captions/config'
-import { MODELS, cachedFiles, forgetModel, inBrowser, modelOf, type ModelId } from '../captions/models'
+import { MODELS, cachedFiles, forgetModel, modelOf, type ModelId } from '../captions/models'
 import { captions } from '../captions/state'
 import { isNative, native } from '../native/bridge'
 import Segmented from './Segmented.vue'
@@ -19,11 +19,9 @@ const c = computed(() => call.prefs.captions)
 const set = <K extends keyof CaptionPrefs>(k: K, v: CaptionPrefs[K]) => updateCaptions({ [k]: v } as Partial<CaptionPrefs>)
 const r = CAPTION_RANGES
 
-// In the app, only the models it can run here (natively); in a browser, all but the app's own.
-const models = computed(() => (isNative ? MODELS.filter(m => native.app?.captions?.includes(m.id)) : MODELS.filter(inBrowser)))
-const appOnly = computed(() => (isNative ? [] : MODELS.filter(m => !inBrowser(m)).map(m => m.title)))
-const chosen = computed(() => captionModel())
-const model = computed(() => modelOf(chosen.value))
+// In the app, only the models it can run here (natively); in a browser, all of them.
+const models = computed(() => (isNative ? MODELS.filter(m => native.app?.captions?.includes(m.id)) : MODELS))
+const model = computed(() => modelOf(c.value.model))
 const streaming = computed(() => model.value?.engine === 'vosk')
 const noCaptions = computed(() => isNative && !models.value.length)
 
@@ -128,8 +126,8 @@ function reset() {
             type="button"
             role="radio"
             class="model"
-            :aria-checked="chosen === m.id"
-            :class="{ active: chosen === m.id }"
+            :aria-checked="c.model === m.id"
+            :class="{ active: c.model === m.id }"
             @click="pick(m.id)"
           >
             <span class="model-top">
@@ -137,12 +135,12 @@ function reset() {
               <span class="size">{{ m.downloadMB }} MB</span>
             </span>
             <span class="model-detail">{{ m.detail }}</span>
+            <span v-if="!isNative && m.browserNote" class="model-warn">{{ m.browserNote }}</span>
           </button>
         </div>
         <p class="note">
           They all run on the CPU; none needs a graphics card.
           {{ isNative ? 'In the app, natively, in a process of its own, at normal priority, so the call’s audio always comes first.' : 'In a browser, as WebAssembly in a worker of its own, on one thread.' }}
-          <template v-if="appOnly.length">{{ appOnly.join(', ') }} is in the app only: as WebAssembly it can't keep up.</template>
         </p>
         <div class="status" aria-live="polite">
           <span>{{ phaseText }}</span>
@@ -386,6 +384,9 @@ function reset() {
 }
 .model-detail {
   color: var(--text-muted);
+}
+.model-warn {
+  color: var(--yellow);
 }
 .status {
   display: flex;
