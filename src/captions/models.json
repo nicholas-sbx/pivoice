@@ -33,7 +33,7 @@
     "credit": "vosk-model-en-us-0.22-lgraph, Alpha Cephei, Apache 2.0",
     "url": "https://alphacephei.com/vosk/models",
     "downloadMB": 139,
-    "browser": false,
+    "browserNote": "Heavy for a browser: on most computers it can't keep up, so captions come late and miss words. The app runs it about 15 times faster.",
     "sources": [
       "https://alphacephei.com/vosk/models/vosk-model-en-us-0.22-lgraph.zip",
       "https://github.com/evanvz/EDChronicle-models/releases/download/vosk-en-us-0.22-lgraph/vosk-model-en-us-0.22-lgraph.zip"

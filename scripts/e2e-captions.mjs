@@ -8,8 +8,8 @@
 //
 // The speaker's browser downloads the model from the dev server like anyone
 // would, recognises itself, and sends the words over the captions channel:
-// first with Vosk (the default), then with Parakeet. Vosk large isn't
-// offered there: it's the app's alone.
+// first with Vosk (the default), then with Parakeet, then with Vosk large
+// (slow in a browser: it says so, and gets there late).
 //
 // Then, if the app's built (native/pivoice, or NATIVE_BIN), the same with the
 // app as the speaker: headless, its fake mic reading the same digits
@@ -109,8 +109,8 @@ try {
   ok('Bob: ' + (await bob.$eval('.captions-tab .status', e => e.innerText.replace(/\s+/g, ' ').trim())))
   ok('Bob: ' + (await bob.$eval('.captions-tab .hearing', e => e.innerText.replace(/\s+/g, ' ').trim())))
   const offered = await bob.$$eval('.captions-tab .model strong', els => els.map(e => e.textContent.trim()))
-  if (offered.includes('Vosk large')) throw new Error('a website offers Vosk large, which is the app’s alone')
-  ok(`Bob (a website) is offered ${offered.join(', ')}: ` + (await bob.$eval('.captions-tab .note', e => e.innerText.replace(/\s+/g, ' ').trim())))
+  if (!offered.includes('Vosk large')) throw new Error(`a website isn't offered Vosk large (only ${offered.join(', ')})`)
+  ok(`Bob (a website) is offered ${offered.join(', ')}; Vosk large's card says: ` + (await bob.$eval('.captions-tab .model:has-text("Vosk large") .model-warn', e => e.textContent.trim())))
 
   ok('Vosk, beside Bob on Alice’s screen: ' + (await heard(alice, 'Vosk')))
 
@@ -123,6 +123,15 @@ try {
   // What showed before was Vosk's; wait for it to clear, then for Parakeet's.
   await alice.waitForFunction(() => !document.querySelector('.seat:not(.self) .caption'), null, { timeout: 30_000 }).catch(() => {})
   ok('Parakeet, beside Bob on Alice’s screen: ' + (await heard(alice, 'Parakeet')))
+
+  // Vosk large: slow in a browser, but it gets there.
+  await bob.click('.captions-tab .model:has-text("Vosk large")')
+  await bob.waitForFunction(() => /Ready/.test(document.querySelector('.captions-tab .status')?.textContent ?? ''), null, { timeout: 300_000 }).catch(async () => {
+    throw new Error('Vosk large never got ready: ' + (await bob.textContent('.captions-tab .status')))
+  })
+  await alice.waitForFunction(() => !document.querySelector('.seat:not(.self) .caption'), null, { timeout: 30_000 }).catch(() => {})
+  ok('Vosk large, beside Bob on Alice’s screen: ' + (await heard(alice, 'Vosk large')))
+  ok('Bob: ' + (await bob.$eval('.captions-tab .status', e => e.innerText.replace(/\s+/g, ' ').trim())))
 
   // Muted: nothing is recognised, and nothing new is said.
   await bob.click('button[aria-label="Mute"]')

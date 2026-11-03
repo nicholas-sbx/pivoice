@@ -20,7 +20,8 @@
  * On a slow machine (CPU only, which is everyone in a browser: nothing
  * here asks for a GPU) audio waits in the ring, up to 5 s of it, rather
  * than being lost, and the live re-reads are skipped while it's behind:
- * finished phrases come first.
+ * finished phrases come first. Past that (a recogniser that can't keep up
+ * at all, like Vosk large here) newer speech is dropped, and counted.
  */
 /// <reference lib="webworker" />
 import { FrameRing } from '../audio/ll/ring'
@@ -145,9 +146,12 @@ export function run(make: MakeRecogniser) {
 
   /** A frame from the worklet: decimated now (cheap), recognised in order. */
   function take(ts: number, pcm: Float32Array | null) {
+    // ts counts what the gate let through, segments end to end, so a gap
+    // is speech the ring had no room for, even one across a segment's end.
     if (!pcm) {
+      if (nextTs >= 0 && ts > nextTs) lost += ts - nextTs
+      nextTs = ts
       queue.push({ end: true })
-      nextTs = -1
       decimator.reset()
     } else {
       if (nextTs >= 0 && ts > nextTs) lost += ts - nextTs
