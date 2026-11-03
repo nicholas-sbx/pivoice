@@ -30,6 +30,8 @@ const SPEECH = fileURLToPath(new URL('../tests/fixtures/speech.wav', import.meta
 const ROOT = fileURLToPath(new URL('..', import.meta.url))
 const DIGITS = /\b(zero|one|two|three|four|five|six|seven|eight|nine|oh|no)\b/i
 const BIN = process.env.NATIVE_BIN ?? `${ROOT}/native/pivoice`
+/** The app, once it's started (see theApp). */
+let app = null
 
 if (!existsSync(`${ROOT}/public/captions/vosk-small-en/manifest.json`)) {
   console.error('No models in public/captions: run `node scripts/captions-models.mjs` first.')
@@ -118,8 +120,6 @@ try {
   await speaking.close()
   app?.kill()
 }
-
-let app = null
 
 /** The app as the speaker: Cleo, recognised natively, seen on Alice's (website) screen. */
 async function theApp(alice, code) {
