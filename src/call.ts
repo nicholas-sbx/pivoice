@@ -660,6 +660,9 @@ function stopCaptions() {
   captions.listening = false
   captions.hearing = { kind: '', detail: '', note: '' }
   captions.model = { phase: 'off', bytes: 0, total: 0, error: '' }
+  // How fast it went and what it dropped were the old recogniser's.
+  captions.rtf = null
+  captions.lost = 0
 }
 
 /** Listening for your ring: unmuted, someone to send to (or you want to see your own), and the model's ready. */
