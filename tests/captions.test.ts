@@ -4,7 +4,7 @@ import { CaptionBoard } from '../src/captions/board'
 import { CAPTION_DEFAULTS, sanitizeCaptions } from '../src/captions/config'
 import { DECIMATE_TAPS, Decimator, decimateTaps } from '../src/captions/decimate'
 import { CaptionGate, LevelMeter, type GateSink } from '../src/captions/gate'
-import { MODELS, checkManifest, modelOf } from '../src/captions/models'
+import { MODELS, browserModel, checkManifest, inBrowser, modelOf } from '../src/captions/models'
 import { downloadDecision, metered } from '../src/captions/network'
 import { MAX_CAPTION_TEXT, RateLimit, cleanText, decodeCaption, encodeCaption } from '../src/captions/protocol'
 
@@ -240,8 +240,14 @@ describe('downloading the model', () => {
   })
 
   it('pins every file of every model', () => {
-    expect(MODELS.map(m => m.id)).toEqual(['vosk-small-en', 'parakeet-ctc-110m-en'])
+    expect(MODELS.map(m => m.id)).toEqual(['vosk-small-en', 'vosk-lgraph-en', 'parakeet-ctc-110m-en'])
     for (const m of MODELS) for (const [path, sha, size] of m.files) expect([path, /^[0-9a-f]{64}$/.test(sha), size > 0]).toEqual([path, true, true])
+  })
+
+  it('keeps Vosk large to the app, and a browser runs the default for it', () => {
+    expect(MODELS.filter(inBrowser).map(m => m.id)).toEqual(['vosk-small-en', 'parakeet-ctc-110m-en'])
+    expect(browserModel('vosk-lgraph-en')).toBe('vosk-small-en')
+    expect(browserModel('parakeet-ctc-110m-en')).toBe('parakeet-ctc-110m-en')
   })
 
   it("is the same catalog the app uses (native/internal/asr/models.json)", () => {

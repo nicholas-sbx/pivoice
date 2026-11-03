@@ -164,8 +164,8 @@ estimate (`≈`) where it can't. Hover the estimate for what each part means.
 **Live captions.** On by default. Everyone captions themselves, on their own device, and
 the words go to everyone else, beside their seat at the table (on the side
 facing the middle, running toward it, so they stay on screen) or in their tile on a phone. Two
-recognisers, both on the CPU: **Vosk** (the default) and **Parakeet**. The
-model downloads the first time it's wanted and is kept; on mobile data you're
+recognisers, both on the CPU: **Vosk** (the default, and a larger one in the
+app) and **Parakeet**. The model downloads the first time it's wanted and is kept; on mobile data you're
 asked first. See [Live captions](#live-captions).
 
 **Voice settings.** Input and output device, an input level meter,
@@ -854,6 +854,7 @@ pass through the room's server either.
 | | What | Download | In a browser | In the app |
 | --- | --- | --- | --- | --- |
 | **Vosk** (default) | Kaldi, `vosk-model-small-en-us-0.15` (Alpha Cephei, Apache 2.0). Streaming: words appear as they're said, and it ends a phrase at a pause by itself. | 43 MB | [vosk-browser](https://github.com/ccoreilly/vosk-browser)'s WebAssembly build, in a worker | libvosk 0.3.45, Vosk's own release |
+| **Vosk large** (the app only) | Kaldi, `vosk-model-en-us-0.22-lgraph` (Alpha Cephei, Apache 2.0). Streaming, like Vosk, with about a fifth fewer mistakes (7.8% of words on LibriSpeech's clean test against the small one's 9.9%, by Vosk's figures). | 139 MB | Not offered: too slow as WebAssembly (below) | libvosk 0.3.45, as Vosk |
 | **Parakeet** | NVIDIA NeMo `parakeet-tdt_ctc-110m`, its CTC branch, int8 (CC BY 4.0; ONNX export by k2-fsa/sherpa-onnx). With punctuation and capitals. Hears a phrase whole. | 100 MB | ONNX Runtime Web's WebAssembly CPU backend, one thread, in a worker | sherpa-onnx 1.13.8 with its ONNX Runtime |
 
 Nothing asks for a GPU: every build is the CPU one, and the browser never
@@ -868,6 +869,19 @@ read again (every 1 s of speech by default, skipped while it's behind), and
 a phrase longer than 15 s is finished there and a new one started, since each
 read costs more the longer the phrase is. In headless Chromium on one core it
 read at 0.06× real time (`npm run e2e:captions`).
+
+Vosk large is the app's alone (`"browser": false` in the catalog). The app
+reads it at 0.25× real time once it's going (its first ten seconds or so of
+speech are slower, while Kaldi builds the parts of its search graph it
+needs), and its helper process takes about 490 MB; vosk-browser's
+WebAssembly read it at 3–5× real time in headless Chromium on the same
+machine, so in a browser it would only fall further behind. A browser never
+offers it, and one whose saved choice is Vosk large anyway (the app's page
+can share a browser's storage, as the headless app's does) runs Vosk
+instead, keeping the choice for the app. The site still carries its files,
+for the app to download. They come from Alpha Cephei's zip, or failing that
+a copy on GitHub whose SHA-256 matches the official zip's
+(`d9838b4a…c4334`); every file is pinned either way.
 
 In a browser, Parakeet's features (log-mel, 80 bins) are computed in
 TypeScript ([`src/captions/fbank.ts`](src/captions/fbank.ts)) the way
@@ -1012,7 +1026,7 @@ them), and shown as text.
 | --- | --- | --- |
 | Caption Me | On | Recognise you and send the words. |
 | Show Captions / Show My Own | On / On | Everyone else's beside them; yours beside you. |
-| Recogniser | Vosk | Vosk or Parakeet (another one starts the recogniser again). |
+| Recogniser | Vosk | Vosk, Parakeet, or in the app Vosk large (another one starts the recogniser again). |
 | Download | Not on data | When the model may download without asking. |
 | What It Hears (browser) | Unprocessed | Its own capture as above, or the call's own capture, processed. |
 | Before the ring / After the ring | 200 / 200 ms | Pre-roll and post-roll. |

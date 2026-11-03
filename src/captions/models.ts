@@ -26,6 +26,12 @@ export interface CatalogModel {
   url: string
   /** Roughly what downloading it costs, to say so before asking (the manifest has it exactly). */
   downloadMB: number
+  /**
+   * False: the app's alone. Vosk large is: vosk-browser's WebAssembly reads
+   * it at 3-5x real time where the app reads it at 0.25x (README, "Live
+   * captions"), so in a browser it would only ever fall behind.
+   */
+  browser?: boolean
   /** path, sha256, size. */
   files: [string, string, number][]
 }
@@ -35,6 +41,21 @@ export const DEFAULT_MODEL: ModelId = 'vosk-small-en'
 
 export function modelOf(id: string): CatalogModel | null {
   return MODELS.find(m => m.id === id) ?? null
+}
+
+/** Whether a browser runs it (the rest are the app's alone). */
+export function inBrowser(m: CatalogModel): boolean {
+  return m.browser !== false
+}
+
+/**
+ * What a browser runs for this choice: it, or the default for one only the
+ * app runs. The choice itself is kept: the app's page can share a browser's
+ * storage (the headless app's does), and it's still the app's choice there.
+ */
+export function browserModel(id: ModelId): ModelId {
+  const m = modelOf(id)
+  return m && inBrowser(m) ? id : DEFAULT_MODEL
 }
 
 export function isModelId(id: unknown): id is ModelId {

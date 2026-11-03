@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { call, downloadCaptionModel, forgetCaptionModel, updateCaptions } from '../call'
+import { call, captionModel, downloadCaptionModel, forgetCaptionModel, updateCaptions } from '../call'
 import { CAPTION_DEFAULTS, CAPTION_RANGES, type CaptionPrefs } from '../captions/config'
-import { MODELS, cachedFiles, forgetModel, modelOf, type ModelId } from '../captions/models'
+import { MODELS, cachedFiles, forgetModel, inBrowser, modelOf, type ModelId } from '../captions/models'
 import { captions } from '../captions/state'
 import { isNative, native } from '../native/bridge'
 import Segmented from './Segmented.vue'
@@ -19,9 +19,11 @@ const c = computed(() => call.prefs.captions)
 const set = <K extends keyof CaptionPrefs>(k: K, v: CaptionPrefs[K]) => updateCaptions({ [k]: v } as Partial<CaptionPrefs>)
 const r = CAPTION_RANGES
 
-// In the app, only the models it can run here (natively); in a browser, all of them.
-const models = computed(() => (isNative ? MODELS.filter(m => native.app?.captions?.includes(m.id)) : MODELS))
-const model = computed(() => modelOf(c.value.model))
+// In the app, only the models it can run here (natively); in a browser, all but the app's own.
+const models = computed(() => (isNative ? MODELS.filter(m => native.app?.captions?.includes(m.id)) : MODELS.filter(inBrowser)))
+const appOnly = computed(() => (isNative ? [] : MODELS.filter(m => !inBrowser(m)).map(m => m.title)))
+const chosen = computed(() => captionModel())
+const model = computed(() => modelOf(chosen.value))
 const streaming = computed(() => model.value?.engine === 'vosk')
 const noCaptions = computed(() => isNative && !models.value.length)
 
@@ -66,7 +68,7 @@ const progress = computed(() => (captions.model.phase === 'downloading' && capti
 const speed = computed(() => {
   const rtf = captions.rtf
   if (rtf === null) return ''
-  const note = rtf < 0.5 ? 'keeps up easily' : rtf < 1 ? 'keeps up' : "can't keep up: try fewer live updates, or Vosk"
+  const note = rtf < 0.5 ? 'keeps up easily' : rtf < 1 ? 'keeps up' : "can't keep up: try fewer live updates, or a smaller model"
   return `${rtf.toFixed(2)}× real time (${note})`
 })
 
@@ -126,8 +128,8 @@ function reset() {
             type="button"
             role="radio"
             class="model"
-            :aria-checked="c.model === m.id"
-            :class="{ active: c.model === m.id }"
+            :aria-checked="chosen === m.id"
+            :class="{ active: chosen === m.id }"
             @click="pick(m.id)"
           >
             <span class="model-top">
@@ -138,8 +140,9 @@ function reset() {
           </button>
         </div>
         <p class="note">
-          Both run on the CPU; neither needs a graphics card.
+          They all run on the CPU; none needs a graphics card.
           {{ isNative ? 'In the app, natively, in a process of its own, at normal priority, so the call’s audio always comes first.' : 'In a browser, as WebAssembly in a worker of its own, on one thread.' }}
+          <template v-if="appOnly.length">{{ appOnly.join(', ') }} is in the app only: as WebAssembly it can't keep up.</template>
         </p>
         <div class="status" aria-live="polite">
           <span>{{ phaseText }}</span>
