@@ -26,6 +26,37 @@
       ["ivector/splice.conf", "9f0c5f7c82d18eaf25d8bce470efa9f7741f88411fe428774bc0a9bb69a24756", 35]
     ]
   },
+  "vosk-lgraph-en": {
+    "engine": "vosk",
+    "title": "Vosk large",
+    "detail": "English (US), bigger: about a fifth fewer mistakes than the small one, for about 500 MB of memory. Kaldi, streaming: words appear as you say them.",
+    "credit": "vosk-model-en-us-0.22-lgraph, Alpha Cephei, Apache 2.0",
+    "url": "https://alphacephei.com/vosk/models",
+    "downloadMB": 139,
+    "browser": false,
+    "sources": [
+      "https://alphacephei.com/vosk/models/vosk-model-en-us-0.22-lgraph.zip",
+      "https://github.com/evanvz/EDChronicle-models/releases/download/vosk-en-us-0.22-lgraph/vosk-model-en-us-0.22-lgraph.zip"
+    ],
+    "files": [
+      ["am/final.mdl", "c8586dfa7f571b8b01bac8217ef96493690c65aa512b72e6ce5acde39c262afe", 73728293],
+      ["am/tree", "cc3f3ecb42b3e4513575e7c43c922eb1cf48657f46414350cdb48c165b51be2b", 880976],
+      ["conf/mfcc.conf", "df62f0c23a628b6a2c2e030d43b72ca992fcbe9f2d6d768946579ae25898570f", 154],
+      ["conf/model.conf", "f867cc746ce8633b747f723a8b78ea36a6e5db291e8c37bfefc5fb155420b10c", 293],
+      ["graph/Gr.fst", "0edf01f3582de257e89415cd508c21790bb6f0e820e743d87adcafd2bcbd9545", 47168231],
+      ["graph/HCLr.fst", "96981cf4a3d5fe9e8f4a5205b681fadec0e85221972c929192b121a9f7e7c175", 66551106],
+      ["graph/disambig_tid.int", "efbeb98e263f08d2de5477158854bd9e307a35600db4c58a935ccbaf4432e345", 234],
+      ["graph/phones.txt", "6d01b4f94c7a161fc41a5573ace33f72d0c01b7b6e99cc7d14ffe9526d4fe4ca", 2176],
+      ["graph/phones/word_boundary.int", "9f63870f605d47e29a050117d255c4fc2cb1551d903883c0040aa16219856165", 2454],
+      ["graph/words.txt", "2714049587071344be482fa0e6b7b33792020ba689f422f9895dde5bedbd667b", 5722620],
+      ["ivector/final.dubm", "76309d6d4f4612de0e6e2c1e836811becaa9a0adc0e0bfff53a90371488a413d", 168048],
+      ["ivector/final.ie", "ed35fa2f46d8853370f89480a53d3e0184ceaab9afef7f112b43cdda492e5326", 19757687],
+      ["ivector/final.mat", "29f411865e71494ff1ff03965b3a5812b5c38d3bcdff3e62aa80462978234f4f", 44975],
+      ["ivector/global_cmvn.stats", "3d7d721fa592c21136597955fd550b1f84568d32e4de7adc35d3b9a033e65afe", 1080],
+      ["ivector/online_cmvn.conf", "a2f3571754b64297cb7efb2e7ca3df61995c5a45fcbb97188f90613552bb2dfe", 95],
+      ["ivector/splice.conf", "9f0c5f7c82d18eaf25d8bce470efa9f7741f88411fe428774bc0a9bb69a24756", 35]
+    ]
+  },
   "parakeet-ctc-110m-en": {
     "engine": "nemo-ctc",
     "title": "Parakeet",

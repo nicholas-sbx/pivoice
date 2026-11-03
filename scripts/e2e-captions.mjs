@@ -8,14 +8,15 @@
 //
 // The speaker's browser downloads the model from the dev server like anyone
 // would, recognises itself, and sends the words over the captions channel:
-// first with Vosk (the default), then with Parakeet.
+// first with Vosk (the default), then with Parakeet. Vosk large isn't
+// offered there: it's the app's alone.
 //
 // Then, if the app's built (native/pivoice, or NATIVE_BIN), the same with the
 // app as the speaker: headless, its fake mic reading the same digits
 // (--fake-mic), recognising natively in its helper process, with the
 // recognisers fetched from their releases into a cache folder of this run's
 // own (XDG_CACHE_HOME), and the words reaching the website over pion's end
-// of the captions channel.
+// of the captions channel: Vosk, Parakeet, then Vosk large.
 import { spawn } from 'node:child_process'
 import { existsSync, mkdtempSync } from 'node:fs'
 import { createRequire } from 'node:module'
@@ -107,6 +108,9 @@ try {
   })
   ok('Bob: ' + (await bob.$eval('.captions-tab .status', e => e.innerText.replace(/\s+/g, ' ').trim())))
   ok('Bob: ' + (await bob.$eval('.captions-tab .hearing', e => e.innerText.replace(/\s+/g, ' ').trim())))
+  const offered = await bob.$$eval('.captions-tab .model strong', els => els.map(e => e.textContent.trim()))
+  if (offered.includes('Vosk large')) throw new Error('a website offers Vosk large, which is the app’s alone')
+  ok(`Bob (a website) is offered ${offered.join(', ')}: ` + (await bob.$eval('.captions-tab .note', e => e.innerText.replace(/\s+/g, ' ').trim())))
 
   ok('Vosk, beside Bob on Alice’s screen: ' + (await heard(alice, 'Vosk')))
 
@@ -167,6 +171,14 @@ async function theApp(alice, code) {
   })
   await alice.waitForTimeout(7_000)
   ok('the app’s Parakeet, beside Cleo on Alice’s screen: ' + (await heardFrom(alice, cleo, 'the app’s Parakeet')))
+  ok('Cleo: ' + (await cleo.$eval('.captions-tab .status', e => e.innerText.replace(/\s+/g, ' ').trim())))
+  // Vosk large: the app's alone, offered here.
+  await cleo.click('.captions-tab .model:has-text("Vosk large")')
+  await cleo.waitForFunction(() => /Ready/.test(document.querySelector('.captions-tab .status')?.textContent ?? ''), null, { timeout: 300_000 }).catch(async () => {
+    throw new Error('the app’s Vosk large never got ready: ' + (await cleo.textContent('.captions-tab .status')))
+  })
+  await alice.waitForTimeout(7_000)
+  ok('the app’s Vosk large, beside Cleo on Alice’s screen: ' + (await heardFrom(alice, cleo, 'the app’s Vosk large')))
   ok('Cleo: ' + (await cleo.$eval('.captions-tab .status', e => e.innerText.replace(/\s+/g, ' ').trim())))
 }
 
