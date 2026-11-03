@@ -398,7 +398,7 @@ func (c *captioner) recLoop() {
 	load := func() {
 		st.phase = "loading"
 		emit()
-		h, err := asr.StartHelper(st.root, st.model, asr.HelperOptions{Threads: st.cfg.Threads, MinConfidence: st.cfg.MinConfidence})
+		h, err := asr.StartHelper(st.root, st.model, asr.HelperOptions{Threads: st.cfg.Threads, MinConfidence: st.cfg.MinConfidence, MaxPhraseSec: st.cfg.MaxPhraseSec})
 		if err != nil {
 			log.Printf("captions: %v", err)
 			st.phase, st.err = "error", err.Error()
@@ -445,8 +445,8 @@ func (c *captioner) recLoop() {
 			if old.Send != st.cfg.Send || old.Model != st.cfg.Model || old.Threads != st.cfg.Threads {
 				begin()
 			} else {
-				if st.helper != nil && old.MinConfidence != st.cfg.MinConfidence {
-					_ = st.helper.Configure(st.cfg.MinConfidence)
+				if st.helper != nil && (old.MinConfidence != st.cfg.MinConfidence || old.MaxPhraseSec != st.cfg.MaxPhraseSec) {
+					_ = st.helper.Configure(st.cfg.MinConfidence, st.cfg.MaxPhraseSec)
 				}
 				// The page's settings came with the processing's: what it hears may have changed.
 				emit()
@@ -569,7 +569,7 @@ func (c *captioner) recognise(st *recState, k *capChunk) {
 		st.crashes = 0
 		return
 	}
-	streaming := st.model.Engine == "vosk"
+	streaming := asr.Streams(st.model.Engine)
 	if !streaming && float64(st.held) >= st.cfg.MaxPhraseSec*16000 {
 		// A long phrase: finished here, the next picks up where it stops.
 		text, err := h.Finish()

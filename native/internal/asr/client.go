@@ -41,6 +41,8 @@ type answer struct {
 type HelperOptions struct {
 	Threads       int
 	MinConfidence float64
+	// MaxPhraseSec: a streaming FastConformer phrase this long ends at its next word.
+	MaxPhraseSec float64
 }
 
 // StartHelper starts a helper for a model whose files and runtime are all
@@ -88,6 +90,7 @@ func StartHelper(root string, m Model, o HelperOptions) (*Helper, error) {
 		Files:         m.Files,
 		Threads:       threads,
 		MinConfidence: o.MinConfidence,
+		MaxPhraseSec:  o.MaxPhraseSec,
 	}
 	for _, f := range r.Files {
 		init.Libs = append(init.Libs, f.File)
@@ -160,7 +163,7 @@ func (h *Helper) Accept(pcm []float32) (text string, ended bool, err error) {
 	return text, kind == 'F', err
 }
 
-// Partial is the phrase so far (Parakeet reads it all again).
+// Partial is the phrase so far (Parakeet reads it all again; the streaming ones just say).
 func (h *Helper) Partial() (string, error) {
 	_, text, err := h.ask('P', nil, time.Minute)
 	return text, err
@@ -173,8 +176,8 @@ func (h *Helper) Finish() (string, error) {
 }
 
 // Configure what can change without starting again.
-func (h *Helper) Configure(minConfidence float64) error {
-	body, _ := json.Marshal(helperConfig{MinConfidence: minConfidence})
+func (h *Helper) Configure(minConfidence, maxPhraseSec float64) error {
+	body, _ := json.Marshal(helperConfig{MinConfidence: minConfidence, MaxPhraseSec: maxPhraseSec})
 	_, _, err := h.ask('C', body, 10*time.Second)
 	return err
 }

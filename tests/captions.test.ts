@@ -240,12 +240,12 @@ describe('downloading the model', () => {
   })
 
   it('pins every file of every model', () => {
-    expect(MODELS.map(m => m.id)).toEqual(['vosk-small-en', 'vosk-lgraph-en', 'parakeet-ctc-110m-en'])
+    expect(MODELS.map(m => m.id)).toEqual(['vosk-small-en', 'vosk-lgraph-en', 'parakeet-ctc-110m-en', 'fastconformer-ctc-80ms-en', 'fastconformer-ctc-480ms-en', 'fastconformer-ctc-1040ms-en'])
     for (const m of MODELS) for (const [path, sha, size] of m.files) expect([path, /^[0-9a-f]{64}$/.test(sha), size > 0]).toEqual([path, true, true])
   })
 
   it('keeps Vosk large to the app, and a browser runs the default for it', () => {
-    expect(MODELS.filter(inBrowser).map(m => m.id)).toEqual(['vosk-small-en', 'parakeet-ctc-110m-en'])
+    expect(MODELS.filter(inBrowser).map(m => m.id)).toEqual(['vosk-small-en', 'parakeet-ctc-110m-en', 'fastconformer-ctc-80ms-en', 'fastconformer-ctc-480ms-en', 'fastconformer-ctc-1040ms-en'])
     expect(browserModel('vosk-lgraph-en')).toBe('vosk-small-en')
     expect(browserModel('parakeet-ctc-110m-en')).toBe('parakeet-ctc-110m-en')
   })

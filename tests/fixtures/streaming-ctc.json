@@ -1,0 +1,268 @@
+{
+  "about": "The streaming FastConformer driver (src/captions/streaming-ctc.ts, native/internal/asr/streamctc.go): log-mel frames of a test signal (seed, samples: see signal() in tests/streaming-ctc.test.ts), not normalised; and for each export, where chunks of window frames start (moving on shift each time) for a segment of samples, which the driver starts with lead samples of silence, and how long it all is once silence is added after to finish it (enough for a chunk past the last with any of the segment in, and at least tail frames' worth of chunks).",
+  "signal": {
+    "seed": 2024,
+    "samples": 16000
+  },
+  "lead": 3200,
+  "tail": 30,
+  "features": [
+    [
+      0,
+      0,
+      -7.77191
+    ],
+    [
+      0,
+      40,
+      -6.894634
+    ],
+    [
+      0,
+      79,
+      -7.331876
+    ],
+    [
+      1,
+      3,
+      -13.294362
+    ],
+    [
+      37,
+      12,
+      -1.498266
+    ],
+    [
+      37,
+      61,
+      -8.649331
+    ],
+    [
+      98,
+      7,
+      -11.516035
+    ],
+    [
+      99,
+      50,
+      -9.160882
+    ]
+  ],
+  "shapes": [
+    {
+      "model": "80 ms",
+      "window": 25,
+      "shift": 16,
+      "cases": [
+        {
+          "name": "shorter than a window",
+          "samples": 800,
+          "chunks": [
+            0,
+            16,
+            32
+          ],
+          "padded": 9240
+        },
+        {
+          "name": "a window of frames, silence before it included",
+          "samples": 720,
+          "chunks": [
+            0,
+            16,
+            32
+          ],
+          "padded": 9240
+        },
+        {
+          "name": "a frame past a window",
+          "samples": 880,
+          "chunks": [
+            0,
+            16,
+            32,
+            48
+          ],
+          "padded": 11800
+        },
+        {
+          "name": "a second",
+          "samples": 16000,
+          "chunks": [
+            0,
+            16,
+            32,
+            48,
+            64,
+            80,
+            96,
+            112,
+            128
+          ],
+          "padded": 24600
+        },
+        {
+          "name": "five seconds and a bit",
+          "samples": 80123,
+          "chunks": [
+            0,
+            16,
+            32,
+            48,
+            64,
+            80,
+            96,
+            112,
+            128,
+            144,
+            160,
+            176,
+            192,
+            208,
+            224,
+            240,
+            256,
+            272,
+            288,
+            304,
+            320,
+            336,
+            352,
+            368,
+            384,
+            400,
+            416,
+            432,
+            448,
+            464,
+            480,
+            496,
+            512,
+            528
+          ],
+          "padded": 88600
+        }
+      ]
+    },
+    {
+      "model": "480 ms",
+      "window": 65,
+      "shift": 56,
+      "cases": [
+        {
+          "name": "shorter than a window",
+          "samples": 800,
+          "chunks": [
+            0,
+            56
+          ],
+          "padded": 19480
+        },
+        {
+          "name": "a window of frames, silence before it included",
+          "samples": 7120,
+          "chunks": [
+            0,
+            56
+          ],
+          "padded": 19480
+        },
+        {
+          "name": "a frame past a window",
+          "samples": 7280,
+          "chunks": [
+            0,
+            56,
+            112
+          ],
+          "padded": 28440
+        },
+        {
+          "name": "a second",
+          "samples": 16000,
+          "chunks": [
+            0,
+            56,
+            112
+          ],
+          "padded": 28440
+        },
+        {
+          "name": "five seconds and a bit",
+          "samples": 80123,
+          "chunks": [
+            0,
+            56,
+            112,
+            168,
+            224,
+            280,
+            336,
+            392,
+            448,
+            504,
+            560
+          ],
+          "padded": 100120
+        }
+      ]
+    },
+    {
+      "model": "1040 ms",
+      "window": 121,
+      "shift": 112,
+      "cases": [
+        {
+          "name": "shorter than a window",
+          "samples": 800,
+          "chunks": [
+            0,
+            112
+          ],
+          "padded": 37400
+        },
+        {
+          "name": "a window of frames, silence before it included",
+          "samples": 16080,
+          "chunks": [
+            0,
+            112
+          ],
+          "padded": 37400
+        },
+        {
+          "name": "a frame past a window",
+          "samples": 16240,
+          "chunks": [
+            0,
+            112,
+            224
+          ],
+          "padded": 55320
+        },
+        {
+          "name": "a second",
+          "samples": 16000,
+          "chunks": [
+            0,
+            112
+          ],
+          "padded": 37400
+        },
+        {
+          "name": "five seconds and a bit",
+          "samples": 80123,
+          "chunks": [
+            0,
+            112,
+            224,
+            336,
+            448,
+            560
+          ],
+          "padded": 109080
+        }
+      ]
+    }
+  ]
+}

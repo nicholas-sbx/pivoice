@@ -163,9 +163,9 @@ estimate (`≈`) where it can't. Hover the estimate for what each part means.
 
 **Live captions.** On by default. Everyone captions themselves, on their own device, and
 the words go to everyone else, beside their seat at the table (on the side
-facing the middle, running toward it, so they stay on screen) or in their tile on a phone. Two
-recognisers, both on the CPU: **Vosk** (the default, and a larger one in the
-app) and **Parakeet**. The model downloads the first time it's wanted and is kept; on mobile data you're
+facing the middle, running toward it, so they stay on screen) or in their tile on a phone. Three
+recognisers, all on the CPU: **Vosk** (the default, and a larger one in the
+app), **Parakeet** and **FastConformer**. The model downloads the first time it's wanted and is kept; on mobile data you're
 asked first. See [Live captions](#live-captions).
 
 **Voice settings.** Input and output device, an input level meter,
@@ -849,13 +849,14 @@ everyone over the peer connection: a second data channel beside the audio's
 audio never leaves your device for it; only the words do. Nobody's captions
 pass through the room's server either.
 
-### Two recognisers, both on the CPU
+### Four recognisers, all on the CPU
 
 | | What | Download | In a browser | In the app |
 | --- | --- | --- | --- | --- |
 | **Vosk** (default) | Kaldi, `vosk-model-small-en-us-0.15` (Alpha Cephei, Apache 2.0). Streaming: words appear as they're said, and it ends a phrase at a pause by itself. | 43 MB | [vosk-browser](https://github.com/ccoreilly/vosk-browser)'s WebAssembly build, in a worker | libvosk 0.3.45, Vosk's own release |
 | **Vosk large** (the app only) | Kaldi, `vosk-model-en-us-0.22-lgraph` (Alpha Cephei, Apache 2.0). Streaming, like Vosk, with about a fifth fewer mistakes (7.8% of words on LibriSpeech's clean test against the small one's 9.9%, by Vosk's figures). | 139 MB | Not offered: too slow as WebAssembly (below) | libvosk 0.3.45, as Vosk |
 | **Parakeet** | NVIDIA NeMo `parakeet-tdt_ctc-110m`, its CTC branch, int8 (CC BY 4.0; ONNX export by k2-fsa/sherpa-onnx). With punctuation and capitals. Hears a phrase whole. | 100 MB | ONNX Runtime Web's WebAssembly CPU backend, one thread, in a worker | sherpa-onnx 1.13.8 with its ONNX Runtime |
+| **FastConformer** 80 ms, 480 ms, 1040 ms | NVIDIA NeMo `stt_en_fastconformer_hybrid_large_streaming_80ms`, `_480ms` and `_1040ms` (114M each), their CTC branch, int8 (CC BY 4.0; ONNX export by k2-fsa/sherpa-onnx). Lowercase, no punctuation. Streaming: words appear as they're said, a chunk at a time (0.16, 0.56 or 1.12 s). | 100 MB each | ONNX Runtime Web's WebAssembly CPU backend, one thread, in a worker | ONNX Runtime 1.28.2 (sherpa-onnx 1.13.8's), driven directly |
 
 Nothing asks for a GPU: every build is the CPU one, and the browser never
 asks for WebGPU or WebGL, so a machine without a graphics card captions like
@@ -889,6 +890,55 @@ sherpa-onnx computes them for NeMo models in the app (kaldi-native-fbank
 1.22.3 in its librosa mode, NeMo's per-feature normalisation), checked
 against a plain direct-DFT reading of the same steps, and greedy CTC over
 ONNX Runtime's output is sherpa-onnx's.
+
+FastConformer streams. It's NVIDIA's cache-aware streaming model, in three
+exports that differ in how much they hear at once: a chunk of 25 frames
+moving on 16 (80 ms), 65 moving on 56 (480 ms), or 121 moving on 112
+(1040 ms); the 9 frames over the move are the last chunk's, there as the
+first layer's context. With each chunk's output it hands back caches (the
+attention's and the convolutions' past), so nothing is worked out twice and
+live words cost nothing extra; greedy CTC over each chunk only ever adds to the words.
+Each segment starts with 200 ms of silence (the model starts from quiet,
+and without it the first word was often lost) and ends with enough after
+it for a chunk past the last with any of the segment in, two of the 80 ms
+export's (the model says a word up to a chunk after it hears it, and
+stopping sooner lost the end of the last word in about one segment in
+seven). The driver reads the chunk sizes and cache shapes from the model
+file itself, so the three are one engine. Past **Longest phrase** the phrase ends at the next word and the
+model carries straight on (nothing's cut mid-word, nothing's read again),
+so captions stay a size to read.
+
+Both the browser ([`src/captions/streaming-ctc.ts`](src/captions/streaming-ctc.ts))
+and the app ([`native/internal/asr/streamctc.go`](native/internal/asr/streamctc.go))
+drive the model themselves, the same way, with the same NeMo features (the
+fbank above, not normalised), held to the same cases
+([`tests/fixtures/streaming-ctc.json`](tests/fixtures/streaming-ctc.json)).
+The app doesn't use sherpa-onnx's own streaming recogniser for it: that
+computes Kaldi's features for this model (a Povey window, HTK mels over
+20–7600 Hz), not the ones it was trained on. It drives ONNX Runtime's C API
+directly instead: the same library sherpa-onnx ships, loaded on its own,
+with its threads told not to spin.
+
+Measured on 29 minutes of speech, [MS-SNSD](https://github.com/microsoft/MS-SNSD)'s
+clean test set, and the same mixed with its noises at 0–10 dB, scored
+against Parakeet's transcripts of the clean set (so these are words where
+the two disagree, Parakeet's own mistakes included), on one thread, the
+app's driver (the browser's gets the same: 4.9% and 16.1% for 480 ms):
+
+| | Clean | Noisy | × real time, app | × real time, browser |
+| --- | --- | --- | --- | --- |
+| FastConformer 80 ms | 5.4% | 16.4% | 0.25 | 0.52 |
+| FastConformer 480 ms | 4.9% | 16.0% | 0.10 | 0.21 |
+| FastConformer 1040 ms | 5.4% | 13.8% | 0.07 | 0.15 |
+| 480 ms without the silence before | 6.6% | 18.4% | | |
+| 480 ms with sherpa-onnx's features (Kaldi's), no silence before | 7.5% | 29.6% | 0.09 | |
+
+The browser's is ONNX Runtime Web's WebAssembly, in Node; the app's ONNX
+Runtime 1.28.2. The model is 99% of the time; features, decoding and the
+rest are under 1%. Two threads in the app finish a 480 ms chunk 16% sooner
+for 28% more CPU. So: 480 ms for most, 1040 ms for noisy rooms or a slow
+machine (its words come a second at a time), and 80 ms for words as soon
+as they're said, on a machine with half a core to spare in a browser.
 
 ### What it hears
 
@@ -935,7 +985,8 @@ the same in both, held to the same test cases.
 
 That's privacy (what noise suppression kept out of the call stays out of the
 captions), and it's the CPU: **the recogniser does no work at all outside a
-segment**. No Vosk calls, no Parakeet reads or re-reads, not a timer. The
+segment**. No Vosk calls, no Parakeet reads or re-reads, no FastConformer
+chunks, not a timer. The
 only always-on work while captions listen is keeping the pre-roll (a copy of
 each block into a buffer made once) and the level check. With captions off,
 or while you're muted (or deafened, or alone without **Show My Own**), the
@@ -947,7 +998,7 @@ sender looks at one flag.
 - **In a browser**: a worklet beside the call's (the gate, on the audio
   thread, allocating nothing), sending what it lets through over shared
   memory to the recogniser's worker (48 → 16 kHz there, a 95-tap Kaiser
-  low-pass, then Vosk or Parakeet). The call's audio path isn't touched, and
+  low-pass, then Vosk, Parakeet or FastConformer). The call's audio path isn't touched, and
   none of it is loaded until captions start.
 - **In the app**: natively, never through the webview. The sender goroutine
   hands each mic block to a gate goroutine (no allocation, never a wait;
@@ -1026,15 +1077,15 @@ them), and shown as text.
 | --- | --- | --- |
 | Caption Me | On | Recognise you and send the words. |
 | Show Captions / Show My Own | On / On | Everyone else's beside them; yours beside you. |
-| Recogniser | Vosk | Vosk, Parakeet, or in the app Vosk large (another one starts the recogniser again). |
+| Recogniser | Vosk | Vosk, Parakeet, FastConformer 80, 480 or 1040 ms, or in the app Vosk large (another one starts the recogniser again). |
 | Download | Not on data | When the model may download without asking. |
 | What It Hears (browser) | Unprocessed | Its own capture as above, or the call's own capture, processed. |
 | Before the ring / After the ring | 200 / 200 ms | Pre-roll and post-roll. |
 | Words as you say them | On | Live words, or only finished phrases. |
-| Updates a second (Vosk) | 8 | The most live updates a second. |
+| Updates a second (Vosk, FastConformer) | 8 | The most live updates a second. |
 | Leave out unsure words (Vosk) | Off | Finished phrases drop words below this confidence. |
 | Read again every (Parakeet) | 1000 ms | How often the phrase so far is read again for live words. |
-| Longest phrase (Parakeet) | 15 s | Finished and started again past this. |
+| Longest phrase (Parakeet, FastConformer) | 15 s | Parakeet: finished and started again past this. FastConformer: ends at the next word past this, the model carrying on. |
 | CPU threads (app) | 2 | The recogniser's threads. |
 | Lines / Size / Stay up for | 2 / 100% / 6 s | How captions are shown. |
 
@@ -1261,8 +1312,9 @@ src/
   audio/        engine: mic, per-person channel strips, panning, speaking detection
   audio/ll/     the low-latency engine: worklets (capture, playback), worker
                 (silence gate, packets, network), jitter buffer, shared-memory ring, packet format, settings
-  captions/     live captions: the gate (worklet), the recognisers' workers (Vosk, Parakeet:
-                features and CTC), the model catalog and cache, the wire format, everyone's captions
+  captions/     live captions: the gate (worklet), the recognisers' workers (Vosk, Parakeet,
+                FastConformer: features, CTC, the streaming driver), the model catalog and cache,
+                the wire format, everyone's captions
   components/   round table, its miniature for the pop-out and the overlay, call control
                 buttons, settings, user menu, icons
   overlay/      the app's overlay page (overlay.html): only the table, drawn from what the app sends

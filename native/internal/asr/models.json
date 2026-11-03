@@ -71,5 +71,50 @@
       ["model.int8.onnx", "9177a9146cf32ee0cc8152276ef95116f312018d316be37ccf57f7efea81fc1a", 131652171],
       ["tokens.txt", "450e56bd2f036fe5b6aa821865838cc5aa9d8b0106134ce9a9ba0664abe6cd10", 9953]
     ]
+  },
+  "fastconformer-ctc-80ms-en": {
+    "engine": "nemo-ctc-streaming",
+    "title": "FastConformer 80 ms",
+    "detail": "English, 114M, lowercase without punctuation. NVIDIA NeMo (cache-aware streaming CTC): words appear as you say them, a sixth of a second at a time. The quickest to show them, for the most CPU (in a browser, about half a core).",
+    "credit": "stt_en_fastconformer_hybrid_large_streaming_80ms, NVIDIA, CC BY 4.0 (ONNX export by k2-fsa/sherpa-onnx)",
+    "url": "https://catalog.ngc.nvidia.com/orgs/nvidia/teams/nemo/models/stt_en_fastconformer_hybrid_large_streaming_80ms",
+    "downloadMB": 100,
+    "sources": [
+      "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-streaming-fast-conformer-ctc-en-80ms-int8.tar.bz2"
+    ],
+    "files": [
+      ["model.int8.onnx", "bf402c371a293707e90413c5df85484c8bc3aaa7081289c0007aab5ee8ac8e22", 132048406],
+      ["tokens.txt", "618dc110fc2213886b52e063ff42329bbdf37a266ca7705184090fa5f39f3131", 11896]
+    ]
+  },
+  "fastconformer-ctc-480ms-en": {
+    "engine": "nemo-ctc-streaming",
+    "title": "FastConformer 480 ms",
+    "detail": "English, 114M, lowercase without punctuation. NVIDIA NeMo (cache-aware streaming CTC): words appear as you say them, half a second at a time. The best of the three on clear speech.",
+    "credit": "stt_en_fastconformer_hybrid_large_streaming_480ms, NVIDIA, CC BY 4.0 (ONNX export by k2-fsa/sherpa-onnx)",
+    "url": "https://catalog.ngc.nvidia.com/orgs/nvidia/teams/nemo/models/stt_en_fastconformer_hybrid_large_streaming_480ms",
+    "downloadMB": 100,
+    "sources": [
+      "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-streaming-fast-conformer-ctc-en-480ms-int8.tar.bz2"
+    ],
+    "files": [
+      ["model.int8.onnx", "927a40a30e683e1dce4137f0e8ccae96e728ae8475f4f9798ce2aca8714272ad", 132048430],
+      ["tokens.txt", "618dc110fc2213886b52e063ff42329bbdf37a266ca7705184090fa5f39f3131", 11896]
+    ]
+  },
+  "fastconformer-ctc-1040ms-en": {
+    "engine": "nemo-ctc-streaming",
+    "title": "FastConformer 1040 ms",
+    "detail": "English, 114M, lowercase without punctuation. NVIDIA NeMo (cache-aware streaming CTC): words appear as you say them, a second at a time. The best of the three in noise, for the least CPU.",
+    "credit": "stt_en_fastconformer_hybrid_large_streaming_1040ms, NVIDIA, CC BY 4.0 (ONNX export by k2-fsa/sherpa-onnx)",
+    "url": "https://catalog.ngc.nvidia.com/orgs/nvidia/teams/nemo/models/stt_en_fastconformer_hybrid_large_streaming_1040ms",
+    "downloadMB": 100,
+    "sources": [
+      "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-streaming-fast-conformer-ctc-en-1040ms-int8.tar.bz2"
+    ],
+    "files": [
+      ["model.int8.onnx", "5b337af21c348930fff9565ecbadc7a570f2ad10a90e0f8522f5b2872e0484b2", 132048443],
+      ["tokens.txt", "618dc110fc2213886b52e063ff42329bbdf37a266ca7705184090fa5f39f3131", 11896]
+    ]
   }
 }

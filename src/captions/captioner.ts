@@ -1,4 +1,5 @@
 import workletUrl from './worklet.ts?worker&url'
+import FastConformerWorker from './fastconformer.worker.ts?worker'
 import ParakeetWorker from './parakeet.worker.ts?worker'
 import VoskWorker from './vosk.worker.ts?worker'
 import { FrameRing } from '../audio/ll/ring'
@@ -15,7 +16,7 @@ import type { FromCaptionWorker, ModelStatus, ToCaptionWorker, WorkerConfig } fr
  * talks to the worker directly.
  *
  *   raw mic ─────┐
- *                ├─▶ pv-caption (gate) ──frames──▶ worker (Vosk or Parakeet) ──words──▶ here
+ *                ├─▶ pv-caption (gate) ──frames──▶ worker (Vosk, Parakeet or FastConformer) ──words──▶ here
  *   call's mic ──┘   (the ring's level)
  */
 
@@ -49,7 +50,7 @@ export class Captioner {
   ) {
     this.model = prefs.model
     const engine = modelOf(prefs.model)?.engine
-    this.worker = engine === 'nemo-ctc' ? new ParakeetWorker() : new VoskWorker()
+    this.worker = engine === 'nemo-ctc' ? new ParakeetWorker() : engine === 'nemo-ctc-streaming' ? new FastConformerWorker() : new VoskWorker()
     this.worker.onmessage = (e: MessageEvent<FromCaptionWorker>) => this.onWorker(e.data)
     const shared = typeof SharedArrayBuffer !== 'undefined' && globalThis.crossOriginIsolated
     const ring = shared ? FrameRing.create(CAPTION_SLOTS, CAPTION_FRAME) : null

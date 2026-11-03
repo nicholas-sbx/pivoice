@@ -1,6 +1,7 @@
 /**
  * The caption worker, apart from the recogniser itself (vosk.worker.ts,
- * parakeet.worker.ts each bring theirs, so neither loads the other's code):
+ * parakeet.worker.ts, fastconformer.worker.ts each bring theirs, so none
+ * loads another's code):
  *
  *   model:  check the cache against the pinned hashes; if anything's
  *           missing, say how much and wait to be told to download it
@@ -12,7 +13,7 @@
  * The recogniser only ever works on a segment: what the gate let through
  * (your ring lit, plus the pre-roll and post-roll) and the segment's end.
  * Between segments nothing arrives, so nothing runs: no Vosk calls, no
- * Parakeet reads or re-reads, not even a timer. That's the CPU's sake as
+ * Parakeet reads or re-reads, no FastConformer chunks, not even a timer. That's the CPU's sake as
  * much as privacy's; the only always-on work while captions listen is the
  * worklet keeping the pre-roll and measuring the level, and with captions
  * off or you muted the worklet is switched off too.
@@ -63,7 +64,7 @@ export type FromCaptionWorker =
 
 /** A recogniser, fed one phrase at a time. */
 export interface Recogniser {
-  /** Recognises as it goes (Vosk), or a phrase at a time (Parakeet: partial() reads it all again). */
+  /** Recognises as it goes (Vosk, FastConformer), or a phrase at a time (Parakeet: partial() reads it all again). */
   readonly streaming: boolean
   /** Audio held for the phrase so far, samples. */
   readonly held: number
