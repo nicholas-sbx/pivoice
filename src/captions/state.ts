@@ -39,8 +39,18 @@ export const captions = reactive({
 const board = new CaptionBoard()
 let linger = 6000
 let sweep: ReturnType<typeof setInterval> | null = null
-/** This run of your captions (so a rejoin, counting from 0 again, isn't taken for old news). */
-const run = Math.floor(Math.random() * 0x7fffffff)
+/**
+ * This run of your captions (so a rejoin, counting from 0 again, isn't taken
+ * for old news). A recogniser starting again also counts from 0: it needs a
+ * new run too, or the board would take its first phrases for ones it has
+ * already seen and drop them.
+ */
+let run = Math.floor(Math.random() * 0x7fffffff)
+
+/** Another recogniser is starting: its phrase numbers start over. */
+export function newCaptionRun() {
+  run = (run + 1) % 0x80000000
+}
 
 function show(id: string) {
   const v = board.view(id)

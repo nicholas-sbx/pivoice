@@ -19,7 +19,8 @@ import Icon from './Icon.vue'
  * Then, in the same place, the download itself: a bar that comes up as soon
  * as it starts (by itself, or after "Download"), stays while the model is
  * made ready, and goes once captions are. Its X only hides it; the download
- * carries on. A model that was already here never shows it.
+ * carries on. A model you switch to shows the same place while it's getting
+ * ready, even when it was already here (then there's no bar, just the news).
  */
 
 const p = computed(() => captions.prompt)
@@ -37,6 +38,20 @@ const onData = computed(() => !!p.value?.network)
 /** Downloading this call (so "getting it ready" after it, and an error from it, show; a model already here doesn't). */
 const fetching = ref(false)
 const hidden = ref(false)
+/**
+ * A model you just chose, getting ready: shown even when it was already
+ * downloaded here, so switching says it's happening rather than looking
+ * like nothing did.
+ */
+const switching = ref(false)
+watch(
+  () => captionModel(),
+  (now, before) => {
+    if (!before || now === before) return
+    switching.value = true
+    hidden.value = false
+  }
+)
 watch(
   () => captions.model.phase,
   phase => {
@@ -44,22 +59,34 @@ watch(
       fetching.value = true
       hidden.value = false
     } else if (phase === 'ready' || phase === 'off' || phase === 'checking') fetching.value = false
+    if (phase === 'ready') switching.value = false
   },
   { immediate: true }
 )
 const phase = computed(() => captions.model.phase)
-const showProgress = computed(() => !p.value && fetching.value && !hidden.value && ['downloading', 'loading', 'error'].includes(phase.value))
+const busy = computed(() => fetching.value || switching.value)
+/** Not while it's only `needed`: that's the prompt's to say, and after "Not now" a banner would sit there saying it still is. */
+const showProgress = computed(
+  () => !p.value && busy.value && !hidden.value && ['checking', 'downloading', 'loading', 'error'].includes(phase.value)
+)
 const modelTitle = computed(() => modelOf(captionModel())?.title ?? 'the captions model')
 const fraction = computed(() => {
   if (phase.value === 'loading') return 1
   const { bytes, total } = captions.model
   return total > 0 ? Math.min(1, bytes / total) : 0
 })
+/** A bar only where there's progress to show: a model already here has none to know. */
+const showTrack = computed(() => phase.value === 'downloading' || (phase.value === 'loading' && fetching.value))
 const mb = (n: number) => (n / 1e6).toFixed(n < 1e7 ? 1 : 0)
 const progressText = computed(() => {
   const m = captions.model
-  if (phase.value === 'loading') return `Downloaded ${modelTitle.value}. Getting live captions ready…`
+  if (phase.value === 'loading') {
+    return fetching.value
+      ? `Downloaded ${modelTitle.value}. Getting live captions ready…`
+      : `Getting ${modelTitle.value} ready for live captions…`
+  }
   if (phase.value === 'error') return `Couldn't get ${modelTitle.value} for live captions: ${m.error}`
+  if (phase.value !== 'downloading') return `Switching live captions to ${modelTitle.value}…`
   return `Downloading ${modelTitle.value} for live captions: ${mb(m.bytes)} of ${mb(m.total)} MB`
 })
 </script>
@@ -78,10 +105,10 @@ const progressText = computed(() => {
       <Icon name="close" :size="18" />
     </button>
   </div>
-  <div v-else-if="showProgress" class="banner progress" :class="{ bad: phase === 'error' }" role="region" aria-label="Captions download">
+  <div v-else-if="showProgress" class="banner progress" :class="{ bad: phase === 'error' }" role="region" aria-label="Live captions">
     <span class="text" aria-live="polite">{{ progressText }}</span>
     <div
-      v-if="phase !== 'error'"
+      v-if="showTrack"
       class="track"
       role="progressbar"
       aria-label="Captions download"
@@ -91,7 +118,7 @@ const progressText = computed(() => {
     >
       <div class="fill" :class="{ done: phase === 'loading' }" :style="{ transform: `scaleX(${fraction})` }" />
     </div>
-    <button type="button" class="x" aria-label="Hide" :title="phase === 'error' ? 'Close' : 'Hide (it carries on downloading)'" @click="hidden = true">
+    <button type="button" class="x" aria-label="Hide" :title="phase === 'error' ? 'Close' : phase === 'downloading' ? 'Hide (it carries on downloading)' : 'Hide'" @click="hidden = true">
       <Icon name="close" :size="18" />
     </button>
   </div>

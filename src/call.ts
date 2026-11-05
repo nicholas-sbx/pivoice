@@ -16,6 +16,7 @@ import {
   holdDownload,
   acceptDownload,
   modelStatus,
+  newCaptionRun,
   ownCaption,
   receiveCaption,
   resetDownloadAnswer,
@@ -392,8 +393,13 @@ async function connectNative(kind: 'create' | 'join', name: string, code: string
   }
   const v = new NativeVoice(bridge)
   nv = v
+  let captionPhase = ''
   v.onCaptions = st => {
     if (nv !== v) return
+    // The app's helper counts phrases from 0 again each time it starts (a
+    // new model, another thread count, or a retry after a crash): a new run.
+    if (st.phase === 'loading' && captionPhase !== 'loading') newCaptionRun()
+    captionPhase = st.phase
     modelStatus({ phase: st.phase === 'off' ? 'checking' : st.phase, bytes: st.bytes, total: st.total, error: st.error }, st.model, call.prefs.captions, false, () =>
       v.captions('download')
     )
@@ -627,6 +633,7 @@ async function startCaptions() {
   const eng = engine
   const p = call.prefs.captions
   if (!eng || !p.send) return
+  newCaptionRun()
   const c: Captioner = new Captioner(eng.ctx, { ...p, model: captionModel() }, captionBase(), {
     status: st => {
       if (captioner !== c) return

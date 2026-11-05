@@ -407,6 +407,9 @@ func (c *captioner) recLoop() {
 		}
 		st.helper = h
 		st.phase = "ready"
+		// A new helper counts phrases from 0 again: a new run, so nobody takes
+		// its first phrases for ones already shown.
+		c.run = (c.run + 1) & 0x7fffffff
 		st.u, st.partialText, st.held, st.sinceReread = 0, "", 0, 0
 		st.retry = nil
 		setReady(true)

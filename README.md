@@ -1036,8 +1036,10 @@ Nothing is shipped with anything. The first time a model is wanted:
 - **While it downloads**, a bar in the same place under the top bar says
   how far it's got (by itself when the download starts by itself, or after
   **Download**), stays while the model is made ready, and goes once
-  captions are. Its X only hides it. A model that's already here shows
-  nothing. In the app too, from the app's own download.
+  captions are. Its X only hides it. Switching to a model that's already
+  here shows the same line, without a bar, while it's got ready: no bar,
+  because there's no download to count. In the app too, from the app's own
+  download.
   **Download** in the settings: *Not on data* (the default), *Always ask*,
   or *Always*.
 - **The app** keeps models and recognisers in your cache folder
