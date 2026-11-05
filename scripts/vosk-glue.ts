@@ -10,6 +10,10 @@
 // function-writers with plain closures that do the same thing. Then the
 // page needs nothing beyond 'wasm-unsafe-eval'.
 //
+// Its WebAssembly is inline as a data: URI, and Emscripten's loader would
+// fetch that URI: a connect to data:, which our CSP refuses. The glue can
+// decode it itself, so we say so: then the CSP needs no data: either.
+//
 // Pinned to one release by hash: the replacements are written against its
 // exact text, and anything else is refused rather than half patched.
 import { createHash } from 'node:crypto'
@@ -73,6 +77,18 @@ const SITES = [
   }
 ]
 
+/**
+ * Exact one-for-one swaps, since the code they touch is longer than it is
+ * worth restating: the inline wasm is decoded, not fetched (see the top of
+ * this file).
+ */
+const FIXES: [find: string, replace: string][] = [
+  [
+    'function getBinaryPromise(){if(!wasmBinary&&(ENVIRONMENT_IS_WORKER)){',
+    'function getBinaryPromise(){if(!wasmBinary&&(ENVIRONMENT_IS_WORKER)&&!isDataURI(wasmBinaryFile)){'
+  ]
+]
+
 function sha256(s: string): string {
   return createHash('sha256').update(s).digest('hex')
 }
@@ -99,6 +115,10 @@ export function voskGlue(bundle: string, expectSha = VOSK_BROWSER_SHA256): strin
     const j = i < 0 ? -1 : glue.indexOf(s.end, i)
     if (i < 0 || j < 0 || glue.indexOf(s.start, i + 1) >= 0) throw new Error(`vosk-browser: ${s.name} isn't where it was`)
     glue = glue.slice(0, i) + s.code + glue.slice(j + s.end.length)
+  }
+  for (const [find, replace] of FIXES) {
+    if (glue.split(find).length !== 2) throw new Error(`vosk-browser: the glue isn't where it was (${find.slice(0, 40)}…)`)
+    glue = glue.replace(find, replace)
   }
   // Nothing left that writes code at run time.
   if (/new Function|\bnew_\(Function|[^.\w]eval\(/.test(glue)) throw new Error('vosk-browser: the glue still makes functions at run time')
