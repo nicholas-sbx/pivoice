@@ -306,6 +306,22 @@ function reset() {
         @update:model-value="v => set('lines', v)"
       />
       <Slider
+        label="Fade older phrases"
+        unit="%"
+        :min="0"
+        :max="Math.round(r.fade[1] * 100)"
+        :step="Math.round(r.fade[2] * 100)"
+        :hint="c.fade > 0 ? 'Each phrase fades a little more than the one after it, so the newest words stand out.' : 'Off: every phrase is as bright as the newest.'"
+        :model-value="Math.round(c.fade * 100)"
+        @update:model-value="v => set('fade', v / 100)"
+      />
+      <Switch
+        label="Waiting caret"
+        hint="Blinks after someone's words while they're still speaking, in case more captions are coming."
+        :model-value="c.caret"
+        @update:model-value="v => set('caret', v)"
+      />
+      <Slider
         label="Size"
         unit="%"
         :min="75"

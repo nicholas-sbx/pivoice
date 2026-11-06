@@ -73,6 +73,10 @@ export interface CaptionPrefs {
   lingerSec: number
   /** How many lines of someone's captions show at once. */
   lines: number
+  /** How much each older phrase fades, per phrase back (0 is no fading). */
+  fade: number
+  /** Blink a caret after their words while they're still speaking. */
+  caret: boolean
   /** Caption text size. */
   scale: number
 }
@@ -93,7 +97,9 @@ export const CAPTION_DEFAULTS: CaptionPrefs = {
   minConfidence: 0,
   threads: 2,
   lingerSec: 6,
-  lines: 2,
+  lines: 3,
+  fade: 0.25,
+  caret: true,
   scale: 1
 }
 
@@ -107,7 +113,8 @@ export const CAPTION_RANGES = {
   minConfidence: [0, 0.95, 0.05],
   threads: [1, 8, 1],
   lingerSec: [1, 20, 1],
-  lines: [1, 4, 1],
+  lines: [1, 6, 1],
+  fade: [0, 0.8, 0.05],
   scale: [0.75, 1.5, 0.05]
 } as const satisfies Partial<Record<keyof CaptionPrefs, readonly [number, number, number]>>
 
@@ -122,7 +129,7 @@ export function sanitizeCaptions(raw: unknown): CaptionPrefs {
   const c = captionDefaults()
   if (!raw || typeof raw !== 'object') return c
   const r = raw as Record<string, unknown>
-  for (const k of ['send', 'show', 'showOwn', 'partials'] as const) if (typeof r[k] === 'boolean') c[k] = r[k]
+  for (const k of ['send', 'show', 'showOwn', 'partials', 'caret'] as const) if (typeof r[k] === 'boolean') c[k] = r[k]
   if (r.download === 'wifi' || r.download === 'ask' || r.download === 'always') c.download = r.download
   if (r.source === 'raw' || r.source === 'call') c.source = r.source
   if (isModelId(r.model)) c.model = r.model

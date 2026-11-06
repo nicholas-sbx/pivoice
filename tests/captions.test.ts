@@ -273,5 +273,6 @@ describe('caption settings', () => {
     const c = sanitizeCaptions({ model: 'parakeet-ctc-110m-en', preRollMs: 99999, lines: 2.6, download: 'sometimes', send: false, threads: 0 })
     expect(c).toMatchObject({ model: 'parakeet-ctc-110m-en', preRollMs: 1000, lines: 3, download: 'wifi', send: false, threads: 1 })
     expect(sanitizeCaptions({ model: 'whisper' }).model).toBe('vosk-small-en')
+    expect(sanitizeCaptions({ caret: false, fade: 999 })).toMatchObject({ caret: false, fade: 0.8 })
   })
 })
