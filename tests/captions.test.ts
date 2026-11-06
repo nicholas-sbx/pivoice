@@ -7,6 +7,7 @@ import { CaptionGate, LevelMeter, type GateSink } from '../src/captions/gate'
 import { MODELS, browserModel, checkManifest, inBrowser, modelOf } from '../src/captions/models'
 import { downloadDecision, metered } from '../src/captions/network'
 import { MAX_CAPTION_TEXT, RateLimit, cleanText, decodeCaption, encodeCaption } from '../src/captions/protocol'
+import { captionRun, newCaptionRun } from '../src/captions/state'
 
 interface GateCase {
   name: string
@@ -176,6 +177,15 @@ describe('caption board', () => {
     b.receive('a', msg(1, 5, 'five', true), 0)
     expect(b.receive('a', msg(1, 4, 'four', false), 1)).toBe(false)
     b.receive('a', msg(2, 0, 'again', false), 2)
+    expect(b.view('a')?.lines).toEqual(['again'])
+  })
+
+  it('takes a new recogniser as a new run, not its first phrases for old news', () => {
+    const b = new CaptionBoard()
+    const before = captionRun()
+    b.receive('a', msg(before, 5, 'five', true), 0)
+    newCaptionRun()
+    b.receive('a', msg(captionRun(), 0, 'again', false), 1)
     expect(b.view('a')?.lines).toEqual(['again'])
   })
 
