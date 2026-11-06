@@ -36,6 +36,8 @@ const props = defineProps<{
   /** Live captions: who's saying what, and how they're shown (`showCaptions`: other people's). */
   captions?: Record<string, CaptionView>
   captionLines?: number
+  captionFade?: number
+  captionCaret?: boolean
   captionScale?: number
   showCaptions?: boolean
 }>()
@@ -151,6 +153,13 @@ function captionOf(id: string): CaptionView | null {
   if ((!isSelf(id) && !props.showCaptions) || props.silenced[id] || mutedOf(id)) return null
   return props.captions?.[id] ?? null
 }
+
+/** A caret after their words while they're still speaking: more may be coming. */
+function caretOf(id: string): boolean {
+  if (props.captionCaret === false) return false
+  const v = captionOf(id)
+  return !!v && (v.live || speakingOf(id))
+}
 </script>
 
 <template>
@@ -188,7 +197,7 @@ function captionOf(id: string): CaptionView | null {
         />
       </div>
       <div v-if="captionOf(id) && sideOf(id) !== 'below'" class="cap" :class="[sideOf(id), 'align-' + alignOf(id)]">
-        <CaptionText :view="captionOf(id)!" :lines="captionLines ?? 2" :scale="captionScale ?? 1" />
+        <CaptionText :view="captionOf(id)!" :lines="captionLines ?? 3" :fade="captionFade ?? 0.25" :caret="caretOf(id)" :scale="captionScale ?? 1" />
       </div>
       <div class="under">
         <div v-snap class="tag">
@@ -243,7 +252,7 @@ function captionOf(id: string): CaptionView | null {
           <div v-else class="route-head">Connecting…</div>
         </div>
         <div v-if="captionOf(id) && sideOf(id) === 'below'" class="cap-below" :class="'align-' + alignOf(id)">
-          <CaptionText :view="captionOf(id)!" :lines="captionLines ?? 2" :scale="captionScale ?? 1" />
+          <CaptionText :view="captionOf(id)!" :lines="captionLines ?? 3" :fade="captionFade ?? 0.25" :caret="caretOf(id)" :scale="captionScale ?? 1" />
         </div>
       </div>
     </div>
@@ -460,7 +469,7 @@ function captionOf(id: string): CaptionView | null {
   pointer-events: none;
 }
 .cap :deep(.caption) {
-  max-width: min(260px, 38vw);
+  max-width: min(330px, 44vw);
 }
 .cap.above {
   bottom: calc(100% + 12px);
@@ -481,7 +490,7 @@ function captionOf(id: string): CaptionView | null {
 .cap.left {
   top: 0;
   bottom: 0;
-  width: min(260px, 38vw);
+  width: min(330px, 44vw);
   align-items: center;
 }
 .cap.right {
@@ -494,7 +503,7 @@ function captionOf(id: string): CaptionView | null {
 .cap-below {
   margin-top: 8px;
   z-index: 2;
-  max-width: min(260px, 60vw);
+  max-width: min(330px, 66vw);
 }
 /* .under reaches 150px past the seat on each side: these start at the seat's own edge instead. */
 .cap-below.align-start {
@@ -507,11 +516,11 @@ function captionOf(id: string): CaptionView | null {
 }
 .seat[data-small] .cap :deep(.caption),
 .seat[data-small] .cap-below :deep(.caption) {
-  max-width: min(180px, 42vw);
+  max-width: min(230px, 48vw);
   font-size: calc(12px * var(--scale));
 }
 .seat[data-small] .cap.right,
 .seat[data-small] .cap.left {
-  width: min(180px, 42vw);
+  width: min(230px, 48vw);
 }
 </style>

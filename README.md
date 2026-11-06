@@ -1089,7 +1089,8 @@ them), and shown as text.
 | Read again every (Parakeet) | 1000 ms | How often the phrase so far is read again for live words. |
 | Longest phrase (Parakeet, FastConformer) | 15 s | Parakeet: finished and started again past this. FastConformer: ends at the next word past this, the model carrying on. |
 | CPU threads (app) | 2 | The recogniser's threads. |
-| Lines / Size / Stay up for | 2 / 100% / 6 s | How captions are shown. |
+| Lines / Fade / Size / Stay up for | 3 / 25% / 100% / 6 s | How captions are shown. Each older phrase fades by this much more than the one after it. |
+| Waiting caret | On | Blinks after someone's words while they're still speaking, in case more captions are coming. |
 
 The tab also shows what it's hearing (and why), how the model's getting on,
 and how hard the recogniser works (× real time).

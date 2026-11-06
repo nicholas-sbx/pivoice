@@ -32,6 +32,8 @@ const props = defineProps<{
   /** Live captions: who's saying what, and how they're shown (`showCaptions`: other people's). */
   captions?: Record<string, CaptionView>
   captionLines?: number
+  captionFade?: number
+  captionCaret?: boolean
   captionScale?: number
   showCaptions?: boolean
 }>()
@@ -93,6 +95,13 @@ function captionOf(m: Member): CaptionView | null {
   return props.captions?.[m.id] ?? null
 }
 
+/** A caret after their words while they're still speaking: more may be coming. */
+function caretOf(m: Member): boolean {
+  if (props.captionCaret === false) return false
+  const v = captionOf(m)
+  return !!v && (v.live || speakingOf(m))
+}
+
 function pingOf(id: string): number | null {
   const ms = props.showPing && !isSelf(id) ? props.links[id]?.rttMs : null
   return ms == null ? null : Math.round(ms)
@@ -124,7 +133,7 @@ function mouthToEar(s: LinkStats): string {
       </div>
       <!-- A tile: over the lower part of it, above the name. A row: beside the face, under the name (one line). -->
       <div v-if="captionOf(m) && !layout.row" class="cap">
-        <CaptionText :view="captionOf(m)!" :lines="captionLines ?? 2" :scale="captionScale ?? 1" />
+        <CaptionText :view="captionOf(m)!" :lines="captionLines ?? 3" :fade="captionFade ?? 0.25" :caret="caretOf(m)" :scale="captionScale ?? 1" />
       </div>
       <div class="info">
         <div class="tag">
@@ -136,7 +145,7 @@ function mouthToEar(s: LinkStats): string {
         </div>
         <span v-if="layout.row && pingOf(m.id) != null" class="ping" :class="pingLevel(pingOf(m.id)!)">{{ pingOf(m.id) }} ms</span>
         <div v-if="captionOf(m) && layout.row" class="cap-row">
-          <CaptionText :view="captionOf(m)!" :lines="1" :scale="Math.min(1, captionScale ?? 1)" />
+          <CaptionText :view="captionOf(m)!" :lines="1" :fade="captionFade ?? 0.25" :caret="caretOf(m)" :scale="Math.min(1, captionScale ?? 1)" />
         </div>
         <div v-if="showRoute && !isSelf(m.id)" class="route">
           <template v-if="links[m.id]">
