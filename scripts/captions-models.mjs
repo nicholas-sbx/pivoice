@@ -23,7 +23,7 @@
 // captions locally. Running it again when it's all there does nothing.
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { gunzipSync, gzipSync, inflateRawSync } from 'node:zlib'
@@ -135,8 +135,17 @@ function upToDate(id, out) {
       m.v === MANIFEST_VERSION &&
       m.id === id &&
       m.files.length === pins.length &&
-      m.files.every((f, i) => f.path === pins[i][0] && f.sha256 === pins[i][1] && f.parts.every(p => existsSync(join(out, p.name))))
+      m.files.every((f, i) => f.path === pins[i][0] && f.sha256 === pins[i][1] && f.parts.every(p => partThere(out, p)))
     )
+  } catch {
+    return false
+  }
+}
+
+/** A part is there and all of it: a cut-off write or a bad cache restore isn't good enough. */
+function partThere(out, part) {
+  try {
+    return statSync(join(out, part.name)).size === part.size
   } catch {
     return false
   }

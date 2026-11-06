@@ -109,6 +109,18 @@ jobs:
           cache: npm
       - run: npm ci
 
+      # The built models only change when their pins or how they're packed do:
+      # keep them between releases instead of fetching and gzipping them every
+      # time. The fetch below checks every model against those same pins and
+      # skips the ones already there (and re-fetches a part that's missing or
+      # the wrong size), so a good cache costs no downloads and a bad one only
+      # costs what's broken.
+      - name: Cache the captions models
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: public/captions
+          key: captions-models-${{ runner.os }}-${{ hashFiles('src/captions/models.json', 'scripts/captions-models.mjs', '.nvmrc') }}
+
       # Live captions' speech models (Vosk's, Parakeet's, FastConformer's), from where
       # they're published, each file checked against the hashes in
       # src/captions/models.json, into public/captions/ in parts of at most

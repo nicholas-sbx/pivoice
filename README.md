@@ -1249,16 +1249,21 @@ The release then runs three jobs in order:
    copies the Cloudflare TURN secrets to the Worker if you've set them. It
    runs in the `production` environment. Add required reviewers there
    (Settings → Environments) if you want an approval click before anything
-   goes live.
+   goes live. The captions models are cached between releases, keyed on
+   their pins in `src/captions/models.json`, so they're fetched again only
+   when those change; `wrangler deploy` itself uploads only the assets whose
+   contents changed, so unchanged models aren't uploaded again either.
 
 The app releases the same way, keyed on `native/VERSION` and tagged
 `native-vX.Y.Z`: bump the file on main and push, push a tag yourself, or
-**Run workflow**. Three jobs start at once: **tag**, **check** (`gofmt`, `go
+**Run workflow**. Four jobs start at once: **tag**, **check** (`gofmt`, `go
 vet`, `go test -race`, where the engine's tests run two engines on fake sound
 cards over real WebRTC, against RNNoise and SpeexDSP built as the release
-builds them, then the processing benchmarks) and **build** on Linux (Ubuntu 22.04, so glibc
-2.35+) and Windows. **flatpak** wraps the Linux binary
-(`native/flatpak/`; GNOME runtime, so WebKitGTK comes from there). **release** waits for all of them, so nothing ships
+builds them, then the processing benchmarks), **build-linux** (Ubuntu 22.04, so glibc
+2.35+) and **build-windows**. **flatpak** starts as soon as the Linux build
+is done, since it only wraps that binary (`native/flatpak/`; GNOME runtime,
+so WebKitGTK comes from there) and doesn't need to wait for Windows.
+**release** waits for all of them, so nothing ships
 unless the tests passed too, and publishes a GitHub release with the files
 and how to run each. Each file has the version in its name
 (`pivoice-0.2.0-linux-amd64.tar.gz`, `pivoice-0.2.0-linux-x86_64.flatpak`,
@@ -1271,8 +1276,8 @@ models and recognisers there, `~/.var/app/…/cache`); the audio thread goes
 realtime through the Realtime portal there. CI installs the bundle and checks that every library the
 binary links is in the runtime. Its overlay can't stay on top or let
 clicks through yet, since the runtime has no gtk-layer-shell. macOS is switched off for now (its runners can queue
-for a long time): uncomment its entry in the build matrix to bring it back,
-as one universal binary. It needs no secrets, only
+for a long time): add a `build-macos` job (the steps are in this file's
+history) to bring it back, as one universal binary. It needs no secrets, only
 `VITE_PUBLIC_URL`, the site it opens: without it, a main push builds but
 doesn't tag or release.
 
