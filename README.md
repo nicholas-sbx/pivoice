@@ -1084,7 +1084,6 @@ them), and shown as text.
 | What It Hears (browser) | Unprocessed | Its own capture as above, or the call's own capture, processed. |
 | Before the ring / After the ring | 200 / 200 ms | Pre-roll and post-roll. |
 | Words as you say them | On | Live words, or only finished phrases. |
-| Updates a second (Vosk, FastConformer) | 8 | The most live updates a second. |
 | Leave out unsure words (Vosk) | Off | Finished phrases drop words below this confidence. |
 | Read again every (Parakeet) | 1000 ms | How often the phrase so far is read again for live words. |
 | Longest phrase (Parakeet, FastConformer) | 15 s | Parakeet: finished and started again past this. FastConformer: ends at the next word past this, the model carrying on. |

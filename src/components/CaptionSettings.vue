@@ -233,17 +233,6 @@ function reset() {
           @update:model-value="v => set('partials', v)"
         />
         <Slider
-          v-if="streaming"
-          label="Updates a second"
-          :min="r.partialsPerSec[0]"
-          :max="r.partialsPerSec[1]"
-          :step="r.partialsPerSec[2]"
-          :hint="engine === 'vosk' ? 'The most times a second your words so far go out.' : 'The most times a second your words so far go out (FastConformer only has new ones once a chunk: see its description).'"
-          :disabled="!c.partials"
-          :model-value="c.partialsPerSec"
-          @update:model-value="v => set('partialsPerSec', v)"
-        />
-        <Slider
           v-if="engine === 'vosk'"
           label="Leave out unsure words"
           unit="%"

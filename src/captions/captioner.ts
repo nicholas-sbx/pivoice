@@ -27,7 +27,7 @@ export interface CaptionerEvents {
 }
 
 export function workerConfig(p: CaptionPrefs): WorkerConfig {
-  return { partials: p.partials, partialsPerSec: p.partialsPerSec, rereadMs: p.rereadMs, maxPhraseSec: p.maxPhraseSec, minConfidence: p.minConfidence }
+  return { partials: p.partials, rereadMs: p.rereadMs, maxPhraseSec: p.maxPhraseSec, minConfidence: p.minConfidence }
 }
 
 export class Captioner {
