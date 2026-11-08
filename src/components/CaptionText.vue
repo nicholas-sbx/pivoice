@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import type { CaptionView } from '../captions/board'
 import { captionParts } from '../captions/display'
 
@@ -24,10 +24,28 @@ const props = defineProps<{
 }>()
 
 const parts = computed(() => captionParts(props.view.lines, props.view.live, props.fade))
+const captionEl = ref<HTMLElement | null>(null)
+
+/**
+ * The newest words are last, at the bottom. `justify-content: flex-end` puts
+ * them there, but an engine (or scroll anchoring) can lay an overflowing
+ * block out from the top instead, leaving the new words below the box and
+ * only the old ones showing (and fading). Pin the hidden scroll to the end
+ * after every update: where the block is already bottom-aligned there is no
+ * scroll range, so this does nothing.
+ */
+function pinNewest() {
+  const el = captionEl.value
+  if (el) el.scrollTop = el.scrollHeight
+}
+// Once the DOM has the new words (and after the first paint, for captions
+// that appear mid-speech already overflowing).
+watch([parts, () => props.lines, () => props.scale, () => props.caret], pinNewest, { flush: 'post' })
+onMounted(pinNewest)
 </script>
 
 <template>
-  <div class="caption" :style="{ '--lines': lines, '--scale': scale }">
+  <div ref="captionEl" class="caption" :style="{ '--lines': lines, '--scale': scale }">
     <div class="body">
       <span v-for="(part, i) in parts" :key="i" :class="{ live: part.live }" :style="{ opacity: part.opacity }">{{ part.text }}</span>
       <span v-if="caret && parts.length" class="caret" aria-hidden="true" />
@@ -43,6 +61,8 @@ const parts = computed(() => captionParts(props.view.lines, props.view.live, pro
   justify-content: flex-end;
   max-height: calc(var(--lines) * 1.35em + 8px);
   overflow: hidden;
+  /* Newest pinned by script (pinNewest): don't let scroll anchoring move it between updates. */
+  overflow-anchor: none;
   padding: 4px 8px;
   border-radius: 4px;
   background: var(--bg-floating);
