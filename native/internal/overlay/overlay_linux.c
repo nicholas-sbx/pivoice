@@ -212,7 +212,7 @@ static const char repaint_js[] = "window.__pivoiceOverlay&&window.__pivoiceOverl
 static gboolean placed(GtkWidget *w, GdkEvent *ev, gpointer data) {
 	(void)w;
 	(void)ev;
-	webview_eval(((pv_overlay *)data)->view, repaint_js);
+	pv_eval(data, repaint_js);
 	return FALSE;
 }
 
@@ -351,6 +351,10 @@ void pv_navigate(pv_overlay *o, const char *url) {
 }
 
 void pv_eval(pv_overlay *o, const char *js) {
+	// WebKit may damage only the seat when its ring changes. If the native
+	// surface lost its contents, also present the rest of the webview from
+	// its backing store. GTK coalesces these requests; a quiet call stays idle.
+	gtk_widget_queue_draw(o->win);
 	webview_eval(o->view, js);
 }
 
