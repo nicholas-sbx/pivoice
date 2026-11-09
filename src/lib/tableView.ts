@@ -32,9 +32,37 @@ export interface TableViewOptions {
   radius: (g: Geometry, present: number) => number
 }
 
+/**
+ * The part of a box that's on screen, in the box's own coordinates: where
+ * that part starts inside the box, and how big it is.
+ *
+ * A page can be laid out in something bigger than the window it's shown in,
+ * and not always by its own doing: an embed whose container is sized from
+ * the display, a column that can't shrink below its content, a window made
+ * smaller before the page caught up. Drawn across the whole of that box, the
+ * table's middle — where you sit, and where everyone else is put — lands off
+ * the window's bottom right corner. Measured against what's on screen, it
+ * stays in the middle of what you can see, whichever of those it was.
+ */
+export function visibleBox(
+  box: { left: number; top: number; width: number; height: number },
+  width: number,
+  height: number
+): { x: number; y: number; w: number; h: number } {
+  // The window's edges, in the box's own coordinates.
+  const x = Math.max(0, -box.left)
+  const y = Math.max(0, -box.top)
+  const right = Math.min(box.width, width - box.left)
+  const bottom = Math.min(box.height, height - box.top)
+  return { x, y, w: Math.max(0, right - x), h: Math.max(0, bottom - y) }
+}
+
 export function useTableView(opts: TableViewOptions) {
   const { seating, root, tableEl } = opts
+  /** The space the table's drawn in: the part of it on screen (see visibleBox). */
   const size = reactive({ w: 0, h: 0 })
+  /** Where that part starts in it. Nothing to add to unless some of it is off screen. */
+  const shown = reactive({ x: 0, y: 0 })
   const geometry = computed(() => opts.geometry(size.w, size.h))
   const seatEls = new Map<string, HTMLElement>()
   /** The last we knew of everyone, so someone fading out still has a name. */
@@ -79,8 +107,8 @@ export function useTableView(opts: TableViewOptions) {
     const g = geometry.value
     const { x, y } = seatOffset(seat.angle.x, radius.x)
     const p = Math.max(0, Math.min(1, seat.presence.x))
-    const left = g.cx + x - g.avatar / 2
-    const top = g.cy + y - g.avatar / 2
+    const left = shown.x + g.cx + x - g.avatar / 2
+    const top = shown.y + g.cy + y - g.avatar / 2
     // At rest: whole pixels and no scale, so the face and name are drawn
     // crisp rather than resampled. Only while moving is it fractional.
     const still = seat.angle.v === 0 && seat.presence.v === 0 && p === 1 && radius.v === 0
@@ -101,8 +129,8 @@ export function useTableView(opts: TableViewOptions) {
     const still = radius.v === 0
     const r = Math.max(0, radius.x - g.avatar * 0.22)
     const d = still ? 2 * Math.round(r) : 2 * r
-    const left = g.cx - d / 2
-    const top = g.cy - d / 2
+    const left = shown.x + g.cx - d / 2
+    const top = shown.y + g.cy - d / 2
     el.style.width = el.style.height = d.toFixed(2) + 'px'
     el.style.transform = still ? `translate(${px(left)}px, ${px(top)}px)` : `translate(${left.toFixed(2)}px, ${top.toFixed(2)}px)`
   }
@@ -133,24 +161,44 @@ export function useTableView(opts: TableViewOptions) {
     { immediate: true }
   )
 
-  // A resized window jumps straight to the new size; only people joining and leaving animate.
-  watch(geometry, () => {
+  // A resized window — or one showing a different part of the space — jumps
+  // straight to the new size; only people joining and leaving animate.
+  watch([geometry, () => shown.x, () => shown.y], () => {
     retarget(true)
     paint()
   })
 
   let observer: ResizeObserver | null = null
   let detach: (() => void) | null = null
+  let deaf: (() => void) | null = null
   onMounted(() => {
     const el = root.value!
     win = el.ownerDocument.defaultView ?? window
     const measure = () => {
-      size.w = el.clientWidth
-      size.h = el.clientHeight
+      const doc = el.ownerDocument
+      // The window's own clientWidth/Height: innerWidth/Height count its scrollbars.
+      const v = visibleBox(
+        el.getBoundingClientRect(),
+        doc.documentElement.clientWidth || win.innerWidth,
+        doc.documentElement.clientHeight || win.innerHeight
+      )
+      shown.x = v.x
+      shown.y = v.y
+      size.w = v.w
+      size.h = v.h
     }
     measure()
     observer = new win.ResizeObserver(measure)
     observer.observe(el)
+    // The window can shrink without the space being told: a page laid out
+    // wider or taller than its window never sees its own box change.
+    const viewport = win.visualViewport
+    win.addEventListener('resize', measure)
+    viewport?.addEventListener('resize', measure)
+    deaf = () => {
+      win.removeEventListener('resize', measure)
+      viewport?.removeEventListener('resize', measure)
+    }
     detach = seating.attach({
       win,
       frame(dt) {
@@ -171,6 +219,7 @@ export function useTableView(opts: TableViewOptions) {
 
   onBeforeUnmount(() => {
     observer?.disconnect()
+    deaf?.()
     detach?.()
   })
 
