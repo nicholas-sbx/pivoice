@@ -3,8 +3,6 @@ name: Check site
 on:
   pull_request:
     paths: ['src/**', 'worker/**', 'tests/**', 'scripts/**', 'package*.json', '*config*', '.github/workflows/check-site.yml']
-  push:
-    branches: ['feat/captions-first']
   workflow_dispatch:
 
 permissions:
@@ -34,6 +32,7 @@ jobs:
           npm install --no-save --package-lock=false playwright
           npx playwright install --with-deps chromium
       - name: Start local rooms and site
+        id: server
         run: |
           npm run dev > "$RUNNER_TEMP/pivoice-dev.log" 2>&1 &
           for attempt in $(seq 1 60); do
@@ -49,6 +48,7 @@ jobs:
         env:
           SHOTS_DIR: test-results/captions-first
       - name: Existing room browser checks
+        if: ${{ !cancelled() && steps.server.outcome == 'success' }}
         run: npm run e2e
       - name: Browser screenshots and server log
         if: always()

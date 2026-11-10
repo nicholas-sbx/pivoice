@@ -102,6 +102,11 @@ try {
   assert.equal(await alice.locator('.message').count(), 3)
   ok('conversation outlives the seat captions')
 
+  if (process.env.SHOTS_DIR) {
+    mkdirSync(process.env.SHOTS_DIR, { recursive: true })
+    await alice.screenshot({ path: `${process.env.SHOTS_DIR}/captions-first-overlay-desktop.png` })
+  }
+
   await alice.click('button[aria-label="Caption appearance and timing"]')
   await alice.getByRole('radio', { name: 'Sidebar when it fits', exact: true }).click()
   await alice.locator('.appearance .slider').filter({ hasText: 'Text size' }).locator('input').fill('120')
@@ -115,20 +120,27 @@ try {
       const panel = document.querySelector('.caption-panel').getBoundingClientRect()
       const log = document.querySelector('.conversation').getBoundingClientRect()
       const controls = [...document.querySelectorAll('.bar button, .pill button')].map(e => e.getBoundingClientRect())
+      const left = document.querySelector('.bar .left')
+      const pill = document.querySelector('.pill').getBoundingClientRect()
       return {
         sidebar: root.classList.contains('sidebar'), inert: table.inert,
         wide: document.documentElement.scrollWidth > innerWidth,
         tall: document.documentElement.scrollHeight > innerHeight,
         panelFits: panel.left >= 0 && panel.right <= innerWidth && panel.bottom <= innerHeight && log.height > 20,
         controlsFit: controls.every(r => r.left >= 0 && r.right <= innerWidth && r.top >= 0 && r.bottom <= innerHeight),
+        headerFits: left.scrollWidth <= Math.ceil(left.clientWidth),
+        controlCenter: (pill.left + pill.right) / 2,
         backdrop: getComputedStyle(root, '::before').backdropFilter,
         tableRight: table.getBoundingClientRect().right, panelLeft: panel.left
       }
     })
     assert.equal(geometry.sidebar, width >= 1100, JSON.stringify({ width, geometry }))
     assert.equal(geometry.inert, width < 1100)
-    assert.ok(!geometry.wide && !geometry.tall && geometry.panelFits && geometry.controlsFit, JSON.stringify({ width, height, geometry }))
-    if (width >= 1100) assert.ok(geometry.tableRight <= geometry.panelLeft + 1)
+    assert.ok(!geometry.wide && !geometry.tall && geometry.panelFits && geometry.controlsFit && geometry.headerFits, JSON.stringify({ width, height, geometry }))
+    if (width >= 1100) {
+      assert.ok(geometry.tableRight <= geometry.panelLeft + 1)
+      assert.ok(Math.abs(geometry.controlCenter - geometry.tableRight / 2) <= 1, JSON.stringify({ width, geometry }))
+    }
     else assert.match(geometry.backdrop, /blur\(8px\)/)
     if (process.env.SHOTS_DIR) {
       mkdirSync(process.env.SHOTS_DIR, { recursive: true })
@@ -167,7 +179,7 @@ try {
   assert.equal(await alice.evaluate(() => document.activeElement?.getAttribute('aria-label')), 'Captions first')
   await alice.click('button[aria-label="Captions first"]')
   await alice.getByRole('button', { name: 'Disconnect', exact: true }).click()
-  await alice.getByRole('button', { name: 'Create a Room', exact: true }).waitFor()
+  await alice.getByRole('button', { name: /^Create a Room/ }).waitFor()
   const remaining = await alice.evaluate(async () => (await import('/src/captions/state.ts')).conversation.messages.length)
   assert.equal(remaining, 0)
   assert.deepEqual(errors, [])

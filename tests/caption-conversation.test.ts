@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { CaptionConversation } from '../src/captions/conversation'
 import { CAPTION_FIRST_DEFAULTS, sanitizeCaptionFirst } from '../src/captions/conversation-config'
 import { loadPrefs } from '../src/lib/prefs'
+import { reactive } from 'vue'
 
 const members = [
   { id: 'a', name: 'Alice', joinedAt: 1 },
@@ -13,10 +14,19 @@ function setup() {
   c.roster(members)
   return c
 }
-const activity = (c: CaptionConversation, now: number, ...ids: string[]) => c.activity(new Set(ids), now)
-const words = (c: CaptionConversation, id: string, u: number, text: string, final: boolean, now: number, s = 1) => c.apply(id, { s, u, t: text, f: final }, now)
+const activity = (c: Pick<CaptionConversation, 'activity'>, now: number, ...ids: string[]) => c.activity(new Set(ids), now)
+const words = (c: Pick<CaptionConversation, 'apply'>, id: string, u: number, text: string, final: boolean, now: number, s = 1) => c.apply(id, { s, u, t: text, f: final }, now)
 
 describe('captions-first conversation', () => {
+  it('keeps the same row when wrapped in the UI’s reactive state', () => {
+    const c = reactive(setup())
+    activity(c, 0, 'a')
+    words(c, 'a', 0, 'first', true, 10)
+    activity(c, 20)
+    activity(c, 30, 'a')
+    words(c, 'a', 1, 'second', true, 40)
+    expect(c.visibleMessages.map(m => m.text)).toEqual(['first second'])
+  })
   it('reserves a blank message as speech starts, then corrects its live phrase in place', () => {
     const c = setup()
     activity(c, 0, 'a')

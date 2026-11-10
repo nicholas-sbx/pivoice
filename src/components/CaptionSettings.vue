@@ -118,7 +118,7 @@ function reset() {
         @update:model-value="v => set('send', v)"
       />
       <Switch label="Show Captions" hint="Everyone else's, beside them." :model-value="c.show" @update:model-value="v => set('show', v)" />
-      <Switch label="Show My Own" hint="Yours beside you, as everyone sees them." :model-value="c.showOwn" @update:model-value="v => set('showOwn', v)" />
+      <Switch label="Show My Own" hint="Yours, at the table and in captions-first view." :model-value="c.showOwn" @update:model-value="v => set('showOwn', v)" />
     </div>
 
     <template v-if="c.send && !noCaptions">

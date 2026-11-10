@@ -26,7 +26,7 @@ import SettingsPanel from '../components/SettingsPanel.vue'
 import UserMenu from '../components/UserMenu.vue'
 import { isNative } from '../native/bridge'
 import { useCompact } from '../lib/viewport'
-import { vSnap } from '../lib/snap'
+import { snapNow, vSnap } from '../lib/snap'
 import { closePip, pipRoot, pipSupported, pipWindow, togglePip } from '../pip'
 import { overlayError, overlaySupported } from '../native/overlay'
 
@@ -34,10 +34,14 @@ const settingsOpen = ref(false)
 const displayOpen = ref(false)
 const menu = ref<{ id: string; x: number; y: number } | null>(null)
 const stage = ref<HTMLElement>()
+const pill = ref<HTMLElement>()
 const captionButton = ref<HTMLButtonElement>()
 const stageWidth = ref(innerWidth)
 const captionSidebar = computed(() => call.prefs.captionFirst.on && call.prefs.captionFirst.layout === 'sidebar' && stageWidth.value >= 1100)
 let stageObserver: ResizeObserver | null = null
+// Pixel snapping can leave a fixed margin. Re-centre when the available
+// table width changes without a window resize (switching to the sidebar).
+watch(captionSidebar, () => { if (pill.value) snapNow(pill.value) }, { flush: 'post' })
 
 function toggleCaptionFirst() {
   updatePrefs({ captionFirst: { ...call.prefs.captionFirst, on: !call.prefs.captionFirst.on } })
@@ -232,7 +236,7 @@ onBeforeUnmount(() => {
       </div>
       <CaptionsFirst v-if="call.prefs.captionFirst.on" :sidebar="captionSidebar" @close="closeCaptionFirst" />
 
-      <div v-snap class="pill" role="toolbar" aria-label="Call controls">
+      <div ref="pill" v-snap class="pill" role="toolbar" aria-label="Call controls">
         <ControlButton
           icon="mic"
           :label="selfMuted ? 'Unmute' : 'Mute'"
@@ -470,17 +474,18 @@ h1 {
     justify-content: center;
   }
 }
-@media (max-width: 380px) {
+@media (max-width: 480px) {
   .people,
-  .divider,
-  .status {
+  .divider {
     display: none;
   }
   .bar { gap: 8px; }
+  .left { gap: 6px; }
   .right { gap: 4px; }
   .bar-btn { width: 28px; }
   .invite { width: 30px; }
 }
+@media (max-width: 380px) { .status { display: none; } }
 
 .stage {
   --caption-sidebar-width: clamp(340px, 32vw, 460px);
