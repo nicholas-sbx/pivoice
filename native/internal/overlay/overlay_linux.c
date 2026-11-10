@@ -290,8 +290,11 @@ pv_overlay *pv_open(int debug, const char *js) {
 	if (view) {
 		GdkRGBA none = {0, 0, 0, 0};
 		webkit_web_view_set_background_color(WEBKIT_WEB_VIEW(view), &none);
-		// A few faces don't need the GPU: drawn in software it holds about 36 MB of its own, against about 130 with it.
-		webkit_settings_set_hardware_acceleration_policy(webkit_web_view_get_settings(WEBKIT_WEB_VIEW(view)), WEBKIT_HARDWARE_ACCELERATION_POLICY_NEVER);
+		// WebKitGTK 2.54 on Wayland can paint only the changing seat when
+		// forced into software rendering. Let WebKit choose its renderer
+		// there. X11 and older WebKitGTK keep the smaller software renderer.
+		if (mode == 1 || (webkit_get_major_version() == 2 && webkit_get_minor_version() < 54))
+			webkit_settings_set_hardware_acceleration_policy(webkit_web_view_get_settings(WEBKIT_WEB_VIEW(view)), WEBKIT_HARDWARE_ACCELERATION_POLICY_NEVER);
 	}
 	g_signal_connect(o->win, "map-event", G_CALLBACK(mapped), o);
 	g_signal_connect(o->win, "configure-event", G_CALLBACK(placed), o);
