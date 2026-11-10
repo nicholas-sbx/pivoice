@@ -137,11 +137,11 @@ onBeforeUnmount(() => {
         </div>
       </div>
       <div class="right">
-        <button ref="captionButton" type="button" class="bar-btn" :class="{ active: call.prefs.captionFirst.on }" title="Captions first" aria-label="Captions first" :aria-pressed="call.prefs.captionFirst.on" @click="toggleCaptionFirst"><Icon name="captions" :size="20" /></button>
         <div class="people" :title="`${present} in the call`">
           <Icon name="people" :size="20" />
           <span>{{ present }}</span>
         </div>
+        <button ref="captionButton" type="button" class="bar-btn" :class="{ active: call.prefs.captionFirst.on }" title="Transcript" aria-label="Transcript" :aria-pressed="call.prefs.captionFirst.on" @click="toggleCaptionFirst"><Icon name="transcript" :size="20" /></button>
         <button
           v-if="pipSupported"
           type="button"
@@ -475,7 +475,6 @@ h1 {
   }
 }
 @media (max-width: 480px) {
-  .people,
   .divider {
     display: none;
   }
@@ -484,6 +483,11 @@ h1 {
   .right { gap: 4px; }
   .bar-btn { width: 28px; }
   .invite { width: 30px; }
+  .people { gap: 3px; padding: 0; font-size: 12px; }
+  .people :deep(svg) { width: 18px; height: 18px; }
+  .code { padding-left: 6px; }
+  .code-text { min-width: 5em; margin-right: 2px; font-size: 12px; }
+  .code-btn { width: 20px; }
 }
 @media (max-width: 380px) { .status { display: none; } }
 

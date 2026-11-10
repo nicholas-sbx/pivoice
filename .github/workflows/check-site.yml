@@ -44,7 +44,7 @@ jobs:
           done
           cat "$RUNNER_TEMP/pivoice-dev.log"
           exit 1
-      - name: Captions-first browser checks
+      - name: Transcript browser checks
         run: npm run e2e:caption-first
         env:
           SHOTS_DIR: test-results/captions-first

@@ -105,7 +105,7 @@ function reset() {
 
 <template>
   <div class="captions-tab">
-    <details class="first-view"><summary>Captions-first view</summary><CaptionFirstSettings /></details>
+    <details class="first-view"><summary>Transcript</summary><CaptionFirstSettings /></details>
     <p v-if="noCaptions" class="note first">This version of the app can't do captions here. Captions from people on the website still show.</p>
 
     <div class="row">
@@ -118,7 +118,7 @@ function reset() {
         @update:model-value="v => set('send', v)"
       />
       <Switch label="Show Captions" hint="Everyone else's, beside them." :model-value="c.show" @update:model-value="v => set('show', v)" />
-      <Switch label="Show My Own" hint="Yours, at the table and in captions-first view." :model-value="c.showOwn" @update:model-value="v => set('showOwn', v)" />
+      <Switch label="Show My Own" hint="Yours, at the table and in the transcript." :model-value="c.showOwn" @update:model-value="v => set('showOwn', v)" />
     </div>
 
     <template v-if="c.send && !noCaptions">

@@ -5,8 +5,8 @@ export interface IconDef {
 }
 
 export const ICONS = {
-  captions: {
-    stroke: ['M4 5h16v14H4z', 'M10 10H7v4h3', 'M17 10h-3v4h3']
+  transcript: {
+    stroke: ['M5 3h9l5 5v13H5z', 'M14 3v5h5', 'M8 12h8', 'M8 16h8']
   },
   mic: {
     fill: [
