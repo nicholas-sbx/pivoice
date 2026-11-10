@@ -851,6 +851,38 @@ everyone over the peer connection: a second data channel beside the audio's
 audio never leaves your device for it; only the words do. Nobody's captions
 pass through the room's server either.
 
+### Captions first
+
+The **CC** button in the room's top bar (also **Display settings → Captions
+first**) opens a compact conversation over the table, with a darkened,
+blurred backdrop. Seat and tile captions move out of the way until you close
+it. Names, small avatars and matching tinted words identify each speaker;
+similar avatar hues are separated when people join. Existing participants'
+colours stay fixed until they leave. Names remain visible with tinting off.
+
+Speaking starts a row immediately, with waiting dots until the words arrive.
+Live recognition corrects that row in place. Resume within **10 seconds** of
+stopping and your words append to the last message, provided nobody else
+started speaking in between. An interruption reserves its place immediately,
+even before its first word arrives. Simultaneous speakers keep separate rows,
+and late corrections stay with their original phrase.
+
+**Overlay** is the default layout. The optional **Sidebar when it fits**
+leaves the table interactive beside the conversation at widths of at least
+1100 px; smaller windows automatically use the overlay. The appearance gear
+in the conversation, or **Voice Settings → Captions → Captions-first view**,
+controls the pause window, waiting timeout and dots, tinting, text size,
+message spacing, history limit, backdrop darkness and blur. These settings
+apply immediately and persist on this device. They do not restart recognition.
+
+The last **100 messages** are kept in memory for this call (adjustable from
+20 to 300), independently of the seat captions fading. Scroll up to read
+without being pulled down by new words; **Jump to latest** follows again.
+**Show My Own** still controls your own words, and people you silence are
+hidden. Closing the view restores the table's caption settings; leaving the
+call clears the conversation. The existing browser and app caption channels
+are shared, so no new native app version is needed.
+
 ### Four recognisers, all on the CPU
 
 | | What | Download | In a browser | In the app |

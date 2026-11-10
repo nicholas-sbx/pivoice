@@ -5,11 +5,12 @@
 //   npm run e2e           # terminal 2
 //
 // Checks that people can make and join a room, see each other at the table,
-// hear each other (the fake mic beeps, which lights up the speaking ring on
+// hear each other (the fake mic reads speech.wav, which lights up the speaking ring on
 // everyone else's screen), and that the call survives whoever made the room
 // leaving.
 import { mkdirSync, readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
+import { fileURLToPath } from 'node:url'
 
 // Playwright isn't a dependency (it's big): use whichever one is installed,
 // here or globally (`npm i -g playwright && npx playwright install chromium`).
@@ -17,9 +18,10 @@ const { chromium } = createRequire(import.meta.url)('playwright')
 
 const APP = process.env.APP_URL ?? 'http://localhost:5173/'
 const SHOTS = process.env.SHOTS_DIR ?? ''
+const SPEECH = fileURLToPath(new URL('../tests/fixtures/speech.wav', import.meta.url))
 
 const browser = await chromium.launch({
-  args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream', '--autoplay-policy=no-user-gesture-required']
+  args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream', `--use-file-for-fake-audio-capture=${SPEECH}`, '--autoplay-policy=no-user-gesture-required']
 })
 
 const pages = []
@@ -239,8 +241,15 @@ try {
     ok('pop-out: mute, deafen and spatial audio from its buttons, and Ctrl+Shift+D, shown on both')
 
     // Someone in the middle of the pop-out sees it when they speak: a ring in the pop-out too.
-    await pip.waitForSelector('.seat.speaking:not(.self)', { timeout: 15_000 }).catch(() => {
-      throw new Error('pop-out: never saw anyone speaking')
+    await pip.waitForSelector('.seat.speaking:not(.self)', { timeout: 15_000 }).catch(async () => {
+      const state = await dan.evaluate(() => ({
+        context: window.__pv.engine()?.ctx.state,
+        speaking: [...window.__pv.call.speaking],
+        audible: [...window.__pv.call.audible],
+        muted: window.__pv.call.muted,
+        deafened: window.__pv.call.deafened
+      }))
+      throw new Error('pop-out: never saw anyone speaking: ' + JSON.stringify(state))
     })
 
     // The button closes it; closing it from its own window puts the button back.

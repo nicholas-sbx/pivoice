@@ -3,11 +3,14 @@ import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { call, updatePrefs } from '../call'
 import Switch from './Switch.vue'
 import { vSnap } from '../lib/snap'
+import Segmented from './Segmented.vue'
+import type { CaptionFirstPrefs } from '../captions/conversation-config'
 
 /** What the table shows about everyone's connection. Pops down from the top bar. */
 
 const emit = defineEmits<{ close: [] }>()
 const el = ref<HTMLElement>()
+const setFirst = (patch: Partial<CaptionFirstPrefs>) => updatePrefs({ captionFirst: { ...call.prefs.captionFirst, ...patch } })
 
 function onDown(e: PointerEvent) {
   const t = e.target as HTMLElement
@@ -28,7 +31,10 @@ onBeforeUnmount(() => {
 
 <template>
   <div ref="el" v-snap class="panel" role="dialog" aria-label="Display settings">
-    <span class="eyebrow">At the table</span>
+    <span class="eyebrow">Caption view</span>
+    <Switch label="Captions first" hint="Read the call as a live conversation." :model-value="call.prefs.captionFirst.on" @update:model-value="v => setFirst({ on: v })" />
+    <Segmented v-if="call.prefs.captionFirst.on" label="Caption layout" :options="[{ value: 'overlay' as const, label: 'Overlay' }, { value: 'sidebar' as const, label: 'Sidebar when it fits' }]" :model-value="call.prefs.captionFirst.layout" @update:model-value="v => setFirst({ layout: v })" />
+    <span class="eyebrow second">At the table</span>
     <Switch
       label="Show ping"
       hint="Round trip to each person, beside their name."

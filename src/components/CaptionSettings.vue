@@ -8,6 +8,7 @@ import { isNative, native } from '../native/bridge'
 import Segmented from './Segmented.vue'
 import Slider from './Slider.vue'
 import Switch from './Switch.vue'
+import CaptionFirstSettings from './CaptionFirstSettings.vue'
 
 /**
  * The captions tab: what recognises you and how, and how everyone's
@@ -104,6 +105,7 @@ function reset() {
 
 <template>
   <div class="captions-tab">
+    <details class="first-view"><summary>Captions-first view</summary><CaptionFirstSettings /></details>
     <p v-if="noCaptions" class="note first">This version of the app can't do captions here. Captions from people on the website still show.</p>
 
     <div class="row">
@@ -116,7 +118,7 @@ function reset() {
         @update:model-value="v => set('send', v)"
       />
       <Switch label="Show Captions" hint="Everyone else's, beside them." :model-value="c.show" @update:model-value="v => set('show', v)" />
-      <Switch label="Show My Own" hint="Yours beside you, as everyone sees them." :model-value="c.showOwn" @update:model-value="v => set('showOwn', v)" />
+      <Switch label="Show My Own" hint="Yours, at the table and in captions-first view." :model-value="c.showOwn" @update:model-value="v => set('showOwn', v)" />
     </div>
 
     <template v-if="c.send && !noCaptions">
@@ -346,6 +348,8 @@ function reset() {
 </template>
 
 <style scoped>
+.first-view { margin-bottom: 16px; }
+.first-view summary { cursor: pointer; color: var(--header-primary); font-size: 14px; font-weight: 600; padding: 6px 0; }
 .row {
   margin-top: 16px;
 }

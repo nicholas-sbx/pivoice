@@ -19,6 +19,8 @@ const props = withDefaults(
   defineProps<{
     name: string
     size?: number
+    /** A call-local hue when captions need to distinguish otherwise similar faces. */
+    hue?: number
     mood?: 'idle' | 'talking' | 'deafened' | 'away'
   }>(),
   { size: 40, mood: 'idle' }
@@ -40,7 +42,7 @@ const expression = computed(() => {
 
 <template>
   <div class="avatar" :style="{ width: size + 'px', height: size + 'px' }" aria-hidden="true">
-    <Blobatar :name="name || '?'" :size="Math.round(size * 1.08)" :background="false" :expression="expression" />
+    <Blobatar :name="name || '?'" :size="Math.round(size * 1.08)" :background="false" :expression="expression" :hue="hue" :tone="hue === undefined ? undefined : 0" />
   </div>
 </template>
 

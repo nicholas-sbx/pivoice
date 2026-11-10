@@ -1,5 +1,7 @@
 import { reactive } from 'vue'
 import { CaptionBoard, type CaptionView } from './board'
+import { CaptionConversation } from './conversation'
+import { decodeCaption } from './protocol'
 import type { CaptionPrefs } from './config'
 import type { ModelId } from './models'
 import { currentConnection, downloadDecision, metered, type Metered } from './network'
@@ -37,6 +39,7 @@ export const captions = reactive({
 })
 
 const board = new CaptionBoard()
+export const conversation = reactive(new CaptionConversation())
 let linger = 6000
 let sweep: ReturnType<typeof setInterval> | null = null
 /**
@@ -69,13 +72,23 @@ function show(id: string) {
 
 /** Someone's message off the captions channel (anything at all: it's checked). */
 export function receiveCaption(id: string, data: unknown) {
-  if (board.receive(id, data, performance.now())) show(id)
+  const now = performance.now()
+  if (board.receive(id, data, now)) {
+    show(id)
+    const m = decodeCaption(data)
+    if (m) conversation.apply(id, m, now)
+  }
 }
 
 /** Your own words, to show beside you (if you want them shown). */
 export function ownCaption(selfId: string, u: number, text: string, final: boolean, prefs: CaptionPrefs) {
   if (!prefs.showOwn || !selfId) return
-  if (board.apply(selfId, { s: run, u, t: text, f: final }, performance.now())) show(selfId)
+  const m = { s: run, u, t: text, f: final }
+  const now = performance.now()
+  if (board.apply(selfId, m, now)) {
+    show(selfId)
+    conversation.apply(selfId, m, now)
+  }
 }
 
 /** The run number your captions go out under. */
