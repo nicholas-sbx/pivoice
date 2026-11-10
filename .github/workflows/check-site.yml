@@ -30,6 +30,13 @@ jobs:
       - name: Install browser tests
         run: |
           npm install --prefix "$RUNNER_TEMP/pivoice-browser" --package-lock=false playwright@1.62.1
+          # The Azure Ubuntu mirror can stall on package indexes. Use the
+          # official HTTPS archive for this disposable runner's browser deps.
+          for mirrors in /etc/apt/apt-mirrors.txt /etc/apt/apt-mirrors-security.txt; do
+            if [ -f "$mirrors" ]; then
+              printf '%s\n' https://archive.ubuntu.com/ubuntu | sudo tee "$mirrors" > /dev/null
+            fi
+          done
           "$RUNNER_TEMP/pivoice-browser/node_modules/.bin/playwright" install --with-deps chromium
           echo "NODE_PATH=$RUNNER_TEMP/pivoice-browser/node_modules" >> "$GITHUB_ENV"
       - name: Start local rooms and site
