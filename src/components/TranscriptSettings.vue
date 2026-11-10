@@ -18,7 +18,7 @@ const colors = [
 </script>
 
 <template>
-  <div class="first-settings">
+  <div class="transcript-settings">
     <Switch label="Transcript" hint="Read the call as a conversation. The table's captions move here while this is open." :model-value="p.on" @update:model-value="v => set('on', v)" />
     <Segmented label="Layout" :options="layouts" :model-value="p.layout" @update:model-value="v => set('layout', v)" />
     <p class="note">The sidebar needs room for the table beside it. Narrow windows use the overlay.</p>

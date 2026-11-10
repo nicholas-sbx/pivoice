@@ -3,7 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { call } from '../call'
 import { conversation } from '../captions/state'
 import Avatar from './Avatar.vue'
-import CaptionFirstSettings from './CaptionFirstSettings.vue'
+import TranscriptSettings from './TranscriptSettings.vue'
 import Icon from './Icon.vue'
 
 defineProps<{ sidebar: boolean }>()
@@ -59,7 +59,7 @@ onBeforeUnmount(() => {
 
 <template>
   <section
-    class="captions-first"
+    class="transcript"
     :class="{ sidebar }"
     :style="{ '--caption-dim': p.dim, '--caption-blur': p.blur + 'px', '--caption-scale': p.scale, '--message-spacing': p.spacing + 'px' }"
     aria-label="Transcript"
@@ -75,7 +75,7 @@ onBeforeUnmount(() => {
         </button>
         <button type="button" class="icon-button" aria-label="Return to table" @click="emit('close')"><Icon name="close" :size="20" /></button>
       </header>
-      <div v-if="settings" class="appearance" role="region" aria-label="Transcript appearance and timing"><CaptionFirstSettings /></div>
+      <div v-if="settings" class="appearance" role="region" aria-label="Transcript appearance and timing"><TranscriptSettings /></div>
       <div class="scroll-frame">
         <!-- Rapid partial corrections deliberately aren't live announcements. -->
         <div ref="log" class="conversation" role="region" aria-label="Call transcript" tabindex="0" @scroll="onScroll">
@@ -122,7 +122,7 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.captions-first {
+.transcript {
   position: absolute;
   inset: 0;
   z-index: 3;
@@ -130,7 +130,7 @@ onBeforeUnmount(() => {
   justify-content: center;
   padding: 20px max(12px, env(safe-area-inset-left)) calc(112px + env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-right));
 }
-.captions-first::before {
+.transcript::before {
   content: '';
   position: absolute;
   inset: 0;
@@ -240,18 +240,18 @@ h2 { margin: 0; flex: 1; min-width: 0; color: var(--header-primary); font-size: 
 .empty p { margin: 0; max-width: 320px; font-size: 13px; }
 .caption-footer { flex: none; padding: 6px 16px; border-top: 1px solid var(--border-subtle); font-size: 11px; line-height: 16px; color: var(--text-muted); }
 .jump { position: absolute; right: 12px; bottom: 8px; display: inline-flex; align-items: center; gap: 6px; max-width: calc(100% - 24px); padding: 6px 10px; border: 1px solid var(--border-strong); border-radius: 4px; background: var(--bg-floating); color: var(--text-link); font-size: 12px; cursor: pointer; }
-.sidebar { left: auto; width: var(--caption-sidebar-width); padding: 0; }
+.sidebar { left: auto; width: var(--transcript-sidebar-width); padding: 0; }
 .sidebar::before { display: none; }
 .sidebar .caption-panel { width: 100%; border-radius: 0; border-width: 0 0 0 1px; }
 @media (max-width: 480px) {
-  .captions-first { padding-top: 8px; padding-bottom: calc(108px + env(safe-area-inset-bottom)); }
+  .transcript { padding-top: 8px; padding-bottom: calc(108px + env(safe-area-inset-bottom)); }
   .caption-header { padding: 8px 10px; gap: 6px; }
   .live-label { display: none; }
   .message { padding-inline: 12px; }
   .typing-status, .caption-footer { padding-inline: 12px; }
 }
 @media (max-height: 520px) {
-  .captions-first:not(.sidebar) { padding-top: 4px; padding-bottom: calc(100px + env(safe-area-inset-bottom)); }
+  .transcript:not(.sidebar) { padding-top: 4px; padding-bottom: calc(100px + env(safe-area-inset-bottom)); }
   .caption-header { padding-top: 4px; padding-bottom: 4px; }
   .caption-footer { padding-top: 3px; padding-bottom: 3px; }
 }

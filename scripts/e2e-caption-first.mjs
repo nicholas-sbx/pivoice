@@ -70,7 +70,7 @@ function sameLayout(before, after, label) {
   }))
 }
 async function oneTypingLocation(page) {
-  const counts = await page.locator('.captions-first .waiting-dots:visible').evaluateAll(els => {
+  const counts = await page.locator('.transcript .waiting-dots:visible').evaluateAll(els => {
     const counts = {}
     for (const el of els) counts[el.dataset.speaker] = (counts[el.dataset.speaker] ?? 0) + 1
     return counts
@@ -105,13 +105,13 @@ try {
     await flush(alice)
   }
 
-  assert.equal(await alice.locator('.captions-first').count(), 0)
+  assert.equal(await alice.locator('.transcript').count(), 0)
   const toolbar = alice.locator('.bar button[aria-label="Transcript"]')
   assert.equal((await toolbar.textContent()).trim(), '')
   assert.ok(await toolbar.evaluate(e => e.previousElementSibling.classList.contains('people')))
   assert.equal(await toolbar.locator('svg').count(), 1)
   await toolbar.click()
-  await alice.waitForSelector('.captions-first.sidebar')
+  await alice.waitForSelector('.transcript.sidebar')
   assert.deepEqual(await alice.evaluate(() => {
     const p = window.__pv.call.prefs.captionFirst
     return [p.layout, p.color]
@@ -239,7 +239,7 @@ try {
     await alice.setViewportSize({ width, height })
     await flush(alice)
     const geometry = await alice.evaluate(() => {
-      const root = document.querySelector('.captions-first')
+      const root = document.querySelector('.transcript')
       const table = document.querySelector('.table-stage')
       const panel = document.querySelector('.caption-panel').getBoundingClientRect()
       const log = document.querySelector('.conversation').getBoundingClientRect()
@@ -272,7 +272,7 @@ try {
 
   await alice.setViewportSize({ width: 1440, height: 900 })
   await prefs(alice, { layout: 'overlay' })
-  assert.equal(await alice.locator('.captions-first.sidebar').count(), 0)
+  assert.equal(await alice.locator('.transcript.sidebar').count(), 0)
   await shot(alice, 'transcript-overlay')
   await prefs(alice, { layout: 'sidebar', mergeSec: 30 })
   await alice.evaluate(async ({ bobId, caraId }) => {
@@ -332,7 +332,7 @@ try {
   await alice.getByRole('button', { name: 'Unmute', exact: true }).waitFor()
   await alice.locator('.caption-panel').focus()
   await alice.keyboard.press('Escape')
-  assert.equal(await alice.locator('.captions-first').count(), 0)
+  assert.equal(await alice.locator('.transcript').count(), 0)
   assert.equal(await alice.evaluate(() => document.activeElement?.getAttribute('aria-label')), 'Transcript')
   await toolbar.click()
   await alice.getByRole('button', { name: 'Disconnect', exact: true }).click()
