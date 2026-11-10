@@ -17,7 +17,7 @@ function setup() {
 const activity = (c: Pick<CaptionConversation, 'activity'>, now: number, ...ids: string[]) => c.activity(new Set(ids), now)
 const words = (c: Pick<CaptionConversation, 'apply'>, id: string, u: number, text: string, final: boolean, now: number, s = 1) => c.apply(id, { s, u, t: text, f: final }, now)
 
-describe('captions-first conversation', () => {
+describe('transcript conversation', () => {
   it('keeps the same row when wrapped in the UI’s reactive state', () => {
     const c = reactive(setup())
     activity(c, 0, 'a')
@@ -27,16 +27,21 @@ describe('captions-first conversation', () => {
     words(c, 'a', 1, 'second', true, 40)
     expect(c.visibleMessages.map(m => m.text)).toEqual(['first second'])
   })
-  it('reserves a blank message as speech starts, then corrects its live phrase in place', () => {
+  it('keeps an empty speech reservation out of the messages and moves typing into the first real text', () => {
     const c = setup()
     activity(c, 0, 'a')
     const id = c.messages[0]!.id
     expect(c.messages[0]).toMatchObject({ text: '', waiting: true, name: 'Alice' })
+    expect(c.visibleMessages).toEqual([])
+    expect(c.pendingSpeakers.map(p => p.id)).toEqual(['a'])
     words(c, 'a', 0, 'the cat', false, 50)
+    expect(c.pendingSpeakers).toEqual([])
+    expect(c.visibleMessages[0]).toMatchObject({ id, text: 'the cat', waiting: true })
     words(c, 'a', 0, 'the caption', false, 100)
     words(c, 'a', 0, 'the captions', true, 150)
     expect(c.messages).toHaveLength(1)
     expect(c.messages[0]).toMatchObject({ id, text: 'the captions' })
+    expect(c.messages[0]!.waiting).toBe(false)
   })
 
   it('appends after a pause of at most ten seconds with nobody in between', () => {
@@ -163,6 +168,70 @@ describe('captions-first conversation', () => {
     expect(c.messages.map(m => m.text)).toEqual(['before the interruption', 'interruption', 'after the interruption'])
   })
 
+  it('has only one typing location per person, even while older results arrive late', () => {
+    const c = setup()
+    activity(c, 0, 'a')
+    words(c, 'a', 0, 'old live words', false, 10)
+    activity(c, 100, 'b')
+    words(c, 'b', 0, 'interruption', false, 110)
+    activity(c, 200, 'a', 'b')
+    expect(c.visibleMessages.filter(m => m.speaker === 'a' && m.waiting)).toEqual([])
+    expect(c.pendingSpeakers.map(p => p.id)).toEqual(['a'])
+    words(c, 'a', 0, 'old corrected words', false, 210)
+    expect(c.visibleMessages.filter(m => m.speaker === 'a' && m.waiting)).toEqual([])
+    expect(c.pendingSpeakers.map(p => p.id)).toEqual(['a'])
+    words(c, 'a', 0, 'old final words', true, 220)
+    expect(c.pendingSpeakers.map(p => p.id)).toEqual(['a'])
+    words(c, 'a', 1, 'new live words', false, 230)
+    expect(c.pendingSpeakers).toEqual([])
+    expect(c.visibleMessages.filter(m => m.speaker === 'a' && m.waiting).map(m => m.text)).toEqual(['new live words'])
+    words(c, 'a', 1, 'new final words', true, 240)
+    expect(c.visibleMessages.filter(m => m.speaker === 'a' && m.waiting)).toEqual([])
+  })
+
+  it('removes a provisional message when its final caption is empty, including during the ring hold', () => {
+    const c = setup()
+    activity(c, 0, 'a')
+    words(c, 'a', 0, 'hallucinated words', false, 10)
+    expect(c.visibleMessages).toHaveLength(1)
+    words(c, 'a', 0, '', true, 20)
+    expect(c.visibleMessages).toEqual([])
+    expect(c.pendingSpeakers).toEqual([])
+    activity(c, 100)
+    c.tick(200)
+    expect(c.visibleMessages).toEqual([])
+    expect(c.pendingSpeakers).toEqual([])
+  })
+
+  it('removes only the rejected phrase when an empty final belongs to an appended message', () => {
+    const c = setup()
+    activity(c, 0, 'a')
+    words(c, 'a', 0, 'keep these words', true, 10)
+    activity(c, 20)
+    activity(c, 30, 'a')
+    words(c, 'a', 1, 'discard these words', false, 40)
+    expect(c.visibleMessages[0]!.text).toBe('keep these words discard these words')
+    words(c, 'a', 1, '', true, 50)
+    expect(c.visibleMessages.map(m => m.text)).toEqual(['keep these words'])
+    expect(c.visibleMessages[0]!.waiting).toBe(false)
+    expect(c.pendingSpeakers).toEqual([])
+  })
+
+  it('never displays an empty reservation through repeated pauses and timeout sweeps', () => {
+    const c = setup()
+    c.mergeMs = 0
+    for (let n = 0; n < 20; n++) {
+      activity(c, n * 100, 'a')
+      expect(c.visibleMessages).toEqual([])
+      expect(c.pendingSpeakers.map(p => p.id)).toEqual(['a'])
+      activity(c, n * 100 + 50)
+      expect(c.visibleMessages).toEqual([])
+    }
+    c.tick(10_000)
+    expect(c.visibleMessages).toEqual([])
+    expect(c.pendingSpeakers).toEqual([])
+  })
+
   it('leavers keep readable history and stop waiting; only joiners choose colours', () => {
     const c = setup()
     activity(c, 0, 'a', 'b')
@@ -203,17 +272,24 @@ describe('captions-first conversation', () => {
   })
 })
 
-describe('captions-first preferences', () => {
-  it('is off with overlay selected by default, including older saved preferences', () => {
+describe('transcript preferences', () => {
+  it('is off with sidebar preferred and uncoloured messages by default', () => {
     expect(sanitizeCaptionFirst(null)).toEqual(CAPTION_FIRST_DEFAULTS)
-    expect(CAPTION_FIRST_DEFAULTS).toMatchObject({ on: false, layout: 'overlay', mergeSec: 10 })
+    expect(CAPTION_FIRST_DEFAULTS).toMatchObject({ on: false, layout: 'sidebar', color: 'none', mergeSec: 10 })
     globalThis.localStorage = { getItem: () => '{}' } as unknown as Storage
     expect(loadPrefs().captionFirst).toEqual(CAPTION_FIRST_DEFAULTS)
   })
   it('persists choices and clamps invalid values', () => {
-    const raw = { on: true, layout: 'sidebar', mergeSec: -1, blur: Infinity, dim: 99, scale: NaN, history: 23.7, tint: false }
-    expect(sanitizeCaptionFirst(raw)).toMatchObject({ on: true, layout: 'sidebar', mergeSec: 0, blur: 8, dim: .95, scale: 1, history: 24, tint: false })
+    const raw = { rev: 1, on: true, layout: 'overlay', mergeSec: -1, blur: Infinity, dim: 99, scale: NaN, history: 23.7, color: 'highlight' }
+    expect(sanitizeCaptionFirst(raw)).toMatchObject({ on: true, layout: 'overlay', mergeSec: 0, blur: 8, dim: .95, scale: 1, history: 24, color: 'highlight' })
     globalThis.localStorage = { getItem: () => JSON.stringify({ captionFirst: { on: true, layout: 'sidebar', mergeSec: 7 } }) } as unknown as Storage
     expect(loadPrefs().captionFirst).toMatchObject({ on: true, layout: 'sidebar', mergeSec: 7 })
+  })
+  it('migrates the previously saved defaults without changing timing, size or whether the view is open', () => {
+    const p = sanitizeCaptionFirst({ on: true, layout: 'overlay', tint: true, mergeSec: 3, scale: 1.2 })
+    expect(p).toMatchObject({ rev: 1, on: true, layout: 'sidebar', color: 'none', mergeSec: 3, scale: 1.2 })
+    expect(p).not.toHaveProperty('tint')
+    expect(sanitizeCaptionFirst({ ...p, layout: 'overlay', color: 'text' })).toMatchObject({ layout: 'overlay', color: 'text' })
+    expect(sanitizeCaptionFirst({ color: 'rainbow' }).color).toBe('none')
   })
 })

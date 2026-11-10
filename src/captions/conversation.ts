@@ -50,9 +50,15 @@ const MAX_TEXT = 8000
  */
 export class CaptionConversation {
   messages: Turn[] = []
-  /** Timed-out blank rows stay reserved for a late first result, but aren't drawn. */
+  /** Reservations preserve ordering internally; only actual words become rows. */
   get visibleMessages(): CaptionMessage[] {
-    return this.messages.filter(t => t.text || t.waiting)
+    return this.messages.filter(t => t.text)
+  }
+  /** Waiting for a first word belongs in the fixed strip below the messages. */
+  get pendingSpeakers(): CaptionIdentity[] {
+    return [...this.people.values()]
+      .filter(p => p.turn?.waiting && !p.turn.text)
+      .map(p => p.identity)
   }
   private people = new Map<string, Person>()
   private nextId = 0
@@ -109,6 +115,9 @@ export class CaptionConversation {
   }
 
   private start(p: Person, now: number): Turn {
+    // A new turn owns the only typing indicator for this person. Late
+    // corrections may update older text, but must never light those rows again.
+    for (const turn of this.messages) if (turn.speaker === p.identity.id) turn.waiting = false
     const last = this.messages.at(-1)
     // A row reserved by somebody else already counts as an interruption,
     // even if their recogniser hasn't produced its first word yet.
@@ -153,7 +162,7 @@ export class CaptionConversation {
     phrase.final = m.f
     turn.text = turn.phrases.map(f => f.text).filter(Boolean).join(' ')
     turn.pendingUntil = now + this.waitMs
-    turn.waiting = (p.speaking && p.turn === turn) || !m.f
+    turn.waiting = p.turn === turn && !m.f
     if (!p.speaking && !p.hasActivity) p.endedAt = now
     this.tick(now)
   }
@@ -161,7 +170,7 @@ export class CaptionConversation {
   tick(now: number) {
     for (const turn of this.messages) {
       const p = this.people.get(turn.speaker)
-      if (turn.waiting && !(p?.speaking && p.turn === turn) && now >= turn.pendingUntil) turn.waiting = false
+      if (turn.waiting && (!p || p.turn !== turn || (!p.speaking && now >= turn.pendingUntil))) turn.waiting = false
     }
     // Keep blank reservations in order, within the same bounded history, so
     // a slow final-only recogniser can still fill the right row later.

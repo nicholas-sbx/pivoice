@@ -120,7 +120,7 @@ export const seating = new Seating((id, angle) => {
 // Keep call-local caption history even while the table is the current view.
 // Presentation choices do not configure the audio or caption engines.
 watch(
-  () => [call.members, call.speaking, call.prefs.captionFirst, call.prefs.captions.showOwn, call.silenced, call.muted, call.deafened, call.micProblem],
+  () => [call.members, call.speaking, call.prefs.captionFirst, call.prefs.captions.showOwn, call.prefs.captions.send, call.silenced, call.muted, call.deafened, call.micProblem],
   () => {
     const p = call.prefs.captionFirst
     conversation.mergeMs = p.mergeSec * 1000
@@ -130,7 +130,7 @@ watch(
     conversation.activity(new Set([...call.speaking].filter(id => {
       const m = call.members.find(m => m.id === id)
       return m && !m.away && !m.muted && !m.deafened && !call.silenced[id]
-        && (id !== call.selfId || (call.prefs.captions.showOwn && !effectiveMuted()))
+        && (id !== call.selfId || (call.prefs.captions.showOwn && call.prefs.captions.send && !effectiveMuted()))
     })), performance.now())
   },
   { deep: true, flush: 'sync' }

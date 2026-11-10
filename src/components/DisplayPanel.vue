@@ -31,9 +31,9 @@ onBeforeUnmount(() => {
 
 <template>
   <div ref="el" v-snap class="panel" role="dialog" aria-label="Display settings">
-    <span class="eyebrow">Caption view</span>
-    <Switch label="Captions first" hint="Read the call as a live conversation." :model-value="call.prefs.captionFirst.on" @update:model-value="v => setFirst({ on: v })" />
-    <Segmented v-if="call.prefs.captionFirst.on" label="Caption layout" :options="[{ value: 'overlay' as const, label: 'Overlay' }, { value: 'sidebar' as const, label: 'Sidebar when it fits' }]" :model-value="call.prefs.captionFirst.layout" @update:model-value="v => setFirst({ layout: v })" />
+    <span class="eyebrow">Transcript</span>
+    <Switch label="Transcript" hint="Read the call as a live conversation." :model-value="call.prefs.captionFirst.on" @update:model-value="v => setFirst({ on: v })" />
+    <Segmented v-if="call.prefs.captionFirst.on" label="Transcript layout" :options="[{ value: 'overlay' as const, label: 'Overlay' }, { value: 'sidebar' as const, label: 'Sidebar when it fits' }]" :model-value="call.prefs.captionFirst.layout" @update:model-value="v => setFirst({ layout: v })" />
     <span class="eyebrow second">At the table</span>
     <Switch
       label="Show ping"

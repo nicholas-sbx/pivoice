@@ -14,7 +14,7 @@ import {
 } from '../call'
 import AppBanner from '../components/AppBanner.vue'
 import CaptionPrompt from '../components/CaptionPrompt.vue'
-import CaptionsFirst from '../components/CaptionsFirst.vue'
+import Transcript from '../components/Transcript.vue'
 import { captions } from '../captions/state'
 import ControlButton from '../components/ControlButton.vue'
 import DisplayPanel from '../components/DisplayPanel.vue'
@@ -35,20 +35,20 @@ const displayOpen = ref(false)
 const menu = ref<{ id: string; x: number; y: number } | null>(null)
 const stage = ref<HTMLElement>()
 const pill = ref<HTMLElement>()
-const captionButton = ref<HTMLButtonElement>()
+const transcriptButton = ref<HTMLButtonElement>()
 const stageWidth = ref(innerWidth)
-const captionSidebar = computed(() => call.prefs.captionFirst.on && call.prefs.captionFirst.layout === 'sidebar' && stageWidth.value >= 1100)
+const transcriptSidebar = computed(() => call.prefs.captionFirst.on && call.prefs.captionFirst.layout === 'sidebar' && stageWidth.value >= 1100)
 let stageObserver: ResizeObserver | null = null
 // Pixel snapping can leave a fixed margin. Re-centre when the available
 // table width changes without a window resize (switching to the sidebar).
-watch(captionSidebar, () => { if (pill.value) snapNow(pill.value) }, { flush: 'post' })
+watch(transcriptSidebar, () => { if (pill.value) snapNow(pill.value) }, { flush: 'post' })
 
-function toggleCaptionFirst() {
+function toggleTranscript() {
   updatePrefs({ captionFirst: { ...call.prefs.captionFirst, on: !call.prefs.captionFirst.on } })
 }
-function closeCaptionFirst() {
+function closeTranscript() {
   updatePrefs({ captionFirst: { ...call.prefs.captionFirst, on: false } })
-  void nextTick(() => captionButton.value?.focus({ preventScroll: true }))
+  void nextTick(() => transcriptButton.value?.focus({ preventScroll: true }))
 }
 
 // On a phone, the table only while seats mean something (spatial audio); otherwise a list of tiles.
@@ -137,11 +137,11 @@ onBeforeUnmount(() => {
         </div>
       </div>
       <div class="right">
-        <button ref="captionButton" type="button" class="bar-btn" :class="{ active: call.prefs.captionFirst.on }" title="Captions first" aria-label="Captions first" :aria-pressed="call.prefs.captionFirst.on" @click="toggleCaptionFirst"><Icon name="captions" :size="20" /></button>
         <div class="people" :title="`${present} in the call`">
           <Icon name="people" :size="20" />
           <span>{{ present }}</span>
         </div>
+        <button ref="transcriptButton" type="button" class="bar-btn" :class="{ active: call.prefs.captionFirst.on }" title="Transcript" aria-label="Transcript" :aria-pressed="call.prefs.captionFirst.on" @click="toggleTranscript"><Icon name="transcript" :size="20" /></button>
         <button
           v-if="pipSupported"
           type="button"
@@ -189,8 +189,8 @@ onBeforeUnmount(() => {
     <AppBanner />
     <CaptionPrompt />
 
-    <main ref="stage" class="stage" :class="{ 'caption-sidebar': captionSidebar }">
-      <div class="table-stage" :inert="call.prefs.captionFirst.on && !captionSidebar">
+    <main ref="stage" class="stage" :class="{ 'transcript-sidebar': transcriptSidebar }">
+      <div class="table-stage" :inert="call.prefs.captionFirst.on && !transcriptSidebar">
       <PeopleGrid
         v-if="asList"
         :members="call.members"
@@ -234,7 +234,7 @@ onBeforeUnmount(() => {
       />
 
       </div>
-      <CaptionsFirst v-if="call.prefs.captionFirst.on" :sidebar="captionSidebar" @close="closeCaptionFirst" />
+      <Transcript v-if="call.prefs.captionFirst.on" :sidebar="transcriptSidebar" @close="closeTranscript" />
 
       <div ref="pill" v-snap class="pill" role="toolbar" aria-label="Call controls">
         <ControlButton
@@ -475,7 +475,6 @@ h1 {
   }
 }
 @media (max-width: 480px) {
-  .people,
   .divider {
     display: none;
   }
@@ -484,18 +483,23 @@ h1 {
   .right { gap: 4px; }
   .bar-btn { width: 28px; }
   .invite { width: 30px; }
+  .people { gap: 3px; padding: 0; font-size: 12px; }
+  .people :deep(svg) { width: 18px; height: 18px; }
+  .code { padding-left: 6px; }
+  .code-text { min-width: 5em; margin-right: 2px; font-size: 12px; }
+  .code-btn { width: 20px; }
 }
 @media (max-width: 380px) { .status { display: none; } }
 
 .stage {
-  --caption-sidebar-width: clamp(340px, 32vw, 460px);
+  --transcript-sidebar-width: clamp(340px, 32vw, 460px);
   position: relative;
   flex: 1;
   min-height: 0;
   background: var(--bg-stage);
 }
 .table-stage { position: absolute; inset: 0; }
-.caption-sidebar .table-stage, .caption-sidebar .pill { right: var(--caption-sidebar-width); }
+.transcript-sidebar .table-stage, .transcript-sidebar .pill { right: var(--transcript-sidebar-width); }
 
 .pill {
   position: absolute;

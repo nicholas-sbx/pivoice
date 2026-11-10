@@ -851,27 +851,39 @@ everyone over the peer connection: a second data channel beside the audio's
 audio never leaves your device for it; only the words do. Nobody's captions
 pass through the room's server either.
 
-### Captions first
+### Transcript
 
-The **CC** button in the room's top bar (also **Display settings → Captions
-first**) opens a compact conversation over the table, with a darkened,
-blurred backdrop. Seat and tile captions move out of the way until you close
-it. Names, small avatars and matching tinted words identify each speaker;
-similar avatar hues are separated when people join. Existing participants'
-colours stay fixed until they leave. Names remain visible with tinting off.
+The icon-only **Transcript** button, immediately to the right of the room's
+participant count (also **Display settings → Transcript**), opens a compact
+conversation. **Sidebar when it fits** is preferred by default: the table stays
+interactive beside the transcript at widths of at least 1100 px. Smaller
+windows use an overlay with a darkened, blurred backdrop. **Overlay** can also
+be selected explicitly. Seat and tile captions move out of the way until you
+close the transcript.
 
-Speaking starts a row immediately, with waiting dots until the words arrive.
-Live recognition corrects that row in place. Resume within **10 seconds** of
+Only real caption text creates a visible message. Before the first word,
+waiting dots appear by the person's name in a fixed strip at the bottom;
+they move beside the message when words arrive. Each person has at most one
+typing indicator, including when older recognition results arrive late.
+Starting or stopping the dots does not change line dimensions or scroll
+position. A provisional phrase is removed if its final caption is empty.
+Consecutive messages from the same person share one avatar and name while
+each message stays on its own line. Live recognition corrects its phrase
+in place. Resume within **10 seconds** of
 stopping and your words append to the last message, provided nobody else
 started speaking in between. An interruption reserves its place immediately,
 even before its first word arrives. Simultaneous speakers keep separate rows,
 and late corrections stay with their original phrase.
 
-**Overlay** is the default layout. The optional **Sidebar when it fits**
-leaves the table interactive beside the conversation at widths of at least
-1100 px; smaller windows automatically use the overlay. The appearance gear
-in the conversation, or **Voice Settings → Captions → Captions-first view**,
-controls the pause window, waiting timeout and dots, tinting, text size,
+The appearance gear, or **Voice Settings → Captions → Transcript**, offers
+three speaker-colour modes: **None** (default), **Highlight** (a subtle
+whole-message background, without a left bar), and **Text color**. Small
+avatars still identify people in every mode. Similar avatar hues are separated
+when people join, and existing participants' colours stay fixed until they
+leave. The previous view's saved defaults migrate once to sidebar preference
+and no colouring; subsequent explicit choices are retained.
+
+The same settings control the pause window, waiting timeout and dots, text size,
 message spacing, history limit, backdrop darkness and blur. These settings
 apply immediately and persist on this device. They do not restart recognition.
 
