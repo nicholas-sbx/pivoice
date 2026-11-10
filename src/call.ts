@@ -10,6 +10,7 @@ import { encodeCaption } from './captions/protocol'
 import {
   captionRun,
   captions,
+  conversation,
   clearCaptions,
   forgetCaptions,
   forgetModelStatus,
@@ -115,6 +116,25 @@ export const seating = new Seating((id, angle) => {
   engine?.setAngle(id, angle)
   nv?.setAngle(id, angle)
 })
+
+// Keep call-local caption history even while the table is the current view.
+// Presentation choices do not configure the audio or caption engines.
+watch(
+  () => [call.members, call.speaking, call.prefs.captionFirst, call.prefs.captions.showOwn, call.silenced, call.muted, call.deafened, call.micProblem],
+  () => {
+    const p = call.prefs.captionFirst
+    conversation.mergeMs = p.mergeSec * 1000
+    conversation.waitMs = p.waitSec * 1000
+    conversation.keep = p.history
+    conversation.roster(call.members)
+    conversation.activity(new Set([...call.speaking].filter(id => {
+      const m = call.members.find(m => m.id === id)
+      return m && !m.away && !m.muted && !m.deafened && !call.silenced[id]
+        && (id !== call.selfId || (call.prefs.captions.showOwn && !effectiveMuted()))
+    })), performance.now())
+  },
+  { deep: true, flush: 'sync' }
+)
 
 // Whoever's in the call sits at the table; the seats move themselves from there.
 watch(
@@ -268,6 +288,7 @@ export async function startCall(kind: 'create' | 'join', name: string, code = ''
   call.silenced = {}
   call.links = {}
   resetDownloadAnswer()
+  conversation.clear()
   await connect(kind, name, code)
 }
 
@@ -507,6 +528,7 @@ function cleanup() {
   call.links = {}
   // Coming straight back: keep the room on screen, everyone at the table.
   if (rejoining) return
+  conversation.clear()
   seating.reset()
   call.phase = 'home'
   call.joining = null

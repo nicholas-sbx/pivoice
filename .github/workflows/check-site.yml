@@ -1,0 +1,61 @@
+name: Check site
+
+on:
+  pull_request:
+    paths: ['src/**', 'worker/**', 'tests/**', 'scripts/**', 'package*.json', '*config*', '.github/workflows/check-site.yml']
+  push:
+    branches: ['feat/captions-first']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: check-site-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run typecheck:worker
+      - run: npm test
+      - run: npm run build
+      - name: Install browser tests
+        run: |
+          npm install --no-save --package-lock=false playwright
+          npx playwright install --with-deps chromium
+      - name: Start local rooms and site
+        run: |
+          npm run dev > "$RUNNER_TEMP/pivoice-dev.log" 2>&1 &
+          for attempt in $(seq 1 60); do
+            if curl -fsS http://localhost:5173/ > /dev/null && curl -fsS http://localhost:8787/api/ice > /dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat "$RUNNER_TEMP/pivoice-dev.log"
+          exit 1
+      - name: Captions-first browser checks
+        run: npm run e2e:caption-first
+        env:
+          SHOTS_DIR: test-results/captions-first
+      - name: Existing room browser checks
+        run: npm run e2e
+      - name: Browser screenshots and server log
+        if: always()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: site-browser-results
+          path: |
+            test-results
+            ${{ runner.temp }}/pivoice-dev.log
+          retention-days: 7

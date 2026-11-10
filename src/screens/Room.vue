@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
   call,
   copyCode,
@@ -14,6 +14,7 @@ import {
 } from '../call'
 import AppBanner from '../components/AppBanner.vue'
 import CaptionPrompt from '../components/CaptionPrompt.vue'
+import CaptionsFirst from '../components/CaptionsFirst.vue'
 import { captions } from '../captions/state'
 import ControlButton from '../components/ControlButton.vue'
 import DisplayPanel from '../components/DisplayPanel.vue'
@@ -32,6 +33,19 @@ import { overlayError, overlaySupported } from '../native/overlay'
 const settingsOpen = ref(false)
 const displayOpen = ref(false)
 const menu = ref<{ id: string; x: number; y: number } | null>(null)
+const stage = ref<HTMLElement>()
+const captionButton = ref<HTMLButtonElement>()
+const stageWidth = ref(innerWidth)
+const captionSidebar = computed(() => call.prefs.captionFirst.on && call.prefs.captionFirst.layout === 'sidebar' && stageWidth.value >= 1100)
+let stageObserver: ResizeObserver | null = null
+
+function toggleCaptionFirst() {
+  updatePrefs({ captionFirst: { ...call.prefs.captionFirst, on: !call.prefs.captionFirst.on } })
+}
+function closeCaptionFirst() {
+  updatePrefs({ captionFirst: { ...call.prefs.captionFirst, on: false } })
+  void nextTick(() => captionButton.value?.focus({ preventScroll: true }))
+}
 
 // On a phone, the table only while seats mean something (spatial audio); otherwise a list of tiles.
 const compact = useCompact()
@@ -67,7 +81,11 @@ function onKey(e: KeyboardEvent) {
   }
 }
 
-onMounted(() => addEventListener('keydown', onKey))
+onMounted(() => {
+  addEventListener('keydown', onKey)
+  stageObserver = new ResizeObserver(entries => { stageWidth.value = entries[0]?.contentRect.width ?? innerWidth })
+  if (stage.value) stageObserver.observe(stage.value)
+})
 // The pop-out is a window of its own, with its own key events.
 watch(
   pipWindow,
@@ -81,6 +99,7 @@ onBeforeUnmount(() => {
   removeEventListener('keydown', onKey)
   pipWindow.value?.removeEventListener('keydown', onKey)
   closePip()
+  stageObserver?.disconnect()
 })
 </script>
 
@@ -114,6 +133,7 @@ onBeforeUnmount(() => {
         </div>
       </div>
       <div class="right">
+        <button ref="captionButton" type="button" class="bar-btn" :class="{ active: call.prefs.captionFirst.on }" title="Captions first" aria-label="Captions first" :aria-pressed="call.prefs.captionFirst.on" @click="toggleCaptionFirst"><Icon name="captions" :size="20" /></button>
         <div class="people" :title="`${present} in the call`">
           <Icon name="people" :size="20" />
           <span>{{ present }}</span>
@@ -165,7 +185,8 @@ onBeforeUnmount(() => {
     <AppBanner />
     <CaptionPrompt />
 
-    <main class="stage">
+    <main ref="stage" class="stage" :class="{ 'caption-sidebar': captionSidebar }">
+      <div class="table-stage" :inert="call.prefs.captionFirst.on && !captionSidebar">
       <PeopleGrid
         v-if="asList"
         :members="call.members"
@@ -178,7 +199,7 @@ onBeforeUnmount(() => {
         :links="call.links"
         :show-ping="call.prefs.showPing"
         :show-route="call.prefs.showRoute"
-        :captions="captions.views"
+        :captions="call.prefs.captionFirst.on ? {} : captions.views"
         :caption-lines="call.prefs.captions.lines"
         :caption-fade="call.prefs.captions.fade"
         :caption-caret="call.prefs.captions.caret"
@@ -199,7 +220,7 @@ onBeforeUnmount(() => {
         :links="call.links"
         :show-ping="call.prefs.showPing"
         :show-route="call.prefs.showRoute"
-        :captions="captions.views"
+        :captions="call.prefs.captionFirst.on ? {} : captions.views"
         :caption-lines="call.prefs.captions.lines"
         :caption-fade="call.prefs.captions.fade"
         :caption-caret="call.prefs.captions.caret"
@@ -207,6 +228,9 @@ onBeforeUnmount(() => {
         :show-captions="call.prefs.captions.show"
         @menu="(id, x, y) => (menu = { id, x, y })"
       />
+
+      </div>
+      <CaptionsFirst v-if="call.prefs.captionFirst.on" :sidebar="captionSidebar" @close="closeCaptionFirst" />
 
       <div v-snap class="pill" role="toolbar" aria-label="Call controls">
         <ControlButton
@@ -448,17 +472,25 @@ h1 {
 }
 @media (max-width: 380px) {
   .people,
-  .divider {
+  .divider,
+  .status {
     display: none;
   }
+  .bar { gap: 8px; }
+  .right { gap: 4px; }
+  .bar-btn { width: 28px; }
+  .invite { width: 30px; }
 }
 
 .stage {
+  --caption-sidebar-width: clamp(340px, 32vw, 460px);
   position: relative;
   flex: 1;
   min-height: 0;
   background: var(--bg-stage);
 }
+.table-stage { position: absolute; inset: 0; }
+.caption-sidebar .table-stage, .caption-sidebar .pill { right: var(--caption-sidebar-width); }
 
 .pill {
   position: absolute;
