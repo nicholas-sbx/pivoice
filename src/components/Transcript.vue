@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { call } from '../call'
 import { conversation } from '../captions/state'
 import Avatar from './Avatar.vue'
@@ -42,7 +42,9 @@ function onKey(e: KeyboardEvent) {
   else emit('close')
 }
 watch(messages, pin, { deep: true, flush: 'post' })
-watch(settings, () => void nextTick(pin))
+// Font size and spacing change the content height without resizing the log.
+// Follow the new bottom immediately, rather than jumping on the next word.
+watch([settings, () => p.value.scale, () => p.value.spacing], pin, { flush: 'post' })
 onMounted(() => {
   conversation.tick(performance.now())
   panel.value?.focus({ preventScroll: true })
