@@ -674,7 +674,9 @@ Costs, and what isn't done:
   told, since each change is one frame (it was three times that while the
   rings faded in and out, every frame of a fade painted again in software,
   so they don't fade in the overlay). It holds about 40 MB of its own,
-  drawn without the GPU (about 130 MB with it).
+  drawn without the GPU (about 130 MB with it). On Wayland with WebKitGTK
+  2.54 or later the overlay lets WebKit choose its renderer: forcing software
+  rendering can leave the table rim missing when the window opens.
 - **Painted in full when it's placed**: shown, moved, resized, or given
   its place by the desktop, and when the call changes, the overlay's page
   paints all of itself again (a sheet too faint to see, for two frames). A
