@@ -30,6 +30,11 @@ import { snapNow, vSnap } from '../lib/snap'
 import { closePip, pipRoot, pipSupported, pipWindow, togglePip } from '../pip'
 import { overlayError, overlaySupported } from '../native/overlay'
 
+// Each room starts at the table, including when an older session saved the panel open.
+if (call.prefs.captionFirst.on) {
+  updatePrefs({ captionFirst: { ...call.prefs.captionFirst, on: false } })
+}
+
 const settingsOpen = ref(false)
 const displayOpen = ref(false)
 const menu = ref<{ id: string; x: number; y: number } | null>(null)
