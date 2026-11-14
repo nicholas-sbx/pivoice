@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { DEFAULT_PREFS, loadPrefs } from '../src/lib/prefs'
+import { DEFAULT_PREFS, loadPrefs, savePrefs } from '../src/lib/prefs'
 
 const store = new Map<string, string>()
 beforeEach(() => {
@@ -21,6 +21,16 @@ describe('overlay prefs', () => {
     expect(loadPrefs().overlay).toEqual({ ...DEFAULT_PREFS.overlay, on: true, monitor: 'Dell U2720Q', anchor: 'bottom-left', size: 300 })
     store.set('pv.prefs', JSON.stringify({ overlay: { anchor: 'somewhere' } }))
     expect(loadPrefs().overlay.anchor).toBe('top-right')
+  })
+})
+
+describe('transcript startup', () => {
+  it('starts closed after being left open, while restoring appearance and timing', () => {
+    const p = loadPrefs()
+    p.captionFirst = { ...p.captionFirst, on: true, layout: 'overlay', color: 'highlight', scale: 1.2, mergeSec: 7 }
+    savePrefs(p)
+    expect(p.captionFirst.on).toBe(true)
+    expect(loadPrefs().captionFirst).toEqual({ ...p.captionFirst, on: false })
   })
 })
 

@@ -168,6 +168,8 @@ export function loadPrefs(): Prefs {
     const rev = typeof raw.rev === 'number' ? raw.rev : 0
     const phone = onPhone()
     const p = { ...DEFAULT_PREFS, ...(phone ? MOBILE_MIC : {}), ll: sanitizeLL(raw.ll), overlay: sanitizeOverlay(raw.overlay), captions: sanitizeCaptions(raw.captions), captionFirst: sanitizeCaptionFirst(raw.captionFirst) }
+    // Start with the table on each launch; only the transcript's appearance is restored.
+    p.captionFirst.on = false
     if (typeof raw.name === 'string') p.name = raw.name
     if (raw.spatial === 'off' || raw.spatial === 'stereo' || raw.spatial === 'hrtf') p.spatial = raw.spatial
     if (raw.lastSpatial === 'stereo' || raw.lastSpatial === 'hrtf') p.lastSpatial = raw.lastSpatial

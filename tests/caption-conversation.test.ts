@@ -283,7 +283,7 @@ describe('transcript preferences', () => {
     const raw = { rev: 1, on: true, layout: 'overlay', mergeSec: -1, blur: Infinity, dim: 99, scale: NaN, history: 23.7, color: 'highlight' }
     expect(sanitizeCaptionFirst(raw)).toMatchObject({ on: true, layout: 'overlay', mergeSec: 0, blur: 8, dim: .95, scale: 1, history: 24, color: 'highlight' })
     globalThis.localStorage = { getItem: () => JSON.stringify({ captionFirst: { on: true, layout: 'sidebar', mergeSec: 7 } }) } as unknown as Storage
-    expect(loadPrefs().captionFirst).toMatchObject({ on: true, layout: 'sidebar', mergeSec: 7 })
+    expect(loadPrefs().captionFirst).toMatchObject({ on: false, layout: 'sidebar', mergeSec: 7 })
   })
   it('migrates the previously saved defaults without changing timing, size or whether the view is open', () => {
     const p = sanitizeCaptionFirst({ on: true, layout: 'overlay', tint: true, mergeSec: 3, scale: 1.2 })
