@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { call } from '../call'
 import { conversation } from '../captions/state'
 import Avatar from './Avatar.vue'
+import Switchback from './Switchback.vue'
 import TranscriptSettings from './TranscriptSettings.vue'
 import Icon from './Icon.vue'
 
@@ -10,6 +11,7 @@ defineProps<{ sidebar: boolean }>()
 const emit = defineEmits<{ close: [] }>()
 const p = computed(() => call.prefs.captionFirst)
 const settings = ref(false)
+const switchback = ref(false)
 const log = ref<HTMLElement>()
 const panel = ref<HTMLElement>()
 const following = ref(true)
@@ -72,6 +74,7 @@ onBeforeUnmount(() => {
         <Icon name="transcript" :size="20" />
         <h2>Transcript</h2>
         <span class="live-label">LIVE</span>
+        <button type="button" class="switch-mode" :aria-pressed="switchback" @click="switchback = !switchback">Switchback</button>
         <button type="button" class="icon-button" aria-label="Transcript appearance and timing" :aria-expanded="settings" @click="settings = !settings">
           <Icon name="gear" :size="18" />
         </button>
@@ -86,6 +89,7 @@ onBeforeUnmount(() => {
             <strong>The conversation starts here</strong>
             <p>Words appear as people speak. Each person captions their own voice with Caption Me.</p>
           </div>
+          <Switchback v-else-if="switchback" :messages="messages" />
           <ol v-else class="messages">
             <li
               v-for="(m, i) in messages"
@@ -111,7 +115,7 @@ onBeforeUnmount(() => {
       </div>
       <!-- This strip always occupies the same height, even when nobody is pending. -->
       <div class="typing-status" role="region" aria-label="Waiting for captions">
-        <template v-if="p.indicator">
+        <template v-if="p.indicator && !switchback">
           <span v-for="person in pending" :key="person.id" class="typing-person" :title="person.name">
             <span class="typing-name">{{ person.name }}</span>
             <span class="waiting-dots" role="img" :aria-label="'Waiting for words from ' + person.name" :data-speaker="person.id"><i /><i /><i /></span>
@@ -124,6 +128,8 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.switch-mode { background: transparent; color: var(--header-secondary); border: 1px solid var(--border-strong); border-radius: 4px; padding: 3px 6px; cursor: pointer; }
+.switch-mode[aria-pressed=true] { color: var(--header-primary); background: var(--bg-primary); }
 .transcript {
   position: absolute;
   inset: 0;

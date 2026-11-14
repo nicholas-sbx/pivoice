@@ -8,6 +8,7 @@ export interface CaptionIdentity {
 }
 
 export interface CaptionMessage {
+  overlapRoot: number | null
   id: number
   speaker: string
   name: string
@@ -107,14 +108,15 @@ export class CaptionConversation {
     for (const id of ids) {
       const p = this.people.get(id)
       if (!p || p.speaking) continue
-      this.start(p, now)
+      const other = [...this.people.values()].find(q => q.speaking && q.turn)
+      this.start(p, now, other?.turn?.overlapRoot ?? other?.turn?.id ?? null)
       p.speaking = true
       p.hasActivity = true
     }
     this.tick(now)
   }
 
-  private start(p: Person, now: number): Turn {
+  private start(p: Person, now: number, overlapRoot: number | null = null): Turn {
     // A new turn owns the only typing indicator for this person. Late
     // corrections may update older text, but must never light those rows again.
     for (const turn of this.messages) if (turn.speaker === p.identity.id) turn.waiting = false
@@ -127,7 +129,7 @@ export class CaptionConversation {
       return p.turn
     }
     const turn: Turn = {
-      id: ++this.nextId, speaker: p.identity.id, name: p.identity.name,
+      overlapRoot, id: ++this.nextId, speaker: p.identity.id, name: p.identity.name,
       hue: p.hue, color: p.color, text: '', waiting: true,
       phrases: [], pendingUntil: now + this.waitMs
     }
