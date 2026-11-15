@@ -172,7 +172,6 @@ function reset() {
       </div>
 
       <div v-if="engine === 'nemo-canary'" class="row">
-        <span class="eyebrow">Spoken Language</span>
         <Segmented label="Spoken language" :options="languages" :model-value="c.language" @update:model-value="v => set('language', v)" />
         <p class="note">Choose the language you speak. Canary captions it in the same language, with punctuation and capitals.</p>
       </div>
