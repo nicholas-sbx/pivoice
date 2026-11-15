@@ -26,3 +26,21 @@ it('reports a failed decode and stops feeding the broken recogniser', async () =
   await Promise.resolve()
   expect(rec.accept).not.toHaveBeenCalled()
 })
+
+it('applies settings changed during asynchronous model loading before declaring ready', async () => {
+  const messages: FromCaptionWorker[] = []
+  const worker = { onmessage: (_e: MessageEvent<ToCaptionWorker>) => {}, postMessage: (m: FromCaptionWorker) => messages.push(m) }
+  vi.stubGlobal('self', worker)
+  let release!: (rec: Recogniser) => void
+  const loading = new Promise<Recogniser>(resolve => { release = resolve })
+  const make = vi.fn(() => loading)
+  run(make)
+  worker.onmessage(new MessageEvent<ToCaptionWorker>('message', { data: { type: 'init', model: 'canary-180m-flash', base: 'http://localhost/captions/', cfg: CAPTION_DEFAULTS } }))
+  await vi.waitFor(() => expect(make).toHaveBeenCalled())
+  const cfg = { ...CAPTION_DEFAULTS, suppressUnstableOutput: true }
+  worker.onmessage(new MessageEvent<ToCaptionWorker>('message', { data: { type: 'config', cfg } }))
+  const configure = vi.fn()
+  release({ streaming: false, held: 0, accept: () => false, partial: () => '', result: () => '', finish: () => '', configure })
+  await vi.waitFor(() => expect(messages).toContainEqual({ type: 'model', status: { phase: 'ready', bytes: 0, total: 0 } }))
+  expect(configure).toHaveBeenLastCalledWith(cfg)
+})

@@ -87,7 +87,7 @@ describe('Canary 180M Flash', () => {
 
   it('bounds a decoder that never predicts EOS and withholds its unfinished text', async () => {
     const f = fake(['▁Hello'])
-    const rec = new Canary(f.model, pieces, 'en')
+    const rec = new Canary(f.model, pieces, 'en', true)
     rec.accept(wave())
     expect(await rec.finish()).toBe('')
     // ceil(100 / 8) encoded frames * 8 * .3 + 1 = 32 text tokens.
@@ -97,13 +97,36 @@ describe('Canary 180M Flash', () => {
 
   it('abandons a looping preview early but preserves legitimate repetitions in a final read', async () => {
     const f = fake([...Array.from({ length: 8 }, () => ['▁Hello', ',']).flat(), '<|endoftext|>'])
-    const rec = new Canary(f.model, pieces, 'en')
+    const rec = new Canary(f.model, pieces, 'en', true)
     rec.accept(wave())
     expect(await rec.partial()).toBe('')
     expect(f.steps.length).toBeLessThan(9 + 16)
     expect(rec.held).toBe(16_000)
     expect(await rec.finish()).toBe(Array(8).fill('Hello,').join(' '))
     expect(f.resets()).toBe(2)
+  })
+
+  it('keeps bounded output by default and applies suppression changes to the next read', async () => {
+    const f = fake(['▁Hello'])
+    const rec = new Canary(f.model, pieces, 'en')
+    rec.accept(wave())
+    expect((await rec.partial()).split(' ')).toHaveLength(32)
+    expect(f.steps).toHaveLength(9 + 31)
+    rec.configure({ ...CAPTION_DEFAULTS, suppressUnstableOutput: true })
+    expect(await rec.partial()).toBe('')
+    expect(f.steps.length).toBeLessThan(2 * (9 + 31))
+    expect(rec.held).toBe(16_000)
+    rec.configure({ ...CAPTION_DEFAULTS, suppressUnstableOutput: false })
+    expect((await rec.finish()).split(' ')).toHaveLength(32)
+    expect(rec.held).toBe(0)
+    expect(f.resets()).toBe(3)
+  })
+
+  it('defaults suppression off for old preferences and only accepts booleans', () => {
+    expect(sanitizeCaptions({ model: 'canary-180m-flash' }).suppressUnstableOutput).toBe(false)
+    expect(sanitizeCaptions({ suppressUnstableOutput: true }).suppressUnstableOutput).toBe(true)
+    expect(sanitizeCaptions({ suppressUnstableOutput: false }).suppressUnstableOutput).toBe(false)
+    for (const value of ['true', 1, null]) expect(sanitizeCaptions({ suppressUnstableOutput: value }).suppressUnstableOutput).toBe(false)
   })
 
   it('discards phrase state after a failed read', async () => {

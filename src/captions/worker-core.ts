@@ -34,6 +34,7 @@ declare const self: DedicatedWorkerGlobalScope
 
 export interface WorkerConfig {
   language: CaptionLanguage
+  suppressUnstableOutput: boolean
   partials: boolean
   partialsPerSec: number
   rereadMs: number
@@ -133,6 +134,8 @@ export function run(make: MakeRecogniser) {
       files.set(path, buf)
     }
     rec = await make(files, m, cfg)
+    // Settings may change while the model's asynchronous session load runs.
+    rec.configure(cfg)
     status({ phase: 'ready', bytes: 0, total: 0 })
   }
 

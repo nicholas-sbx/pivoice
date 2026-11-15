@@ -49,6 +49,8 @@ export interface CaptionPrefs {
   model: ModelId
   /** Canary's spoken language (the other models are English). */
   language: CaptionLanguage
+  /** Canary: optionally withhold unfinished results and looping browser previews. */
+  suppressUnstableOutput: boolean
   /** Show everyone else's captions. */
   show: boolean
   /** Show your own captions too, beside you, as everyone else sees them. */
@@ -91,6 +93,7 @@ export const CAPTION_DEFAULTS: CaptionPrefs = {
   send: true,
   model: DEFAULT_MODEL,
   language: 'en',
+  suppressUnstableOutput: false,
   show: true,
   showOwn: true,
   download: 'wifi',
@@ -136,7 +139,7 @@ export function sanitizeCaptions(raw: unknown): CaptionPrefs {
   const c = captionDefaults()
   if (!raw || typeof raw !== 'object') return c
   const r = raw as Record<string, unknown>
-  for (const k of ['send', 'show', 'showOwn', 'partials', 'caret'] as const) if (typeof r[k] === 'boolean') c[k] = r[k]
+  for (const k of ['send', 'show', 'showOwn', 'partials', 'caret', 'suppressUnstableOutput'] as const) if (typeof r[k] === 'boolean') c[k] = r[k]
   if (r.download === 'wifi' || r.download === 'ask' || r.download === 'always') c.download = r.download
   if (r.source === 'raw' || r.source === 'call') c.source = r.source
   if (isModelId(r.model)) c.model = r.model

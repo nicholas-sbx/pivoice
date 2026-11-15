@@ -1,6 +1,6 @@
 import type { CaptionLanguage } from './config'
 import { NemoFeatures } from './fbank'
-import type { Recogniser } from './worker-core'
+import type { Recogniser, WorkerConfig } from './worker-core'
 
 /** The pinned sherpa-onnx Canary export: encoder, then one token and its position per decoder step. */
 export interface CanaryModel {
@@ -24,7 +24,7 @@ export class Canary implements Recogniser {
   private prompt: number[]
   private eos: number
 
-  constructor(private model: CanaryModel, private pieces: string[], language: CaptionLanguage) {
+  constructor(private model: CanaryModel, private pieces: string[], language: CaptionLanguage, private suppressUnstableOutput = false) {
     const token = (name: string) => {
       const id = pieces.indexOf(`<|${name}|>`)
       if (id < 0) throw new Error(`Canary vocabulary has no ${name}`)
@@ -48,7 +48,7 @@ export class Canary implements Recogniser {
   }
 
   result() { return '' }
-  configure() {}
+  configure(cfg: WorkerConfig) { this.suppressUnstableOutput = cfg.suppressUnstableOutput }
   partial() { return this.read(false) }
 
   async finish(): Promise<string> {
@@ -58,6 +58,7 @@ export class Canary implements Recogniser {
 
   private async read(final: boolean): Promise<string> {
     if (this.count < 1600) return ''
+    const suppress = this.suppressUnstableOutput
     const { data, frames } = this.features.compute(this.phrase.subarray(0, this.count))
     // NeMo's CTC exports take bin-major input; this encoder takes frame-major.
     const input = new Float32Array(data.length)
@@ -69,24 +70,26 @@ export class Canary implements Recogniser {
       // sherpa-onnx's 30 tokens/second guard, also within the export's 1024 positions.
       const limit = Math.min(1024 - this.prompt.length, Math.floor(encodedFrames * 8 * 0.3) + 1)
       let text = ''
-      const generated: number[] = []
+      const generated: number[] | null = suppress && !final ? [] : null
       for (let i = 0; i < limit; i++) {
         if (logits.length !== this.pieces.length) throw new Error('Canary output does not match its vocabulary')
         let best = 0
         for (let k = 1; k < logits.length; k++) if (logits[k] > logits[best]) best = k
         if (best === this.eos) return text.trim()
-        generated.push(best)
         // A cut-off word can send an unfinished preview into a loop. Wait
         // for more audio instead of spending its whole token budget on it.
         // Final reads may legitimately contain repetitions and keep them.
-        if (!final && repeatingTail(generated)) return ''
+        if (generated) {
+          generated.push(best)
+          if (repeatingTail(generated)) return ''
+        }
         const piece = this.pieces[best] ?? ''
         if (!piece.startsWith('<|') && piece !== '<unk>' && piece !== '<pad>') text += piece.replaceAll('▁', ' ')
         if (i + 1 < limit) logits = await this.model.step(best, this.prompt.length + i)
       }
-      // The duration guard is not an end-of-transcript prediction. In a
-      // preview, returning nothing keeps the last completed re-read visible.
-      return ''
+      // Always bound decoding work. With suppression off, keep the text
+      // generated within that budget even if EOS wasn't predicted.
+      return suppress ? '' : text.trim()
     } finally {
       this.model.reset()
     }

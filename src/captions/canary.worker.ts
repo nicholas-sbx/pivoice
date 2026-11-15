@@ -68,5 +68,5 @@ run(async (files, _model, cfg) => {
       states = mask = null
     }
   }
-  return new Canary(model, pieces, cfg.language)
+  return new Canary(model, pieces, cfg.language, cfg.suppressUnstableOutput)
 })

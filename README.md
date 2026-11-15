@@ -1132,6 +1132,7 @@ them), and shown as text.
 | Show Captions / Show My Own | On / On | Everyone else's beside them; yours beside you. |
 | Recogniser | Vosk | Vosk, Parakeet, Canary 180M Flash, FastConformer 80, 480 or 1040 ms, or in the app Vosk large (another one starts the recogniser again). |
 | Spoken language (Canary) | English | English, German, Spanish or French. Captions stay in the spoken language. |
+| Suppress unstable output (Canary) | Off | Optionally withhold unfinished results at the decoding limit and repeating browser previews. Can omit spoken words. |
 | Download | Not on data | When the model may download without asking. |
 | What It Hears (browser) | Unprocessed | Its own capture as above, or the call's own capture, processed. |
 | Before the ring / After the ring | 200 / 200 ms | Pre-roll and post-roll. |

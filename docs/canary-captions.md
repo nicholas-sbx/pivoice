@@ -12,6 +12,13 @@ backed up. The existing longest-phrase setting bounds the audio (15 seconds
 by default, at most 30), below NVIDIA's 40-second input limit. A language
 change restarts the recogniser, as a model change does.
 
+**Suppress unstable output** is a Canary-only toggle, **off by default**.
+Off keeps the generated text, including repetitions and text produced before
+the decoding limit. On withholds unfinished results that reach that limit;
+in the browser it also abandons repeating live previews early. This can omit
+spoken words. The decoding limit always bounds work in either mode. The
+setting is saved and changes apply to the next read without reloading the model.
+
 ## Model and quantization research
 
 The requested model is **NVIDIA Canary 180M Flash**, not Canary 1B Flash.
@@ -52,16 +59,18 @@ The decoder gets the nine-token Canary task prompt, with matching source
 and target languages, punctuation enabled, and timestamps disabled. It
 advances the token position and six memory tensors at each greedy decoding
 step. Every re-read starts fresh, and releases its tensors on completion
-or error. Only EOS-completed reads are emitted: hitting the duration-based
-token guard withholds unfinished output. Repeating token blocks in a live
-preview are abandoned early until more speech arrives; final reads keep
-legitimate repetitions. Control tokens are excluded from captions. A runtime failure becomes a visible
-model error and stops further input to that worker.
+or error. With suppression enabled, only EOS-completed reads are emitted:
+hitting the duration-based token guard withholds unfinished output. Repeating
+token blocks in a live preview are abandoned early until more speech arrives;
+final reads keep legitimate repetitions. With suppression off, reads can return
+text at the token limit. Control tokens are excluded from captions. A runtime
+failure becomes a visible model error and stops further input to that worker.
 
 The desktop uses sherpa-onnx 1.13.8's existing pinned CPU libraries in the
 caption helper process, with its Canary encoder/decoder configuration.
-The source and target language hints match. Results that reach sherpa-onnx's
-duration-based token guard are withheld here too. Its libraries, model work and
+The source and target language hints match. When suppression is enabled, results
+that reach sherpa-onnx's duration-based token guard are withheld here too.
+Its libraries, model work and
 memory stay out of the audio process. Both platforms continue to receive
 only the gated mic segments, through the existing 48 → 16 kHz decimator.
 This export does not expose Canary's experimental word timestamps.
@@ -87,11 +96,14 @@ PIVOICE_ASR_LIVE=1 PIVOICE_SITE=http://localhost:5173/ \
 The focused browser check downloads and verifies the real model in a fresh
 browser, obtains live and final transcripts from the speech fixture,
 repeats a phrase to check decoder reset, and creates another worker to
-check cached loading. It runs in the site PR workflow. The general captions
+check cached loading. It tests both suppression settings and the settings
+toggle's default, persistence and model visibility. It runs in the site PR
+workflow. The general captions
 end-to-end check also includes Canary in the browser and, when built, the
 desktop app, sending captions to another room member.
 
 Unit checks cover all four language prompts, input layout, token positions,
 EOS as the first result, control-token filtering, token bounds, reset after
-failure, preference migration, and model-catalog parity. Native branch CI
+failure, preference migration, suppression changes during model loading,
+live suppression changes, and model-catalog parity. Native branch CI
 also builds the new C configuration on Linux and Windows.

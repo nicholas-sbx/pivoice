@@ -42,6 +42,7 @@ func init() {
 			if err != nil {
 				return nil, err
 			}
+			s.SetSuppressUnstableOutput(in.SuppressUnstableOutput)
 			return &sherpaRec{s: s}, nil
 		case "nemo-ctc-streaming":
 			if err := native.LoadORT(libs); err != nil {
@@ -99,8 +100,10 @@ func (r *sherpaRec) finish() (string, error) {
 	r.phrase = r.phrase[:0]
 	return text, nil
 }
-func (r *sherpaRec) configure(helperConfig) {}
-func (r *sherpaRec) close()                 { r.s.Close() }
+func (r *sherpaRec) configure(c helperConfig) {
+	r.s.SetSuppressUnstableOutput(c.SuppressUnstableOutput)
+}
+func (r *sherpaRec) close() { r.s.Close() }
 
 // streamRec: the streaming FastConformer, ONNX Runtime driven directly
 // (streamctc.go has why, and the rest of it).

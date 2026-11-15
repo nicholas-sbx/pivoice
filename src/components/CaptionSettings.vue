@@ -174,6 +174,12 @@ function reset() {
       <div v-if="engine === 'nemo-canary'" class="row">
         <Segmented label="Spoken language" :options="languages" :model-value="c.language" @update:model-value="v => set('language', v)" />
         <p class="note">Choose the language you speak. Canary captions it in the same language, with punctuation and capitals.</p>
+        <Switch
+          label="Suppress unstable output"
+          hint="Hide incomplete results and repeating browser previews. May omit spoken words. Off keeps the generated text, including repetitions."
+          :model-value="c.suppressUnstableOutput"
+          @update:model-value="v => set('suppressUnstableOutput', v)"
+        />
       </div>
 
       <div class="row">

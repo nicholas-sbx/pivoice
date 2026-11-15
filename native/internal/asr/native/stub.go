@@ -38,3 +38,4 @@ func NewSherpaCTC(string, string, int) (*Sherpa, error)                    { ret
 func NewSherpaCanary(string, string, string, string, int) (*Sherpa, error) { return nil, errNoCgo }
 func (*Sherpa) Decode([]float32) string                                    { return "" }
 func (*Sherpa) Close()                                                     {}
+func (*Sherpa) SetSuppressUnstableOutput(bool)                             {}

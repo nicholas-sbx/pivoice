@@ -205,6 +205,7 @@ function appCaptions(c: CaptionPrefs): AppConfig['captions'] {
     send: c.send,
     model: c.model,
     language: c.language,
+    suppressUnstableOutput: c.suppressUnstableOutput,
     showOwn: c.showOwn,
     preMs: c.preRollMs,
     postMs: c.postRollMs,

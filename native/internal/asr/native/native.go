@@ -430,9 +430,10 @@ func (v *Vosk) Close() {
 
 // Sherpa is a phrase-at-a-time recogniser (Parakeet or Canary).
 type Sherpa struct {
-	rec    *C.SherpaOnnxOfflineRecognizer
-	out    []C.char
-	canary bool
+	rec                    *C.SherpaOnnxOfflineRecognizer
+	out                    []C.char
+	canary                 bool
+	suppressUnstableOutput bool
 }
 
 // NewSherpaCTC loads a NeMo CTC model on the CPU with this many threads.
@@ -470,13 +471,16 @@ func NewSherpaCanary(encoder, decoder, tokens, language string, threads int) (*S
 	return &Sherpa{rec: r, out: make([]C.char, 8192), canary: true}, nil
 }
 
+// SetSuppressUnstableOutput controls Canary's optional token-limit filter.
+func (s *Sherpa) SetSuppressUnstableOutput(on bool) { s.suppressUnstableOutput = on }
+
 // Decode a whole phrase, 16 kHz, [-1, 1].
 func (s *Sherpa) Decode(pcm []float32) string {
 	if len(pcm) == 0 {
 		return ""
 	}
 	maxTokens := 0
-	if s.canary {
+	if s.canary && s.suppressUnstableOutput {
 		// The pinned encoder subsamples 10 ms frames by eight; sherpa-onnx
 		// allows 30 tokens per second and omits the final EOS/guard token.
 		frames := (len(pcm) + 80) / 160
