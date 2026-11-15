@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { call, captionModel, downloadCaptionModel, forgetCaptionModel, updateCaptions } from '../call'
-import { CAPTION_DEFAULTS, CAPTION_RANGES, type CaptionPrefs } from '../captions/config'
+import { CAPTION_DEFAULTS, CAPTION_LANGUAGES, CAPTION_RANGES, type CaptionLanguage, type CaptionPrefs } from '../captions/config'
 import { MODELS, cachedFiles, forgetModel, inBrowser, modelOf, streams, type ModelId } from '../captions/models'
 import { captions } from '../captions/state'
 import { isNative, native } from '../native/bridge'
@@ -28,6 +28,7 @@ const model = computed(() => modelOf(chosen.value))
 const engine = computed(() => model.value?.engine)
 const streaming = computed(() => streams(engine.value))
 const noCaptions = computed(() => isNative && !models.value.length)
+const languages = (Object.keys(CAPTION_LANGUAGES) as CaptionLanguage[]).map(value => ({ value, label: CAPTION_LANGUAGES[value] }))
 
 const download: { value: CaptionPrefs['download']; label: string }[] = [
   { value: 'wifi', label: 'Not on data' },
@@ -170,6 +171,12 @@ function reset() {
         </p>
       </div>
 
+      <div v-if="engine === 'nemo-canary'" class="row">
+        <span class="eyebrow">Spoken Language</span>
+        <Segmented label="Spoken language" :options="languages" :model-value="c.language" @update:model-value="v => set('language', v)" />
+        <p class="note">Choose the language you speak. Canary captions it in the same language, with punctuation and capitals.</p>
+      </div>
+
       <div class="row">
         <span class="eyebrow">Download</span>
         <Segmented :options="download" :model-value="c.download" @update:model-value="v => set('download', v)" />
@@ -263,7 +270,7 @@ function reset() {
           :min="r.rereadMs[0]"
           :max="r.rereadMs[1]"
           :step="r.rereadMs[2]"
-          hint="Parakeet hears a phrase whole, so live words are the phrase so far read again: more often is livelier and costs more CPU. Skipped while it's behind."
+          :hint="`${model?.title} hears a phrase whole, so live words are the phrase so far read again: more often is livelier and costs more CPU. Skipped while it's behind.`"
           :disabled="!c.partials"
           :model-value="c.rereadMs"
           @update:model-value="v => set('rereadMs', v)"
@@ -289,7 +296,7 @@ function reset() {
           :min="r.threads[0]"
           :max="r.threads[1]"
           :step="r.threads[2]"
-          hint="How many cores the recogniser may use at once. More gets through Parakeet's phrases and FastConformer's chunks sooner; the call's audio keeps priority either way."
+          hint="How many cores the recogniser may use at once. More gets through phrases and chunks sooner; the call's audio keeps priority either way."
           :model-value="c.threads"
           @update:model-value="v => set('threads', v)"
         />

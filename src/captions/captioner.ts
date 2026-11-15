@@ -1,6 +1,7 @@
 import workletUrl from './worklet.ts?worker&url'
 import FastConformerWorker from './fastconformer.worker.ts?worker'
 import ParakeetWorker from './parakeet.worker.ts?worker'
+import CanaryWorker from './canary.worker.ts?worker'
 import VoskWorker from './vosk.worker.ts?worker'
 import { FrameRing } from '../audio/ll/ring'
 import { MAX_PRE_ROLL_MS, type CaptionPrefs } from './config'
@@ -16,7 +17,7 @@ import type { FromCaptionWorker, ModelStatus, ToCaptionWorker, WorkerConfig } fr
  * talks to the worker directly.
  *
  *   raw mic ─────┐
- *                ├─▶ pv-caption (gate) ──frames──▶ worker (Vosk, Parakeet or FastConformer) ──words──▶ here
+ *                ├─▶ pv-caption (gate) ──frames──▶ worker (Vosk, Parakeet, Canary or FastConformer) ──words──▶ here
  *   call's mic ──┘   (the ring's level)
  */
 
@@ -27,7 +28,7 @@ export interface CaptionerEvents {
 }
 
 export function workerConfig(p: CaptionPrefs): WorkerConfig {
-  return { partials: p.partials, partialsPerSec: p.partialsPerSec, rereadMs: p.rereadMs, maxPhraseSec: p.maxPhraseSec, minConfidence: p.minConfidence }
+  return { language: p.language, partials: p.partials, partialsPerSec: p.partialsPerSec, rereadMs: p.rereadMs, maxPhraseSec: p.maxPhraseSec, minConfidence: p.minConfidence }
 }
 
 export class Captioner {
@@ -50,7 +51,7 @@ export class Captioner {
   ) {
     this.model = prefs.model
     const engine = modelOf(prefs.model)?.engine
-    this.worker = engine === 'nemo-ctc' ? new ParakeetWorker() : engine === 'nemo-ctc-streaming' ? new FastConformerWorker() : new VoskWorker()
+    this.worker = engine === 'nemo-canary' ? new CanaryWorker() : engine === 'nemo-ctc' ? new ParakeetWorker() : engine === 'nemo-ctc-streaming' ? new FastConformerWorker() : new VoskWorker()
     this.worker.onmessage = (e: MessageEvent<FromCaptionWorker>) => this.onWorker(e.data)
     const shared = typeof SharedArrayBuffer !== 'undefined' && globalThis.crossOriginIsolated
     const ring = shared ? FrameRing.create(CAPTION_SLOTS, CAPTION_FRAME) : null

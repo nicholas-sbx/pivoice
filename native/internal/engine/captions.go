@@ -398,7 +398,7 @@ func (c *captioner) recLoop() {
 	load := func() {
 		st.phase = "loading"
 		emit()
-		h, err := asr.StartHelper(st.root, st.model, asr.HelperOptions{Threads: st.cfg.Threads, MinConfidence: st.cfg.MinConfidence, MaxPhraseSec: st.cfg.MaxPhraseSec})
+		h, err := asr.StartHelper(st.root, st.model, asr.HelperOptions{Language: st.cfg.Language, Threads: st.cfg.Threads, MinConfidence: st.cfg.MinConfidence, MaxPhraseSec: st.cfg.MaxPhraseSec})
 		if err != nil {
 			log.Printf("captions: %v", err)
 			st.phase, st.err = "error", err.Error()
@@ -445,7 +445,7 @@ func (c *captioner) recLoop() {
 			}
 			old := st.cfg
 			st.cfg = *cfg
-			if old.Send != st.cfg.Send || old.Model != st.cfg.Model || old.Threads != st.cfg.Threads {
+			if old.Send != st.cfg.Send || old.Model != st.cfg.Model || old.Threads != st.cfg.Threads || (st.model.Engine == "nemo-canary" && old.Language != st.cfg.Language) {
 				begin()
 			} else {
 				if st.helper != nil && (old.MinConfidence != st.cfg.MinConfidence || old.MaxPhraseSec != st.cfg.MaxPhraseSec) {

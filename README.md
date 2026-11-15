@@ -165,7 +165,7 @@ estimate (`≈`) where it can't. Hover the estimate for what each part means.
 the words go to everyone else, beside their seat at the table (on the side
 facing the middle, running toward it, so they stay on screen) or in their tile on a phone. Three
 recognisers, all on the CPU: **Vosk** (the default, and a larger one in the
-app), **Parakeet** and **FastConformer**. The model downloads the first time it's wanted and is kept; on mobile data you're
+app), **Parakeet**, **Canary 180M Flash** and **FastConformer**. The model downloads the first time it's wanted and is kept; on mobile data you're
 asked first. See [Live captions](#live-captions).
 
 **Voice settings.** Input and output device, an input level meter,
@@ -895,13 +895,14 @@ hidden. Closing the view restores the table's caption settings; leaving the
 call clears the conversation. The existing browser and app caption channels
 are shared, so no new native app version is needed.
 
-### Four recognisers, all on the CPU
+### Five recognisers, all on the CPU
 
 | | What | Download | In a browser | In the app |
 | --- | --- | --- | --- | --- |
 | **Vosk** (default) | Kaldi, `vosk-model-small-en-us-0.15` (Alpha Cephei, Apache 2.0). Streaming: words appear as they're said, and it ends a phrase at a pause by itself. | 43 MB | [vosk-browser](https://github.com/ccoreilly/vosk-browser)'s WebAssembly build, in a worker | libvosk 0.3.45, Vosk's own release |
 | **Vosk large** (the app only) | Kaldi, `vosk-model-en-us-0.22-lgraph` (Alpha Cephei, Apache 2.0). Streaming, like Vosk, with about a fifth fewer mistakes (7.8% of words on LibriSpeech's clean test against the small one's 9.9%, by Vosk's figures). | 139 MB | Not offered: too slow as WebAssembly (below) | libvosk 0.3.45, as Vosk |
 | **Parakeet** | NVIDIA NeMo `parakeet-tdt_ctc-110m`, its CTC branch, int8 (CC BY 4.0; ONNX export by k2-fsa/sherpa-onnx). With punctuation and capitals. Hears a phrase whole. | 100 MB | ONNX Runtime Web's WebAssembly CPU backend, one thread, in a worker | sherpa-onnx 1.13.8 with its ONNX Runtime |
+| **Canary 180M Flash** | NVIDIA NeMo `canary-180m-flash`, INT8 encoder and decoder (CC BY 4.0; ONNX export by k2-fsa/sherpa-onnx). English, German, Spanish or French, with punctuation and capitals. Hears a phrase whole; choose the spoken language in settings. | 148 MB | ONNX Runtime Web's WebAssembly CPU backend, one thread, in a worker | sherpa-onnx 1.13.8 with its ONNX Runtime |
 | **FastConformer** 80 ms, 480 ms, 1040 ms | NVIDIA NeMo `stt_en_fastconformer_hybrid_large_streaming_80ms`, `_480ms` and `_1040ms` (114M each), their CTC branch, int8 (CC BY 4.0; ONNX export by k2-fsa/sherpa-onnx). Lowercase, no punctuation. Streaming: words appear as they're said, a chunk at a time (0.16, 0.56 or 1.12 s). | 100 MB each | ONNX Runtime Web's WebAssembly CPU backend, one thread, in a worker | ONNX Runtime 1.28.2 (sherpa-onnx 1.13.8's), driven directly |
 
 Nothing asks for a GPU: every build is the CPU one, and the browser never
@@ -911,11 +912,15 @@ Settings → Captions**. The catalog ([`src/captions/models.json`](src/captions/
 copied to [`native/internal/asr`](native/internal/asr) and tested to match)
 leaves room for more.
 
-Parakeet hears a phrase at a time, so its live words are the phrase so far
+Parakeet and Canary hear a phrase at a time, so their live words are the phrase so far
 read again (every 1 s of speech by default, skipped while it's behind), and
 a phrase longer than 15 s is finished there and a new one started, since each
-read costs more the longer the phrase is. In headless Chromium on one core it
+read costs more the longer the phrase is. In headless Chromium on one core Parakeet
 read at 0.06× real time (`npm run e2e:captions`).
+
+Canary uses the same NVIDIA model as T3 Code, with an INT8 ONNX export rather
+than T3's GGUF Q8_0 conversion. See [Canary captions](docs/canary-captions.md)
+for the model research, format choice, language controls and checks.
 
 Vosk large is the app's alone (`"browser": false` in the catalog). The app
 reads it at 0.25× real time once it's going (its first ten seconds or so of
@@ -1125,15 +1130,16 @@ them), and shown as text.
 | --- | --- | --- |
 | Caption Me | On | Recognise you and send the words. |
 | Show Captions / Show My Own | On / On | Everyone else's beside them; yours beside you. |
-| Recogniser | Vosk | Vosk, Parakeet, FastConformer 80, 480 or 1040 ms, or in the app Vosk large (another one starts the recogniser again). |
+| Recogniser | Vosk | Vosk, Parakeet, Canary 180M Flash, FastConformer 80, 480 or 1040 ms, or in the app Vosk large (another one starts the recogniser again). |
+| Spoken language (Canary) | English | English, German, Spanish or French. Captions stay in the spoken language. |
 | Download | Not on data | When the model may download without asking. |
 | What It Hears (browser) | Unprocessed | Its own capture as above, or the call's own capture, processed. |
 | Before the ring / After the ring | 200 / 200 ms | Pre-roll and post-roll. |
 | Words as you say them | On | Live words, or only finished phrases. |
 | Updates a second (Vosk, FastConformer) | 8 | The most live updates a second. |
 | Leave out unsure words (Vosk) | Off | Finished phrases drop words below this confidence. |
-| Read again every (Parakeet) | 1000 ms | How often the phrase so far is read again for live words. |
-| Longest phrase (Parakeet, FastConformer) | 15 s | Parakeet: finished and started again past this. FastConformer: ends at the next word past this, the model carrying on. |
+| Read again every (Parakeet, Canary) | 1000 ms | How often the phrase so far is read again for live words. |
+| Longest phrase (Parakeet, Canary, FastConformer) | 15 s | Parakeet and Canary: finished and started again past this. FastConformer: ends at the next word past this, the model carrying on. |
 | CPU threads (app) | 2 | The recogniser's threads. |
 | Lines / Fade / Size / Stay up for | 3 / 25% / 100% / 6 s | How captions are shown. Each older phrase fades by this much more than the one after it. |
 | Waiting caret | On | Blinks after someone's words while they're still speaking, in case more captions are coming. |
@@ -1141,8 +1147,7 @@ them), and shown as text.
 The tab also shows what it's hearing (and why), how the model's getting on,
 and how hard the recogniser works (× real time).
 
-**Not done yet:** captions in the pop-out table and the app's overlay; other
-languages (the catalog takes more models); Parakeet's bigger 0.6B model
+**Not done yet:** captions in the pop-out table and the app's overlay; languages beyond Canary's English, German, Spanish and French (the catalog takes more models); Parakeet's bigger 0.6B model
 (482 MB), which would suit the app better than a browser.
 
 ## Rooms: a Durable Object each

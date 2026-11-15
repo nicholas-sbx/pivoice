@@ -18,6 +18,7 @@
     "e2e": "node scripts/e2e.mjs",
     "e2e:caption-first": "node scripts/e2e-caption-first.mjs",
     "e2e:captions": "node scripts/e2e-captions.mjs",
+    "e2e:canary": "node scripts/e2e-canary.mjs",
     "e2e:native": "node scripts/e2e-native.mjs",
     "captions:models": "node scripts/captions-models.mjs"
   },

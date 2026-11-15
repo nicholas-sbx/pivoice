@@ -39,6 +39,7 @@ type answer struct {
 
 // HelperOptions is what to run and how.
 type HelperOptions struct {
+	Language      string
 	Threads       int
 	MinConfidence float64
 	// MaxPhraseSec: a streaming FastConformer phrase this long ends at its next word.
@@ -84,6 +85,7 @@ func StartHelper(root string, m Model, o HelperOptions) (*Helper, error) {
 	go h.read()
 	init := helperInit{
 		Engine:        m.Engine,
+		Language:      o.Language,
 		LibDir:        runtimeDir(root, r),
 		Load:          r.Load,
 		ModelDir:      modelDir(root, m),

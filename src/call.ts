@@ -5,7 +5,7 @@ import { LOOP_ID, SEND_DELAY_MS, sanitizeLL, type LLConfig } from './audio/ll/co
 import { LowLatencyEngine } from './audio/ll/engine'
 import { Captioner } from './captions/captioner'
 import type { CaptionPrefs } from './captions/config'
-import { browserModel, type ModelId } from './captions/models'
+import { browserModel, modelOf, type ModelId } from './captions/models'
 import { encodeCaption } from './captions/protocol'
 import {
   captionRun,
@@ -204,6 +204,7 @@ function appCaptions(c: CaptionPrefs): AppConfig['captions'] {
   return {
     send: c.send,
     model: c.model,
+    language: c.language,
     showOwn: c.showOwn,
     preMs: c.preRollMs,
     postMs: c.postRollMs,
@@ -723,7 +724,7 @@ export function updateCaptions(patch: Partial<CaptionPrefs>) {
     return
   }
   if (call.phase !== 'room' || !engine) return
-  if (next.send !== before.send || next.model !== before.model) void startCaptions()
+  if (next.send !== before.send || next.model !== before.model || (modelOf(captionModel())?.engine === 'nemo-canary' && next.language !== before.language)) void startCaptions()
   else {
     captioner?.configure(next)
     if (next.source !== before.source) void plugCaptions()

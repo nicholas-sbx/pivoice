@@ -68,6 +68,7 @@ func readFrame(r io.Reader, buf []byte) (byte, []byte, error) {
 // helperInit is everything the helper needs: what to load, from where, and what each must hash to.
 type helperInit struct {
 	Engine        string   `json:"engine"`
+	Language      string   `json:"language"`
 	LibDir        string   `json:"libDir"`
 	Libs          []File   `json:"libs"`
 	Load          []string `json:"load"`

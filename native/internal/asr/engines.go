@@ -34,6 +34,15 @@ func init() {
 				return nil, err
 			}
 			return &sherpaRec{s: s}, nil
+		case "nemo-canary":
+			if err := native.LoadSherpa(libs); err != nil {
+				return nil, err
+			}
+			s, err := native.NewSherpaCanary(filepath.Join(in.ModelDir, "encoder.int8.onnx"), filepath.Join(in.ModelDir, "decoder.int8.onnx"), filepath.Join(in.ModelDir, "tokens.txt"), in.Language, in.Threads)
+			if err != nil {
+				return nil, err
+			}
+			return &sherpaRec{s: s}, nil
 		case "nemo-ctc-streaming":
 			if err := native.LoadORT(libs); err != nil {
 				return nil, err
@@ -74,7 +83,7 @@ func (r *voskRec) configure(c helperConfig) {
 }
 func (r *voskRec) close() { r.v.Close() }
 
-// sherpaRec: Parakeet hears a phrase whole, so the phrase is kept here and read when asked.
+// sherpaRec: Parakeet and Canary hear a phrase whole, kept here and read when asked.
 type sherpaRec struct {
 	s      *native.Sherpa
 	phrase []float32

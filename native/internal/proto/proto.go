@@ -115,6 +115,7 @@ type Config struct {
 type Captions struct {
 	Send           bool    `json:"send"`
 	Model          string  `json:"model"`
+	Language       string  `json:"language,omitempty"`
 	ShowOwn        bool    `json:"showOwn"`
 	PreMs          float64 `json:"preMs"`
 	PostMs         float64 `json:"postMs"`
@@ -128,6 +129,11 @@ type Captions struct {
 
 // Sanitize keeps captions' settings to the page's ranges (CAPTION_RANGES in src/captions/config.ts).
 func (c Captions) Sanitize() Captions {
+	switch c.Language {
+	case "en", "de", "es", "fr":
+	default:
+		c.Language = "en"
+	}
 	c.PreMs = clamp(c.PreMs, 0, 1000, 200)
 	c.PostMs = clamp(c.PostMs, 0, 2000, 200)
 	c.PartialsPerSec = clamp(c.PartialsPerSec, 1, 20, 8)
