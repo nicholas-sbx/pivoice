@@ -34,7 +34,6 @@ declare const self: DedicatedWorkerGlobalScope
 
 export interface WorkerConfig {
   partials: boolean
-  partialsPerSec: number
   rereadMs: number
   maxPhraseSec: number
   minConfidence: number
@@ -164,7 +163,6 @@ export function run(make: MakeRecogniser) {
 
   let u = 0
   let partialText = ''
-  let partialAt = 0
   let sinceReread = 0
   let busyMs = 0
   let audioMs = 0
@@ -214,9 +212,6 @@ export function run(make: MakeRecogniser) {
     }
     if (!cfg.partials) return
     if (r.streaming) {
-      const now = performance.now()
-      if (now - partialAt < 1000 / cfg.partialsPerSec) return
-      partialAt = now
       say(await r.partial(), false)
     } else {
       sinceReread += pcm.length

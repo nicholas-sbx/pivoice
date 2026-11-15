@@ -113,24 +113,22 @@ type Config struct {
 
 // Captions is AppCaptions in src/native/protocol.ts.
 type Captions struct {
-	Send           bool    `json:"send"`
-	Model          string  `json:"model"`
-	ShowOwn        bool    `json:"showOwn"`
-	PreMs          float64 `json:"preMs"`
-	PostMs         float64 `json:"postMs"`
-	Partials       bool    `json:"partials"`
-	PartialsPerSec float64 `json:"partialsPerSec"`
-	RereadMs       float64 `json:"rereadMs"`
-	MaxPhraseSec   float64 `json:"maxPhraseSec"`
-	MinConfidence  float64 `json:"minConfidence"`
-	Threads        int     `json:"threads"`
+	Send          bool    `json:"send"`
+	Model         string  `json:"model"`
+	ShowOwn       bool    `json:"showOwn"`
+	PreMs         float64 `json:"preMs"`
+	PostMs        float64 `json:"postMs"`
+	Partials      bool    `json:"partials"`
+	RereadMs      float64 `json:"rereadMs"`
+	MaxPhraseSec  float64 `json:"maxPhraseSec"`
+	MinConfidence float64 `json:"minConfidence"`
+	Threads       int     `json:"threads"`
 }
 
 // Sanitize keeps captions' settings to the page's ranges (CAPTION_RANGES in src/captions/config.ts).
 func (c Captions) Sanitize() Captions {
 	c.PreMs = clamp(c.PreMs, 0, 1000, 200)
 	c.PostMs = clamp(c.PostMs, 0, 2000, 200)
-	c.PartialsPerSec = clamp(c.PartialsPerSec, 1, 20, 8)
 	c.RereadMs = clamp(c.RereadMs, 250, 4000, 1000)
 	c.MaxPhraseSec = clamp(c.MaxPhraseSec, 4, 30, 15)
 	c.MinConfidence = clamp(c.MinConfidence, 0, 0.95, 0)

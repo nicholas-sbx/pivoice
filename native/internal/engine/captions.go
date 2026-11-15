@@ -291,10 +291,9 @@ type recState struct {
 	helper  *asr.Helper
 	plan    *asr.Plan
 	consent bool
-	// The phrase: its number, what was last said of it, and when.
+	// The phrase: its number and what was last said of it.
 	u           int64
 	partialText string
-	partialAt   time.Time
 	sinceReread int
 	held        int
 	// How hard it's working: seconds of work per second of speech, lately.
@@ -587,12 +586,7 @@ func (c *captioner) recognise(st *recState, k *capChunk) {
 	if !st.cfg.Partials {
 		return
 	}
-	if streaming {
-		if time.Since(st.partialAt) < time.Duration(float64(time.Second)/st.cfg.PartialsPerSec) {
-			return
-		}
-		st.partialAt = time.Now()
-	} else {
+	if !streaming {
 		st.sinceReread += len(pcm)
 		if float64(st.sinceReread) < st.cfg.RereadMs*16 || len(c.queue) > behindChunks {
 			return

@@ -58,7 +58,6 @@ export interface AppCaptions {
   preMs: number
   postMs: number
   partials: boolean
-  partialsPerSec: number
   rereadMs: number
   maxPhraseSec: number
   minConfidence: number

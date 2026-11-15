@@ -208,7 +208,6 @@ function appCaptions(c: CaptionPrefs): AppConfig['captions'] {
     preMs: c.preRollMs,
     postMs: c.postRollMs,
     partials: c.partials,
-    partialsPerSec: c.partialsPerSec,
     rereadMs: c.rereadMs,
     maxPhraseSec: c.maxPhraseSec,
     minConfidence: c.minConfidence,

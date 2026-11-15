@@ -55,8 +55,6 @@ export interface CaptionPrefs {
   postRollMs: number
   /** Send words as they're recognised (and corrected), or only whole phrases. */
   partials: boolean
-  /** Vosk and FastConformer: the most live updates a second (each is cheap). */
-  partialsPerSec: number
   /** Parakeet: read the phrase so far again this often, ms of speech (each read is the whole phrase again, so this is most of what it costs). */
   rereadMs: number
   /**
@@ -91,7 +89,6 @@ export const CAPTION_DEFAULTS: CaptionPrefs = {
   preRollMs: 200,
   postRollMs: 200,
   partials: true,
-  partialsPerSec: 8,
   rereadMs: 1000,
   maxPhraseSec: 15,
   minConfidence: 0,
@@ -107,7 +104,6 @@ export const CAPTION_DEFAULTS: CaptionPrefs = {
 export const CAPTION_RANGES = {
   preRollMs: [0, 1000, 50],
   postRollMs: [0, 2000, 50],
-  partialsPerSec: [1, 20, 1],
   rereadMs: [250, 4000, 250],
   maxPhraseSec: [4, 30, 1],
   minConfidence: [0, 0.95, 0.05],
