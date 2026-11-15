@@ -39,8 +39,10 @@ type answer struct {
 
 // HelperOptions is what to run and how.
 type HelperOptions struct {
-	Threads       int
-	MinConfidence float64
+	SuppressUnstableOutput bool
+	Language               string
+	Threads                int
+	MinConfidence          float64
 	// MaxPhraseSec: a streaming FastConformer phrase this long ends at its next word.
 	MaxPhraseSec float64
 }
@@ -83,14 +85,16 @@ func StartHelper(root string, m Model, o HelperOptions) (*Helper, error) {
 	}()
 	go h.read()
 	init := helperInit{
-		Engine:        m.Engine,
-		LibDir:        runtimeDir(root, r),
-		Load:          r.Load,
-		ModelDir:      modelDir(root, m),
-		Files:         m.Files,
-		Threads:       threads,
-		MinConfidence: o.MinConfidence,
-		MaxPhraseSec:  o.MaxPhraseSec,
+		Engine:                 m.Engine,
+		Language:               o.Language,
+		SuppressUnstableOutput: o.SuppressUnstableOutput,
+		LibDir:                 runtimeDir(root, r),
+		Load:                   r.Load,
+		ModelDir:               modelDir(root, m),
+		Files:                  m.Files,
+		Threads:                threads,
+		MinConfidence:          o.MinConfidence,
+		MaxPhraseSec:           o.MaxPhraseSec,
 	}
 	for _, f := range r.Files {
 		init.Libs = append(init.Libs, f.File)
@@ -176,8 +180,8 @@ func (h *Helper) Finish() (string, error) {
 }
 
 // Configure what can change without starting again.
-func (h *Helper) Configure(minConfidence, maxPhraseSec float64) error {
-	body, _ := json.Marshal(helperConfig{MinConfidence: minConfidence, MaxPhraseSec: maxPhraseSec})
+func (h *Helper) Configure(minConfidence, maxPhraseSec float64, suppressUnstableOutput bool) error {
+	body, _ := json.Marshal(helperConfig{MinConfidence: minConfidence, MaxPhraseSec: maxPhraseSec, SuppressUnstableOutput: suppressUnstableOutput})
 	_, _, err := h.ask('C', body, 10*time.Second)
 	return err
 }

@@ -72,6 +72,22 @@
       ["tokens.txt", "450e56bd2f036fe5b6aa821865838cc5aa9d8b0106134ce9a9ba0664abe6cd10", 9953]
     ]
   },
+  "canary-180m-flash": {
+    "engine": "nemo-canary",
+    "title": "Canary 180M Flash",
+    "detail": "English, German, Spanish or French, 180M, 8-bit, with punctuation and capitals. NVIDIA NeMo, recognised a phrase at a time. Choose your spoken language below.",
+    "credit": "canary-180m-flash, NVIDIA, CC BY 4.0 (INT8 ONNX export by k2-fsa/sherpa-onnx)",
+    "url": "https://huggingface.co/nvidia/canary-180m-flash",
+    "downloadMB": 148,
+    "sources": [
+      "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-canary-180m-flash-en-es-de-fr-int8.tar.bz2"
+    ],
+    "files": [
+      ["encoder.int8.onnx", "7a75b4e2a5857a6dcc0819503bbe3fad66943db4a3ccf21d3f27c633667d303f", 132678643],
+      ["decoder.int8.onnx", "e41a2ab9c0c2fe81a1e8ade5a45fb02a74bc4db7d1f91b89a54a25e2cf79cba2", 74437848],
+      ["tokens.txt", "2dae6fc7815f9640645e0c765522b278ee0cef49b482d91f6913e334628d3e77", 53555]
+    ]
+  },
   "fastconformer-ctc-80ms-en": {
     "engine": "nemo-ctc-streaming",
     "title": "FastConformer 80 ms",

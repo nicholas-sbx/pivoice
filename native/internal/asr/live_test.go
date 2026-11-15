@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"os"
 	"regexp"
+	"strings"
 	"testing"
 	"time"
 )
@@ -57,7 +58,7 @@ func TestLiveRecognisers(t *testing.T) {
 				t.Fatal(err)
 			}
 			t0 := time.Now()
-			h, err := StartHelper(root, m, HelperOptions{Threads: 2})
+			h, err := StartHelper(root, m, HelperOptions{Threads: 2, SuppressUnstableOutput: m.Engine == "nemo-canary"})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -73,10 +74,31 @@ func TestLiveRecognisers(t *testing.T) {
 				if ended && text != "" {
 					said = append(said, text)
 				}
+				if m.Engine == "nemo-canary" && (at+1600)%16000 == 0 {
+					preview, err := h.Partial()
+					if err != nil {
+						t.Fatal(err)
+					}
+					if len(strings.Fields(preview)) > 40 {
+						t.Fatalf("runaway decoder output for the speech fixture: %q", preview)
+					}
+				}
 			}
 			partial, err := h.Partial()
 			if err != nil {
 				t.Fatal(err)
+			}
+			if m.Engine == "nemo-canary" {
+				if err := h.Configure(0, 15, false); err != nil {
+					t.Fatal(err)
+				}
+				raw, err := h.Partial()
+				if err != nil || raw != partial {
+					t.Fatalf("suppression off changed completed speech: %q, %v (suppressed %q)", raw, err, partial)
+				}
+				if err := h.Configure(0, 15, true); err != nil {
+					t.Fatal(err)
+				}
 			}
 			text, err := h.Finish()
 			if err != nil {

@@ -127,8 +127,8 @@ try {
   await alice.waitForFunction(() => !document.querySelector('.seat:not(.self) .caption'), null, { timeout: 30_000 }).catch(() => {})
   ok('Parakeet, beside Bob on Alice’s screen: ' + (await heard(alice, 'Parakeet')))
 
-  // FastConformer, each chunk size: streaming, a chunk at a time.
-  for (const title of ['FastConformer 80 ms', 'FastConformer 480 ms', 'FastConformer 1040 ms']) {
+  // Canary reads phrases too; FastConformer streams, a chunk at a time.
+  for (const title of ['Canary 180M Flash', 'FastConformer 80 ms', 'FastConformer 480 ms', 'FastConformer 1040 ms']) {
     await useModel(bob, title)
     await alice.waitForFunction(() => !document.querySelector('.seat:not(.self) .caption'), null, { timeout: 30_000 }).catch(() => {})
     ok(`${title}, beside Bob on Alice’s screen: ` + (await heard(alice, title)))
@@ -183,6 +183,9 @@ async function theApp(alice, code) {
   await alice.waitForTimeout(7_000)
   ok('the app’s Parakeet, beside Cleo on Alice’s screen: ' + (await heardFrom(alice, cleo, 'the app’s Parakeet')))
   ok('Cleo: ' + (await cleo.$eval('.captions-tab .status', e => e.innerText.replace(/\s+/g, ' ').trim())))
+  await useModel(cleo, 'Canary 180M Flash', 'the app’s ')
+  await alice.waitForTimeout(7_000)
+  ok('the app’s Canary, beside Cleo on Alice’s screen: ' + (await heardFrom(alice, cleo, 'the app’s Canary')))
   // Vosk large: the app's alone, offered here.
   await cleo.click('.captions-tab .model:has-text("Vosk large")')
   await cleo.waitForFunction(() => /Ready/.test(document.querySelector('.captions-tab .status')?.textContent ?? ''), null, { timeout: 300_000 }).catch(async () => {

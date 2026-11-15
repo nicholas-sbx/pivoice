@@ -1,0 +1,115 @@
+// The real Canary INT8 models through the production browser worker, its
+// downloader, cache and 48 -> 16 kHz audio path. Needs `npm run dev` and
+// `npm run captions:models -- --model canary-180m-flash` first.
+import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
+
+const { chromium } = createRequire(import.meta.url)('playwright')
+const APP = process.env.APP_URL ?? 'http://localhost:5173/'
+const wav = readFileSync(new URL('../tests/fixtures/speech.wav', import.meta.url)).toString('base64')
+const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || undefined, args: ['--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream'] })
+try {
+  const context = await browser.newContext({ permissions: ['microphone'] })
+  const page = await context.newPage()
+  page.on('pageerror', e => console.error(e.message))
+  await page.goto(APP)
+  const result = await page.evaluate(async ({ wav }) => {
+    const { default: CaptionWorker } = await import('/src/captions/canary.worker.ts?worker')
+    const bytes = Uint8Array.from(atob(wav), c => c.charCodeAt(0))
+    const audio = new OfflineAudioContext(1, 1, 48_000)
+    const buffer = await audio.decodeAudioData(bytes.buffer)
+    const pcm = buffer.getChannelData(0)
+    const runs = []
+    for (let run = 0; run < 2; run++) {
+      const suppressUnstableOutput = run === 0
+      const worker = new CaptionWorker()
+      const { port1, port2 } = new MessageChannel()
+      const phases = []
+      const texts = []
+      let error = ''
+      let ready = false
+      worker.onerror = e => error = e.message
+      worker.onmessage = ({ data }) => {
+        if (data.type === 'model') {
+          const status = data.status
+          if (phases.at(-1) !== status.phase) phases.push(status.phase)
+          if (status.phase === 'needed') worker.postMessage({ type: 'download' })
+          if (status.phase === 'error') error = status.error
+          if (status.phase === 'ready') ready = true
+        } else if (data.type === 'text') texts.push(data)
+      }
+      const until = async (condition, label) => {
+        const until = Date.now() + 180_000
+        while (!condition()) {
+          if (error) throw new Error(error)
+          if (Date.now() > until) throw new Error(`${label}: ${phases.join(', ')}; ${JSON.stringify(texts)}`)
+          await new Promise(r => setTimeout(r, 50))
+        }
+      }
+      const send = (from, to) => {
+        for (let at = from; at < to; at += 960) {
+          const frame = pcm.slice(at, Math.min(at + 960, to))
+          port1.postMessage({ pcm: frame }, [frame.buffer])
+        }
+      }
+      try {
+        worker.postMessage({ type: 'init', model: 'canary-180m-flash', base: new URL('captions/', document.baseURI).href,
+          cfg: { language: 'en', suppressUnstableOutput, partials: true, partialsPerSec: 8, rereadMs: 1000, maxPhraseSec: 15, minConfidence: 0 }, port: port2 }, [port2])
+        await until(() => ready, 'model load')
+        if (texts.length) throw new Error('captioned without any audio')
+        // Wait for a genuine live re-read, then finish the phrase.
+        send(0, 48_000 * 2)
+        await until(() => texts.some(t => !t.final), 'partial transcript')
+        send(48_000 * 2, pcm.length)
+        port1.postMessage({ end: true })
+        await until(() => texts.some(t => t.final), 'final transcript')
+        // The same phrase again: the decimator and decoder caches must reset.
+        send(0, pcm.length)
+        port1.postMessage({ end: true })
+        await until(() => texts.filter(t => t.final).length === 2, 'second phrase')
+        runs.push({ suppressUnstableOutput, phases, texts })
+      } finally {
+        worker.terminate()
+        port1.close()
+      }
+    }
+    return runs
+  }, { wav })
+  assert(result[0].phases.includes('downloading'), 'fresh browser downloads the pinned model')
+  assert(!result[1].phases.includes('needed'), 'second worker uses the checked cache')
+  for (const run of result) {
+    if (run.suppressUnstableOutput) for (const { text } of run.texts) assert(text.split(/\s+/).length <= 40, `runaway decoder output for the speech fixture: ${text}`)
+    const finals = run.texts.filter(t => t.final)
+    for (const { text } of finals) {
+      assert((text.match(/\b(zero|one|two|three|four|five|six|seven|eight|nine|oh)\b/gi) ?? []).length >= 5, `expected spoken digits: ${text}`)
+      assert(!text.includes('<|'), `control tokens in captions: ${text}`)
+    }
+    assert.equal(finals[0].text, finals[1].text, 'fresh phrase has no decoder history')
+    assert.equal(finals[1].u, finals[0].u + 1, 'new phrase is numbered separately')
+  }
+  console.log('Canary browser worker: suppression on/off, live and final transcripts, phrase reset, verified download and cache reload passed.')
+  console.log(JSON.stringify(result, null, 2))
+
+  // The actual settings control: off by default, persisted in both directions,
+  // and offered only for Canary. Keep live re-reads off for the fake tone mic.
+  await page.evaluate(() => localStorage.setItem('pv.prefs', JSON.stringify({ name: 'Canary UI', captions: { model: 'canary-180m-flash', send: true, partials: false, download: 'ask' } })))
+  await page.reload()
+  await page.fill('input[autocomplete="nickname"]', 'Canary UI')
+  await page.click('button:has-text("Create a Room")')
+  await page.waitForSelector('.pill', { timeout: 20_000 })
+  await page.click('button[aria-label="Voice Settings"]')
+  await page.click('.tabs button:has-text("Captions")')
+  const toggle = page.locator('label.switch-row').filter({ hasText: 'Suppress unstable output' })
+  assert.equal(await toggle.locator('input').isChecked(), false, 'suppression defaults off')
+  for (const on of [true, false]) {
+    await toggle.click()
+    assert.equal(await toggle.locator('input').isChecked(), on)
+    await page.waitForFunction(on => JSON.parse(localStorage.getItem('pv.prefs')).captions.suppressUnstableOutput === on, on)
+  }
+  await page.click('.captions-tab .model:has-text("Parakeet")')
+  assert.equal(await toggle.count(), 0, 'suppression control is Canary-only')
+  console.log('Canary settings: default-off toggle, persisted on/off changes and model visibility passed.')
+} finally {
+  await browser.close()
+}

@@ -53,6 +53,10 @@ export interface AppCaptions {
   /** Caption you at all. */
   send: boolean
   model: ModelId
+  /** Optional for older pages: Canary defaults to English. */
+  language?: 'en' | 'de' | 'es' | 'fr'
+  /** Canary output suppression is opt-in; older pages omit this. */
+  suppressUnstableOutput?: boolean
   /** Keep listening even with nobody to send to (you see your own). */
   showOwn: boolean
   preMs: number

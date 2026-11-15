@@ -13,11 +13,11 @@ import catalog from './models.json'
  * the app.
  */
 
-export type Engine = 'vosk' | 'nemo-ctc' | 'nemo-ctc-streaming'
+export type Engine = 'vosk' | 'nemo-ctc' | 'nemo-ctc-streaming' | 'nemo-canary'
 
-/** Whether an engine recognises as it hears (asked for its words so far), or reads the phrase again for them (Parakeet). */
+/** Whether an engine recognises as it hears, or reads the phrase again (Parakeet and Canary). */
 export function streams(engine: Engine | undefined): boolean {
-  return engine !== 'nemo-ctc'
+  return engine !== 'nemo-ctc' && engine !== 'nemo-canary'
 }
 export type ModelId = keyof typeof catalog
 

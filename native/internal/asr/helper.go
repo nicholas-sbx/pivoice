@@ -67,20 +67,23 @@ func readFrame(r io.Reader, buf []byte) (byte, []byte, error) {
 
 // helperInit is everything the helper needs: what to load, from where, and what each must hash to.
 type helperInit struct {
-	Engine        string   `json:"engine"`
-	LibDir        string   `json:"libDir"`
-	Libs          []File   `json:"libs"`
-	Load          []string `json:"load"`
-	ModelDir      string   `json:"modelDir"`
-	Files         []File   `json:"files"`
-	Threads       int      `json:"threads"`
-	MinConfidence float64  `json:"minConfidence"`
-	MaxPhraseSec  float64  `json:"maxPhraseSec"`
+	SuppressUnstableOutput bool     `json:"suppressUnstableOutput"`
+	Engine                 string   `json:"engine"`
+	Language               string   `json:"language"`
+	LibDir                 string   `json:"libDir"`
+	Libs                   []File   `json:"libs"`
+	Load                   []string `json:"load"`
+	ModelDir               string   `json:"modelDir"`
+	Files                  []File   `json:"files"`
+	Threads                int      `json:"threads"`
+	MinConfidence          float64  `json:"minConfidence"`
+	MaxPhraseSec           float64  `json:"maxPhraseSec"`
 }
 
 type helperConfig struct {
-	MinConfidence float64 `json:"minConfidence"`
-	MaxPhraseSec  float64 `json:"maxPhraseSec"`
+	SuppressUnstableOutput bool    `json:"suppressUnstableOutput"`
+	MinConfidence          float64 `json:"minConfidence"`
+	MaxPhraseSec           float64 `json:"maxPhraseSec"`
 }
 
 // recogniser is the helper's view of an engine.

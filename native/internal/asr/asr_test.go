@@ -27,7 +27,7 @@ func TestCatalogIsTheSites(t *testing.T) {
 	if !bytes.Equal(site, modelsJSON) {
 		t.Fatal("native/internal/asr/models.json isn't src/captions/models.json: copy it over")
 	}
-	for _, id := range []string{"vosk-small-en", "vosk-lgraph-en", "parakeet-ctc-110m-en", "fastconformer-ctc-80ms-en", "fastconformer-ctc-480ms-en", "fastconformer-ctc-1040ms-en"} {
+	for _, id := range []string{"vosk-small-en", "vosk-lgraph-en", "parakeet-ctc-110m-en", "canary-180m-flash", "fastconformer-ctc-80ms-en", "fastconformer-ctc-480ms-en", "fastconformer-ctc-1040ms-en"} {
 		m, ok := ModelByID(id)
 		if !ok || len(m.Files) == 0 {
 			t.Fatalf("no %s", id)
@@ -267,7 +267,10 @@ func TestManifestMustMatchThePins(t *testing.T) {
 }
 
 // The helper's side of the pipe, with a pretend recogniser: requests answered in order, files checked first.
-type fakeRec struct{ heard int }
+type fakeRec struct {
+	heard int
+	cfg   helperConfig
+}
 
 func (f *fakeRec) accept(pcm []float32) (string, bool, error) {
 	f.heard += len(pcm)
@@ -277,14 +280,16 @@ func (f *fakeRec) accept(pcm []float32) (string, bool, error) {
 	}
 	return "", false, nil
 }
-func (f *fakeRec) partial() string         { return fmt.Sprintf("heard %d", f.heard) }
-func (f *fakeRec) finish() (string, error) { return "the end", nil }
-func (f *fakeRec) configure(helperConfig)  {}
-func (f *fakeRec) close()                  {}
+func (f *fakeRec) partial() string          { return fmt.Sprintf("heard %d", f.heard) }
+func (f *fakeRec) finish() (string, error)  { return "the end", nil }
+func (f *fakeRec) configure(c helperConfig) { f.cfg = c }
+func (f *fakeRec) close()                   {}
 
 func TestHelperProtocol(t *testing.T) {
 	old := newRecogniser
-	newRecogniser = func(helperInit) (recogniser, error) { return &fakeRec{}, nil }
+	fake := &fakeRec{}
+	var initial helperInit
+	newRecogniser = func(in helperInit) (recogniser, error) { initial = in; return fake, nil }
 	t.Cleanup(func() { newRecogniser = old })
 	dir := t.TempDir()
 	lib := []byte("lib")
@@ -305,9 +310,18 @@ func TestHelperProtocol(t *testing.T) {
 		}
 		return k, string(b)
 	}
-	init, _ := json.Marshal(helperInit{Engine: "fake", LibDir: dir, Libs: []File{{"lib.so", hash(lib), 3}}, ModelDir: dir})
+	init, _ := json.Marshal(helperInit{Engine: "fake", LibDir: dir, Libs: []File{{"lib.so", hash(lib), 3}}, ModelDir: dir, SuppressUnstableOutput: true})
 	if k, msg := ask('I', init); k != 'R' {
 		t.Fatalf("init: %c %s", k, msg)
+	}
+	if !initial.SuppressUnstableOutput {
+		t.Fatal("init lost suppression setting")
+	}
+	for _, on := range []bool{true, false, true} {
+		body, _ := json.Marshal(helperConfig{SuppressUnstableOutput: on})
+		if k, _ := ask('C', body); k != 'K' || fake.cfg.SuppressUnstableOutput != on {
+			t.Fatalf("suppression change to %t was not applied", on)
+		}
 	}
 	audio := make([]byte, 4*1600)
 	if k, _ := ask('A', audio); k != 'K' {

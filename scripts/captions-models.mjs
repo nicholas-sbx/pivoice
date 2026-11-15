@@ -1,5 +1,5 @@
 // The speech models live captions can use (src/captions/models.json: Vosk's
-// small English model, NVIDIA's Parakeet 110M and its streaming
+// small English model, NVIDIA's Parakeet 110M, Canary 180M Flash and streaming
 // FastConformer), fetched from where
 // they're published, checked file by file against the hashes there, and
 // written out ready to serve from the site:

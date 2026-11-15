@@ -7,7 +7,7 @@
 //     pinned here before anything reads them.
 //   - The recognisers are the libraries their makers publish: Vosk's
 //     libvosk (Kaldi) and k2-fsa's sherpa-onnx with ONNX Runtime (for
-//     Parakeet; the streaming FastConformer uses that ONNX Runtime alone,
+//     Parakeet and Canary; the streaming FastConformer uses that ONNX Runtime alone,
 //     streamctc.go), their CPU builds (nothing here needs a GPU), fetched from
 //     their GitHub releases the first time they're wanted, each archive and
 //     each library in it pinned by SHA-256 below.
@@ -151,7 +151,8 @@ var runtimes = map[string]map[string]Runtime{
 			Load: []string{"libgcc_s_seh-1.dll", "libwinpthread-1.dll", "libstdc++-6.dll", "libvosk.dll"},
 		},
 	},
-	"nemo-ctc": sherpaRuntimes(false),
+	"nemo-ctc":    sherpaRuntimes(false),
+	"nemo-canary": sherpaRuntimes(false),
 	// The streaming FastConformer: ONNX Runtime alone, from the same archive (streamctc.go has why).
 	"nemo-ctc-streaming": sherpaRuntimes(true),
 }
@@ -198,4 +199,4 @@ func sherpaRuntimes(ortOnly bool) map[string]Runtime {
 }
 
 // Streams says whether an engine recognises as it hears (asked for its words so far, not read again).
-func Streams(engine string) bool { return engine != "nemo-ctc" }
+func Streams(engine string) bool { return engine != "nemo-ctc" && engine != "nemo-canary" }

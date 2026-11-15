@@ -1,6 +1,6 @@
 /**
  * The caption worker, apart from the recogniser itself (vosk.worker.ts,
- * parakeet.worker.ts, fastconformer.worker.ts each bring theirs, so none
+ * parakeet.worker.ts, canary.worker.ts, fastconformer.worker.ts each bring theirs, so none
  * loads another's code):
  *
  *   model:  check the cache against the pinned hashes; if anything's
@@ -25,7 +25,7 @@
  */
 /// <reference lib="webworker" />
 import { FrameRing } from '../audio/ll/ring'
-import { CAPTION_RATE } from './config'
+import { CAPTION_RATE, type CaptionLanguage } from './config'
 import { Decimator } from './decimate'
 import { cachedFiles, checkManifest, downloadBytes, downloadFile, modelOf, readCached, type CatalogModel, type ModelId } from './models'
 import { CAPTION_FRAME, CAPTION_SLOTS, type CaptionTapFrame } from './tap'
@@ -33,6 +33,8 @@ import { CAPTION_FRAME, CAPTION_SLOTS, type CaptionTapFrame } from './tap'
 declare const self: DedicatedWorkerGlobalScope
 
 export interface WorkerConfig {
+  language: CaptionLanguage
+  suppressUnstableOutput: boolean
   partials: boolean
   partialsPerSec: number
   rereadMs: number
@@ -64,7 +66,7 @@ export type FromCaptionWorker =
 
 /** A recogniser, fed one phrase at a time. */
 export interface Recogniser {
-  /** Recognises as it goes (Vosk, FastConformer), or a phrase at a time (Parakeet: partial() reads it all again). */
+  /** Recognises as it goes (Vosk, FastConformer), or a phrase at a time (Parakeet, Canary: partial() reads it all again). */
   readonly streaming: boolean
   /** Audio held for the phrase so far, samples. */
   readonly held: number
@@ -88,6 +90,7 @@ export function run(make: MakeRecogniser) {
   let base = ''
   let cfg: WorkerConfig
   let rec: Recogniser | null = null
+  let failed = false
   let allowDownload: (() => void) | null = null
   let downloadAsked = false
 
@@ -131,6 +134,8 @@ export function run(make: MakeRecogniser) {
       files.set(path, buf)
     }
     rec = await make(files, m, cfg)
+    // Settings may change while the model's asynchronous session load runs.
+    rec.configure(cfg)
     status({ phase: 'ready', bytes: 0, total: 0 })
   }
 
@@ -144,8 +149,17 @@ export function run(make: MakeRecogniser) {
   let lost = 0
   let busy = false
 
+  function fail(err: unknown) {
+    failed = true
+    rec = null
+    queue.length = 0
+    console.warn('captions:', err)
+    status({ phase: 'error', bytes: 0, total: 0, error: err instanceof Error ? err.message : String(err) })
+  }
+
   /** A frame from the worklet: decimated now (cheap), recognised in order. */
   function take(ts: number, pcm: Float32Array | null) {
+    if (failed) return
     if (!pcm) {
       queue.push({ end: true })
       nextTs = -1
@@ -180,6 +194,8 @@ export function run(make: MakeRecogniser) {
         else await feed(item.pcm)
         busyMs += performance.now() - t0
       }
+    } catch (err) {
+      fail(err)
     } finally {
       busy = false
     }
@@ -271,10 +287,7 @@ export function run(make: MakeRecogniser) {
         if (m.ring) void pumpRing(FrameRing.from(m.ring, CAPTION_SLOTS, CAPTION_FRAME))
         if (!model) status({ phase: 'error', bytes: 0, total: 0, error: `no model ${m.model}` })
         else
-          load().catch(err => {
-            console.warn('captions:', err)
-            status({ phase: 'error', bytes: 0, total: 0, error: err instanceof Error ? err.message : String(err) })
-          })
+          load().catch(fail)
         return
       case 'download':
         downloadAsked = true

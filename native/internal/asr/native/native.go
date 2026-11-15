@@ -133,6 +133,24 @@ static const SherpaOnnxOfflineRecognizer *pv_sherpa_ctc(const char *model, const
 }
 static void pv_sherpa_free(const SherpaOnnxOfflineRecognizer *r) { pv_sherpa.destroy(r); }
 
+// Canary: transcribe in the chosen language, with punctuation and capitals.
+static const SherpaOnnxOfflineRecognizer *pv_sherpa_canary(const char *encoder, const char *decoder, const char *tokens, const char *language, int threads) {
+	SherpaOnnxOfflineRecognizerConfig c;
+	memset(&c, 0, sizeof c);
+	c.feat_config.sample_rate = 16000;
+	c.feat_config.feature_dim = 128;
+	c.model_config.canary.encoder = encoder;
+	c.model_config.canary.decoder = decoder;
+	c.model_config.canary.src_lang = language;
+	c.model_config.canary.tgt_lang = language;
+	c.model_config.canary.use_pnc = 1;
+	c.model_config.tokens = tokens;
+	c.model_config.num_threads = threads;
+	c.model_config.provider = "cpu";
+	c.decoding_method = "greedy_search";
+	return pv_sherpa.create(&c);
+}
+
 // ---- ONNX Runtime (the streaming FastConformer, driven directly) ---------------------------
 
 static const OrtApi *pv_ort;
@@ -290,14 +308,16 @@ static int pv_ctc_run(pv_ctc *c, const float *x, float *out, int out_len, int *f
 }
 
 // One phrase in, its text out (copied into out, at most n-1 bytes).
-static int pv_sherpa_decode(const SherpaOnnxOfflineRecognizer *r, const float *x, int32_t len, char *out, int n) {
+static int pv_sherpa_decode(const SherpaOnnxOfflineRecognizer *r, const float *x, int32_t len, int max_tokens, char *out, int n) {
 	out[0] = 0;
 	const SherpaOnnxOfflineStream *s = pv_sherpa.stream(r);
 	if (!s) return -1;
 	pv_sherpa.accept(s, 16000, x, len);
 	pv_sherpa.decode(r, s);
 	const SherpaOnnxOfflineRecognizerResult *res = pv_sherpa.result(s);
-	if (res && res->text) {
+	// At Canary's token guard the upstream decoder returns unfinished text,
+	// often a repeating word. Don't pass that on as a completed transcript.
+	if (res && res->text && (max_tokens == 0 || res->count < max_tokens)) {
 		strncpy(out, res->text, n - 1);
 		out[n - 1] = 0;
 	}
@@ -408,10 +428,12 @@ func (v *Vosk) Close() {
 	C.pv_vosk_model_free(v.model)
 }
 
-// Sherpa is a phrase-at-a-time recogniser (Parakeet's CTC model).
+// Sherpa is a phrase-at-a-time recogniser (Parakeet or Canary).
 type Sherpa struct {
-	rec *C.SherpaOnnxOfflineRecognizer
-	out []C.char
+	rec                    *C.SherpaOnnxOfflineRecognizer
+	out                    []C.char
+	canary                 bool
+	suppressUnstableOutput bool
 }
 
 // NewSherpaCTC loads a NeMo CTC model on the CPU with this many threads.
@@ -426,12 +448,45 @@ func NewSherpaCTC(model, tokens string, threads int) (*Sherpa, error) {
 	return &Sherpa{rec: r, out: make([]C.char, 8192)}, nil
 }
 
+// NewSherpaCanary loads the INT8 encoder and decoder on the CPU. Both
+// language hints match: this transcribes speech rather than translating it.
+func NewSherpaCanary(encoder, decoder, tokens, language string, threads int) (*Sherpa, error) {
+	switch language {
+	case "", "en":
+		language = "en"
+	case "de", "es", "fr":
+	default:
+		return nil, fmt.Errorf("unsupported Canary language %q", language)
+	}
+	ce, cd := C.CString(osPath(encoder)), C.CString(osPath(decoder))
+	ct, cl := C.CString(osPath(tokens)), C.CString(language)
+	defer C.free(unsafe.Pointer(ce))
+	defer C.free(unsafe.Pointer(cd))
+	defer C.free(unsafe.Pointer(ct))
+	defer C.free(unsafe.Pointer(cl))
+	r := C.pv_sherpa_canary(ce, cd, ct, cl, C.int(max(1, threads)))
+	if r == nil {
+		return nil, errors.New("sherpa-onnx couldn't load Canary")
+	}
+	return &Sherpa{rec: r, out: make([]C.char, 8192), canary: true}, nil
+}
+
+// SetSuppressUnstableOutput controls Canary's optional token-limit filter.
+func (s *Sherpa) SetSuppressUnstableOutput(on bool) { s.suppressUnstableOutput = on }
+
 // Decode a whole phrase, 16 kHz, [-1, 1].
 func (s *Sherpa) Decode(pcm []float32) string {
 	if len(pcm) == 0 {
 		return ""
 	}
-	C.pv_sherpa_decode(s.rec, (*C.float)(unsafe.Pointer(&pcm[0])), C.int32_t(len(pcm)), &s.out[0], C.int(len(s.out)))
+	maxTokens := 0
+	if s.canary && s.suppressUnstableOutput {
+		// The pinned encoder subsamples 10 ms frames by eight; sherpa-onnx
+		// allows 30 tokens per second and omits the final EOS/guard token.
+		frames := (len(pcm) + 80) / 160
+		maxTokens = ((frames+7)/8*8*3)/10 + 1
+	}
+	C.pv_sherpa_decode(s.rec, (*C.float)(unsafe.Pointer(&pcm[0])), C.int32_t(len(pcm)), C.int(maxTokens), &s.out[0], C.int(len(s.out)))
 	// Cut at the buffer's end, a character may have lost its last bytes.
 	return strings.ToValidUTF8(C.GoString(&s.out[0]), "")
 }
