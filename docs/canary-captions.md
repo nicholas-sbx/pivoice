@@ -52,13 +52,16 @@ The decoder gets the nine-token Canary task prompt, with matching source
 and target languages, punctuation enabled, and timestamps disabled. It
 advances the token position and six memory tensors at each greedy decoding
 step. Every re-read starts fresh, and releases its tensors on completion
-or error. EOS and a duration-based token guard bound decoding; control
-tokens are excluded from captions. A runtime failure becomes a visible
+or error. Only EOS-completed reads are emitted: hitting the duration-based
+token guard withholds unfinished output. Repeating token blocks in a live
+preview are abandoned early until more speech arrives; final reads keep
+legitimate repetitions. Control tokens are excluded from captions. A runtime failure becomes a visible
 model error and stops further input to that worker.
 
 The desktop uses sherpa-onnx 1.13.8's existing pinned CPU libraries in the
 caption helper process, with its Canary encoder/decoder configuration.
-The source and target language hints match. Its libraries, model work and
+The source and target language hints match. Results that reach sherpa-onnx's
+duration-based token guard are withheld here too. Its libraries, model work and
 memory stay out of the audio process. Both platforms continue to receive
 only the gated mic segments, through the existing 48 → 16 kHz decimator.
 This export does not expose Canary's experimental word timestamps.

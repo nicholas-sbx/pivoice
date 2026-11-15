@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"os"
 	"regexp"
+	"strings"
 	"testing"
 	"time"
 )
@@ -72,6 +73,15 @@ func TestLiveRecognisers(t *testing.T) {
 				}
 				if ended && text != "" {
 					said = append(said, text)
+				}
+				if m.Engine == "nemo-canary" && (at+1600)%16000 == 0 {
+					preview, err := h.Partial()
+					if err != nil {
+						t.Fatal(err)
+					}
+					if len(strings.Fields(preview)) > 40 {
+						t.Fatalf("runaway decoder output for the speech fixture: %q", preview)
+					}
 				}
 			}
 			partial, err := h.Partial()

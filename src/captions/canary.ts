@@ -49,14 +49,14 @@ export class Canary implements Recogniser {
 
   result() { return '' }
   configure() {}
-  partial() { return this.read() }
+  partial() { return this.read(false) }
 
   async finish(): Promise<string> {
-    try { return await this.read() }
+    try { return await this.read(true) }
     finally { this.count = 0 }
   }
 
-  private async read(): Promise<string> {
+  private async read(final: boolean): Promise<string> {
     if (this.count < 1600) return ''
     const { data, frames } = this.features.compute(this.phrase.subarray(0, this.count))
     // NeMo's CTC exports take bin-major input; this encoder takes frame-major.
@@ -69,18 +69,40 @@ export class Canary implements Recogniser {
       // sherpa-onnx's 30 tokens/second guard, also within the export's 1024 positions.
       const limit = Math.min(1024 - this.prompt.length, Math.floor(encodedFrames * 8 * 0.3) + 1)
       let text = ''
+      const generated: number[] = []
       for (let i = 0; i < limit; i++) {
         if (logits.length !== this.pieces.length) throw new Error('Canary output does not match its vocabulary')
         let best = 0
         for (let k = 1; k < logits.length; k++) if (logits[k] > logits[best]) best = k
-        if (best === this.eos) break
+        if (best === this.eos) return text.trim()
+        generated.push(best)
+        // A cut-off word can send an unfinished preview into a loop. Wait
+        // for more audio instead of spending its whole token budget on it.
+        // Final reads may legitimately contain repetitions and keep them.
+        if (!final && repeatingTail(generated)) return ''
         const piece = this.pieces[best] ?? ''
         if (!piece.startsWith('<|') && piece !== '<unk>' && piece !== '<pad>') text += piece.replaceAll('▁', ' ')
         if (i + 1 < limit) logits = await this.model.step(best, this.prompt.length + i)
       }
-      return text.trim()
+      // The duration guard is not an end-of-transcript prediction. In a
+      // preview, returning nothing keeps the last completed re-read visible.
+      return ''
     } finally {
       this.model.reset()
     }
   }
+}
+
+/** A block of 1–4 tokens repeated at least four times, across at least eight tokens. */
+function repeatingTail(tokens: number[]): boolean {
+  for (let width = 1; width <= 4; width++) {
+    const span = width * Math.max(4, Math.ceil(8 / width))
+    if (tokens.length < span) continue
+    let same = true
+    for (let i = 1; i <= span; i++) {
+      if (tokens[tokens.length - i] !== tokens[tokens.length - 1 - ((i - 1) % width)]) { same = false; break }
+    }
+    if (same) return true
+  }
+  return false
 }

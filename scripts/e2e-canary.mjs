@@ -78,6 +78,7 @@ try {
   assert(result[0].phases.includes('downloading'), 'fresh browser downloads the pinned model')
   assert(!result[1].phases.includes('needed'), 'second worker uses the checked cache')
   for (const run of result) {
+    for (const { text } of run.texts) assert(text.split(/\s+/).length <= 40, `runaway decoder output for the speech fixture: ${text}`)
     const finals = run.texts.filter(t => t.final)
     for (const { text } of finals) {
       assert((text.match(/\b(zero|one|two|three|four|five|six|seven|eight|nine|oh)\b/gi) ?? []).length >= 5, `expected spoken digits: ${text}`)

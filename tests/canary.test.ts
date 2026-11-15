@@ -85,15 +85,25 @@ describe('Canary 180M Flash', () => {
     }
   })
 
-  it('bounds a decoder that never predicts EOS and keeps its last text token', async () => {
+  it('bounds a decoder that never predicts EOS and withholds its unfinished text', async () => {
     const f = fake(['▁Hello'])
     const rec = new Canary(f.model, pieces, 'en')
     rec.accept(wave())
-    const text = await rec.finish()
+    expect(await rec.finish()).toBe('')
     // ceil(100 / 8) encoded frames * 8 * .3 + 1 = 32 text tokens.
-    expect(text.split(' ')).toHaveLength(32)
     expect(f.steps).toHaveLength(9 + 31)
     expect(f.resets()).toBe(1)
+  })
+
+  it('abandons a looping preview early but preserves legitimate repetitions in a final read', async () => {
+    const f = fake([...Array.from({ length: 8 }, () => ['▁Hello', ',']).flat(), '<|endoftext|>'])
+    const rec = new Canary(f.model, pieces, 'en')
+    rec.accept(wave())
+    expect(await rec.partial()).toBe('')
+    expect(f.steps.length).toBeLessThan(9 + 16)
+    expect(rec.held).toBe(16_000)
+    expect(await rec.finish()).toBe(Array(8).fill('Hello,').join(' '))
+    expect(f.resets()).toBe(2)
   })
 
   it('discards phrase state after a failed read', async () => {
