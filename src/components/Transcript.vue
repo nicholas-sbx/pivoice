@@ -13,7 +13,7 @@ const settings = ref(false)
 const log = ref<HTMLElement>()
 const panel = ref<HTMLElement>()
 const following = ref(true)
-const visibleToMe = (speaker: string) => !call.silenced[speaker] && (speaker !== call.selfId || call.prefs.captions.showOwn)
+const visibleToMe = (speaker: string) => speaker !== call.selfId || call.prefs.captions.showOwn
 const messages = computed(() => conversation.visibleMessages.filter(m => visibleToMe(m.speaker)))
 const pending = computed(() => conversation.pendingSpeakers.filter(m => visibleToMe(m.id)))
 let observer: ResizeObserver | null = null

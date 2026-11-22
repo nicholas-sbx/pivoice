@@ -91,7 +91,7 @@ function onTap(id: string, e: MouseEvent) {
 
 function captionOf(m: Member): CaptionView | null {
   // Yours are only here if you asked to see them; everyone else's only if you show captions.
-  if ((!isSelf(m.id) && !props.showCaptions) || props.silenced[m.id] || mutedOf(m)) return null
+  if ((!isSelf(m.id) && !props.showCaptions) || mutedOf(m)) return null
   return props.captions?.[m.id] ?? null
 }
 
