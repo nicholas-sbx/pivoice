@@ -150,7 +150,7 @@ const sideOf = (id: string): Side => (isSelf(id) ? 'above' : (sides.value.get(id
 const alignOf = (id: string): Align => (isSelf(id) ? 'center' : (sides.value.get(id)?.align ?? 'center'))
 function captionOf(id: string): CaptionView | null {
   // Yours are only here if you asked to see them; everyone else's only if you show captions.
-  if ((!isSelf(id) && !props.showCaptions) || props.silenced[id] || mutedOf(id)) return null
+  if ((!isSelf(id) && !props.showCaptions) || mutedOf(id)) return null
   return props.captions?.[id] ?? null
 }
 
